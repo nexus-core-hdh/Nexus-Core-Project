@@ -54,7 +54,11 @@ export type User = {
   country: string;
   role: string;
   image: string;
-  status: "active" | "inactive" | "pending";
+  // The backend's User model exposes this as `userStatus`, not `status` — kept
+  // both here (rather than renaming) since existing code elsewhere in this
+  // table already reads `status`.
+  status?: "active" | "inactive" | "pending";
+  userStatus?: "active" | "inactive" | "pending";
   plan_name: "Basic" | "Team" | "Enterprise";
   phone?: string | null;
   location?: string | null;
@@ -178,7 +182,8 @@ export const createColumns = (
     cell: ({ row }) => row.getValue("country")
   },
   {
-    accessorKey: "status",
+    id: "status",
+    accessorFn: (row) => row.status ?? row.userStatus ?? "unknown",
     header: ({ column }) => {
       return (
         <Button
@@ -191,7 +196,7 @@ export const createColumns = (
       );
     },
     cell: ({ row }) => {
-      const status = row.original.status;
+      const status = row.original.status ?? row.original.userStatus ?? "unknown";
 
       const statusMap = {
         active: "success",
@@ -199,7 +204,7 @@ export const createColumns = (
         pending: "warning"
       } as const;
 
-      const statusClass = statusMap[status] ?? "outline";
+      const statusClass = statusMap[status as keyof typeof statusMap] ?? "outline";
 
       return (
         <Badge variant={statusClass} className="capitalize">

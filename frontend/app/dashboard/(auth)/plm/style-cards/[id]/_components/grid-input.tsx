@@ -1,11 +1,14 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { EditableGridInput } from "@/components/ui/editable-grid-input";
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
 export const num = (v: any) => (v === null || v === undefined || v === "" ? 0 : Number(v));
 export const fmt2 = (n: number) => (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Thin re-export so every call site in this grid keeps using `GridInput` — the actual
+// styling (border, background, focus ring, disabled state) all comes from the shared
+// EditableGridInput/Input components, not from a local copy of the CSS.
 export function GridInput({
   value,
   onChange,
@@ -17,17 +20,7 @@ export function GridInput({
   align?: "left" | "right";
   type?: string;
 }) {
-  return (
-    <input
-      type={type}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "h-7 w-full min-w-0 bg-transparent text-xs px-1.5 outline-none rounded focus:bg-accent/50",
-        align === "right" && "text-right font-mono"
-      )}
-    />
-  );
+  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} />;
 }
 
 export function GridCheckbox({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {

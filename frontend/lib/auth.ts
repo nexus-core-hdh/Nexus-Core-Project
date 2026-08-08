@@ -58,11 +58,18 @@ export function isAuthenticated(): boolean {
  */
 export function logout(): void {
   if (typeof window === 'undefined') return;
-  
+
   // Clear localStorage
   localStorage.removeItem('auth_token');
   localStorage.removeItem('user');
-  
+
+  // Session-scoped grid preferences (e.g. Purchase Order line grid's "Save for This Session"
+  // column order) must reset on logout, not just on tab close — sessionStorage survives a full
+  // page navigation/reload within the same tab, which is exactly what this logout() causes, so
+  // without this a different user logging into the same tab would inherit the previous user's
+  // session-only column order.
+  sessionStorage.removeItem('po-line-grid-column-order');
+
   // Clear cookie
   document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
   

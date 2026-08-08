@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FormRow } from "@/components/forms/form-row";
 
 const fmt2 = (n: number) => (n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const CURRENCIES = ["PKR", "Usdollar", "Euro", "GBP"];
@@ -172,18 +173,16 @@ export function CostDetailFormBody({
 
           <div className="border-t">
             <SummaryLine label="Raw Material Costs" value={rawMaterialTotal} bold />
-            <div className="flex items-center gap-2 px-2 py-1">
-              <span className="text-xs text-muted-foreground w-40 shrink-0">Manufacturing Price</span>
+            <FormRow label="Manufacturing Price" className="px-2">
               <Select value={value.manufacturingType || undefined} onValueChange={(v) => setValue((s) => ({ ...s, manufacturingType: v }))}>
                 <SelectTrigger className="h-7 text-xs w-24"><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>{WASTE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
               </Select>
               <Input type="number" value={value.manufacturingPrice || ""} onChange={(e) => setValue((s) => ({ ...s, manufacturingPrice: parseFloat(e.target.value) || 0 }))} className="h-7 text-xs text-right font-mono w-28" />
-            </div>
-            <div className="flex items-center gap-2 px-2 py-1">
-              <span className="text-xs text-muted-foreground w-40 shrink-0">Manufacturing Waste</span>
+            </FormRow>
+            <FormRow label="Manufacturing Waste" className="px-2">
               <Input value={value.manufacturingWaste} onChange={(e) => setValue((s) => ({ ...s, manufacturingWaste: e.target.value }))} className="h-7 text-xs flex-1" />
-            </div>
+            </FormRow>
             <SummaryLine label="Subtotal" value={subtotal1} bold />
           </div>
 
@@ -215,22 +214,19 @@ export function CostDetailFormBody({
 
           <div className="border-t">
             <SummaryLine label="Subtotal" value={subtotal2} bold />
-            <div className="flex items-center gap-2 px-2 py-1">
-              <span className="text-xs text-muted-foreground w-44 shrink-0">Dye - Print Width / Weight</span>
+            <FormRow label="Dye - Print Width / Weight" labelWidth="w-44" className="px-2">
               <Input value={value.dyePrintWidthWeight} onChange={(e) => setValue((s) => ({ ...s, dyePrintWidthWeight: e.target.value }))} className="h-7 text-xs flex-1" />
-            </div>
-            <div className="flex items-center gap-2 px-2 py-1">
-              <span className="text-xs text-muted-foreground w-44 shrink-0">Dye - Print Wastage %</span>
+            </FormRow>
+            <FormRow label="Dye - Print Wastage %" labelWidth="w-44" className="px-2">
               <Input value={value.dyePrintWastagePct} onChange={(e) => setValue((s) => ({ ...s, dyePrintWastagePct: e.target.value }))} className="h-7 text-xs flex-1" />
-            </div>
-            <div className="flex items-center gap-2 px-2 py-1">
-              <span className="text-xs text-muted-foreground w-44 shrink-0">Dye - Print Price</span>
+            </FormRow>
+            <FormRow label="Dye - Print Price" labelWidth="w-44" className="px-2">
               <Select value={value.dyePrintType || undefined} onValueChange={(v) => setValue((s) => ({ ...s, dyePrintType: v }))}>
                 <SelectTrigger className="h-7 text-xs w-24"><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>{WASTE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
               </Select>
               <Input type="number" value={value.dyePrintPrice || ""} onChange={(e) => setValue((s) => ({ ...s, dyePrintPrice: parseFloat(e.target.value) || 0 }))} className="h-7 text-xs text-right font-mono w-28" />
-            </div>
+            </FormRow>
             <SummaryLine label="Total Cost" value={totalCost} bold />
           </div>
     </>

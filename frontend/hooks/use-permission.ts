@@ -185,14 +185,16 @@ export function usePermissionCheck() {
 
       const result: PermissionCheckResult = await permissionSettingsApi.checkResourcePermission(normalizedPath);
       const hasPermission = result.hasPermission || false;
-      
+
       // Cache the result
       setCache(prev => ({ ...prev, [resourcePath]: hasPermission }));
       return hasPermission;
     } catch (err) {
       console.error('Permission check error:', err);
-      // On error, deny access
-      setCache(prev => ({ ...prev, [resourcePath]: false }));
+      // Deny access this time, but don't cache the denial — a transient
+      // failure (e.g. rate limiting, a dropped request) would otherwise
+      // permanently lock this resource out for the rest of the session, even
+      // after the underlying issue clears.
       return false;
     }
   }, [cache]);

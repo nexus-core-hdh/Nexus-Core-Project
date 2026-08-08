@@ -131,7 +131,15 @@ function SidebarProvider({
             } as React.CSSProperties
           }
           className={cn(
-            "group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full",
+            // `h-svh` (not `min-h-svh`): this clamps the whole app shell to
+            // exactly the viewport height instead of merely "at least" it, so
+            // the shell itself never grows taller than the screen. Combined
+            // with `min-h-0` on SidebarInset below, this is what makes
+            // ContentContainer the single scroll region instead of the
+            // document — without both halves, a flex item's default
+            // min-height:auto lets tall content push the whole shell (and
+            // therefore <body>) taller regardless of this height.
+            "group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex h-svh w-full",
             className
           )}
           {...props}>
@@ -290,7 +298,19 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
     <main
       data-slot="sidebar-inset"
       className={cn(
-        "bg-background relative flex w-full flex-1 flex-col",
+        // `min-w-0` is the actual fix for the shell growing wider than the
+        // viewport: a flex item's default min-width is `auto`, meaning it
+        // refuses to shrink below its content's intrinsic width — so without
+        // this, any wide descendant (a table, a long unwrapped string, a tab
+        // strip) pushes this flex row (sidebar-gap + inset) past 100vw, and
+        // the *browser* grows a real horizontal scrollbar. This makes the
+        // inset correctly shrink to "viewport minus sidebar" instead.
+        // `min-h-0` alongside `flex-1`: a flex item's default min-height is
+        // `auto`, which refuses to shrink below its content's intrinsic
+        // height — without this, tall page content grows this element (and
+        // the shell around it) past the viewport instead of staying clamped
+        // so ContentContainer can be the one thing that scrolls.
+        "bg-background relative flex w-full min-w-0 min-h-0 flex-1 flex-col",
         "md:peer-data-[variant=inset]:m-[var(--content-margin)] md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-[var(--content-margin)]",
         className
       )}

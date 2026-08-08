@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,6 +15,7 @@ import { ArrowLeft, Save, Search, ImageOff, Plus, Trash2, Upload, Calculator, Ta
 import { CostDetailDialog, CostDetailValue, emptyCostDetail } from "../_components/cost-detail-dialog";
 import { ProfitBreakdownDialog } from "../_components/profit-breakdown-dialog";
 import { plmApi } from "@/lib/nexuscore-api";
+import { FormRow as FieldRow } from "@/components/forms/form-row";
 
 // ---------- formatting helpers ----------
 const fmt2 = (n: number) => (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -40,27 +42,15 @@ const CURRENCIES = ["PKR", "Usdollar", "Euro", "GBP"];
 const INCOTERMS = ["FOB", "CIF", "CFR", "EXW", "DDP", "FCA"];
 
 // ---------- small presentational helpers ----------
-function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 py-1 border-b border-dashed last:border-0">
-      <div className="w-40 shrink-0 text-xs text-muted-foreground">{label}</div>
-      <div className="flex-1 flex items-center gap-2 min-w-0">{children}</div>
-    </div>
-  );
-}
+// FieldRow renders through the shared FormRow (components/forms/form-row.tsx) —
+// same label-left layout this file already used, now centralized so every
+// dense data-entry screen shares one implementation instead of its own copy.
 
+// Renders through the shared EditableGridInput (components/ui/editable-grid-input.tsx)
+// so this grid's cells look identical to every other input in the app instead of using
+// their own bespoke CSS.
 function GridInput({ value, onChange, align = "left", type = "text" }: { value: string | number; onChange: (v: string) => void; align?: "left" | "right"; type?: string }) {
-  return (
-    <input
-      type={type}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(
-        "h-7 w-full min-w-0 bg-transparent text-xs px-1.5 outline-none rounded focus:bg-accent/50",
-        align === "right" && "text-right font-mono"
-      )}
-    />
-  );
+  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} />;
 }
 
 function SectionHeaderBar({ title, total, sharePct }: { title: string; total: number; sharePct: number }) {

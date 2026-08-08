@@ -249,6 +249,164 @@ export const plmApi = {
   },
 };
 
+// Legacy ERP (migrated SQL Server schema, raw-SQL backed)
+export const legacyErpApi = {
+  warehouses: {
+    list: (search?: string) => api.get(`/legacy-erp/warehouses${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/warehouses/${id}`),
+    create: (d: any) => api.post('/legacy-erp/warehouses', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/warehouses/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/warehouses/${id}`),
+  },
+  accounts: {
+    list: (search?: string) => api.get(`/legacy-erp/accounts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/accounts/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/accounts/by-code/${encodeURIComponent(code)}`),
+    create: (d: any) => api.post('/legacy-erp/accounts', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/accounts/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/accounts/${id}`),
+    listTab: (id: number, tab: string) => api.get(`/legacy-erp/accounts/${id}/${tab}`),
+    createTabRow: (id: number, tab: string, d: any) => api.post(`/legacy-erp/accounts/${id}/${tab}`, d),
+    removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/accounts/${id}/${tab}/${lineId}`),
+    totals: (id: number) => api.get(`/legacy-erp/accounts/${id}/totals/all`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/accounts/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/accounts/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/accounts/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/accounts/${id}/attachments/${attId}/content`,
+    getAttachmentViewToken: (id: number, attId: number) => api.get(`/legacy-erp/accounts/${id}/attachments/${attId}/view-token`),
+  },
+  trimCards: {
+    list: (search?: string) => api.get(`/legacy-erp/trim-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/trim-cards/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/trim-cards/by-code/${encodeURIComponent(code)}`),
+    create: (d: any) => api.post('/legacy-erp/trim-cards', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/trim-cards/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/trim-cards/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/trim-cards/${id}/items`),
+    createItem: (id: number, d: any) => api.post(`/legacy-erp/trim-cards/${id}/items`, d),
+    updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/trim-cards/${id}/items/${itemId}`, d),
+    removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/trim-cards/${id}/items/${itemId}`),
+  },
+  unitSets: {
+    list: (search?: string) => api.get(`/legacy-erp/unit-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/unit-sets/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/unit-sets/by-code/${encodeURIComponent(code)}`),
+    create: (d: any) => api.post('/legacy-erp/unit-sets', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/unit-sets/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/unit-sets/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/unit-sets/${id}/items`),
+    createItem: (id: number, d: any) => api.post(`/legacy-erp/unit-sets/${id}/items`, d),
+    updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/unit-sets/${id}/items/${itemId}`, d),
+    removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/unit-sets/${id}/items/${itemId}`),
+  },
+  yarnCards: {
+    list: (search?: string) => api.get(`/legacy-erp/yarn-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/yarn-cards/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/yarn-cards/by-code/${encodeURIComponent(code)}`),
+    previewNextCode: () => api.get(`/legacy-erp/yarn-cards/next-code`),
+    create: (d: any) => api.post('/legacy-erp/yarn-cards', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/yarn-cards/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/yarn-cards/${id}`),
+    listTab: (id: number, tab: string) => api.get(`/legacy-erp/yarn-cards/${id}/${tab}`),
+    createTabRow: (id: number, tab: string, d: any) => api.post(`/legacy-erp/yarn-cards/${id}/${tab}`, d),
+    removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/yarn-cards/${id}/${tab}/${lineId}`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/yarn-cards/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/yarn-cards/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/yarn-cards/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/yarn-cards/${id}/attachments/${attId}/content`,
+  },
+  fabricCards: {
+    list: (search?: string) => api.get(`/legacy-erp/fabric-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/fabric-cards/by-code/${encodeURIComponent(code)}`),
+    create: (d: any) => api.post('/legacy-erp/fabric-cards', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/fabric-cards/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/fabric-cards/${id}`),
+    listTab: (id: number, tab: string) => api.get(`/legacy-erp/fabric-cards/${id}/${tab}`),
+    createTabRow: (id: number, tab: string, d: any) => api.post(`/legacy-erp/fabric-cards/${id}/${tab}`, d),
+    updateTabRow: (id: number, tab: string, lineId: number, d: any) => api.put(`/legacy-erp/fabric-cards/${id}/${tab}/${lineId}`, d),
+    removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/fabric-cards/${id}/${tab}/${lineId}`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/fabric-cards/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/fabric-cards/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/fabric-cards/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/fabric-cards/${id}/attachments/${attId}/content`,
+  },
+  purchaseOrders: {
+    list: (search?: string) => api.get(`/legacy-erp/purchase-orders${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}`),
+    getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/purchase-orders/by-receipt-no/${encodeURIComponent(receiptNo)}`),
+    previewNextReceiptNo: () => api.get(`/legacy-erp/purchase-orders/next-receipt-no`),
+    create: (d: any) => api.post('/legacy-erp/purchase-orders', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/purchase-orders/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/purchase-orders/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}/items`),
+    createItem: (id: number, d: any) => api.post(`/legacy-erp/purchase-orders/${id}/items`, d),
+    updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/purchase-orders/${id}/items/${itemId}`, d),
+    removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/purchase-orders/${id}/items/${itemId}`),
+    // Variant breakdown (Variant2 column) — the composite Variant1+Variant2 combinations
+    // available for a given inventory item (item-master-driven, not order-specific), plus
+    // CRUD for the per-line variant quantity rows.
+    itemVariantOptions: (inventoryId: number) => api.get(`/legacy-erp/purchase-orders/item-variant-options/${inventoryId}`),
+    listItemVariants: (id: number, itemId: number) => api.get(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants`),
+    createItemVariant: (id: number, itemId: number, d: any) => api.post(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants`, d),
+    updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants/${variantLineId}`, d),
+    removeItemVariant: (id: number, itemId: number, variantLineId: number) => api.delete(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants/${variantLineId}`),
+    listExplanations: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}/explanations`),
+    createExplanation: (id: number, d: { explanationText: string; explanationDate?: string }) => api.post(`/legacy-erp/purchase-orders/${id}/explanations`, d),
+    removeExplanation: (id: number, explanationId: number) => api.delete(`/legacy-erp/purchase-orders/${id}/explanations/${explanationId}`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/purchase-orders/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/purchase-orders/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/purchase-orders/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/purchase-orders/${id}/attachments/${attId}/content`,
+  },
+  trimInventoryCards: {
+    list: (search?: string) => api.get(`/legacy-erp/trim-inventory-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/trim-inventory-cards/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/trim-inventory-cards/by-code/${encodeURIComponent(code)}`),
+    create: (d: any) => api.post('/legacy-erp/trim-inventory-cards', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/trim-inventory-cards/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/trim-inventory-cards/${id}`),
+    listTab: (id: number, tab: string) => api.get(`/legacy-erp/trim-inventory-cards/${id}/${tab}`),
+    createTabRow: (id: number, tab: string, d: any) => api.post(`/legacy-erp/trim-inventory-cards/${id}/${tab}`, d),
+    updateTabRow: (id: number, tab: string, lineId: number, d: any) => api.put(`/legacy-erp/trim-inventory-cards/${id}/${tab}/${lineId}`, d),
+    removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/trim-inventory-cards/${id}/${tab}/${lineId}`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/trim-inventory-cards/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/trim-inventory-cards/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/trim-inventory-cards/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/trim-inventory-cards/${id}/attachments/${attId}/content`,
+  },
+  // Unified read-only aggregation over Fabric/Yarn/Trim (Inventory Card List) — see
+  // inventory-card.service.ts; never writes, each card type is still created/edited through
+  // its own existing screen/API above.
+  inventoryCards: {
+    list: (params?: { search?: string; sortBy?: string; sortDir?: "asc" | "desc" }) => {
+      const qs = new URLSearchParams();
+      if (params?.search) qs.set("search", params.search);
+      if (params?.sortBy) qs.set("sortBy", params.sortBy);
+      if (params?.sortDir) qs.set("sortDir", params.sortDir);
+      const query = qs.toString();
+      return api.get(`/legacy-erp/inventory-cards${query ? `?${query}` : ''}`);
+    },
+  },
+  // Full-CRUD "Master Lookup" management screens (Fab Type Master today; any future master
+  // added purely via backend config reuses these exact same calls with a different `key`).
+  masterLookup: {
+    meta: (key: string) => api.get(`/legacy-erp/master-lookup/${key}/meta`),
+    list: (key: string, search?: string) => api.get(`/legacy-erp/master-lookup/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    create: (key: string, d: { code: string; name: string }) => api.post(`/legacy-erp/master-lookup/${key}`, d),
+    update: (key: string, id: number, d: { code: string; name: string }) => api.put(`/legacy-erp/master-lookup/${key}/${id}`, d),
+    delete: (key: string, id: number) => api.delete(`/legacy-erp/master-lookup/${key}/${id}`),
+  },
+  lookupParameters: (group: "style-group" | "brand" | "style-department", search?: string) =>
+    api.get(`/legacy-erp/lookup/parameters/${group}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  lookupTable: (
+    key: "category" | "group" | "mark" | "model" | "variant-type" | "tax" | "withholding-type" | "warehouse"
+      | "fabric" | "process" | "finish-gsm" | "dye-type" | "composition" | "forex" | "unit"
+      | "service" | "manufacturing-order",
+    search?: string,
+  ) => api.get(`/legacy-erp/lookup/tables/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+};
+
 // BPM helpers
 export const bpmApi = {
   getTasks: (params?: Record<string, string>) => {

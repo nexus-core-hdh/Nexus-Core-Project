@@ -132,8 +132,14 @@ deleteNoteLabel: (id: number) => apiRequest(`/note-labels/${id}`, {
 
 // Companies API functions
 export const companiesApi = {
-  // Get all companies
-  getCompanies: () => apiRequest('/companies'),
+  // The backend is single-company-per-tenant (`GET /company`, current user's
+  // own company — there is no `/companies` listing/multi-tenant directory
+  // endpoint). Wrapped in an array so the existing Companies list page, which
+  // expects `Company[]`, keeps working unchanged.
+  getCompanies: async () => {
+    const company = await apiRequest('/company', { headers: getAuthHeaders() });
+    return company ? [company] : [];
+  },
 
   // Get a single company
   getCompany: (id: number) => apiRequest(`/companies/${id}`),
@@ -1339,6 +1345,16 @@ export const permissionSettingsApi = {
       headers: getAuthHeaders(),
     });
   },
+
+  // Batched form of checkResourcePermission — one request for many paths
+  // instead of one request per path. Use this whenever checking more than a
+  // handful of resources at once (e.g. filtering the whole menu by permission)
+  // to avoid tripping the global request-rate limiter.
+  checkResourcePermissionsBatch: (resourcePaths: string[]) => apiRequest(`/permission-settings/check-batch`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ resourcePaths }),
+  }),
 };
 
 // Business Processes API functions
@@ -2308,6 +2324,21 @@ export const settingsApi = {
   // Get user settings
   getUserSettings: (userId: number) => apiRequest(`/settings/${userId}`, {
     headers: getAuthHeaders(),
+  }),
+
+  // Get the current (authenticated) user's settings — matches the backend's
+  // `GET /settings` (CurrentUser-scoped, backend/src/modules/user-settings).
+  getCurrentSettings: () => apiRequest(`/settings`, {
+    headers: getAuthHeaders(),
+  }),
+
+  // Update the current (authenticated) user's settings — matches the backend's
+  // `PATCH /settings`, a generic upsert of whatever keys are passed (e.g.
+  // `tablePreferences`). Used by the Workspace store for cross-device persistence.
+  updateCurrentSettings: (data: Record<string, any>) => apiRequest(`/settings`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
   }),
 
   // Update profile settings

@@ -39,14 +39,14 @@ import { formatDateTime } from "@/lib/utils";
 import { useCallback, useEffect } from "react";
 
 export type Company = {
-  id: number;
+  id: string;
   name: string;
-  email: string;
-  phone?: string;
-  address?: string;
-  website?: string;
-  industry?: string;
-  slug: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  website?: string | null;
+  industry?: string | null;
+  slug?: string | null;
   plan?: string;
   subscriptionStatus?: string;
   subscriptionStartDate?: string;

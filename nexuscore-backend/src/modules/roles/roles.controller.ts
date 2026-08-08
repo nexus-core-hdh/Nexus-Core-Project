@@ -63,6 +63,20 @@ export class PermissionSettingsController {
     return { hasPermission: true };
   }
 
+  // Same no-op logic as `check`, batched: callers that need to check many
+  // resource paths at once (e.g. building a permission-filtered screen index
+  // across the whole menu) can do it in one request instead of one per path —
+  // avoids tripping the global rate limiter on what would otherwise be dozens
+  // of individual round trips for what is, today, always the same answer.
+  @Post('check-batch')
+  checkResourcePermissionsBatch(@Body('resourcePaths') resourcePaths: string[]) {
+    const result: Record<string, boolean> = {};
+    for (const path of resourcePaths ?? []) {
+      result[path] = true;
+    }
+    return { permissions: result };
+  }
+
   @Get('matrix')
   getMatrix() { return []; }
 

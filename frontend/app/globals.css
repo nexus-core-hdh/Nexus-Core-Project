@@ -36,7 +36,7 @@
   --accent-foreground: var(--base-800);
   --destructive: oklch(0.577 0.245 27.325);
   --border: var(--base-200);
-  --input: var(--base-300);
+  --input: var(--base-400);
   --ring: var(--base-800);
   --chart-1: var(--base-950);
   --chart-2: var(--base-600);
@@ -85,7 +85,7 @@
   --accent-foreground: var(--base-200);
   --destructive: oklch(0.704 0.191 22.216);
   --border: var(--base-800);
-  --input: var(--base-700);
+  --input: var(--base-600);
   --ring: var(--base-200);
   --chart-1: var(--base-50);
   --chart-2: var(--base-400);

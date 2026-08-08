@@ -16,6 +16,18 @@ export class UserSettingsService {
   }
 
   async updateSettings(userId: string, dto: any) {
+    // `tablePreferences` is a shared JSON blob — multiple independent features
+    // (Workspace tabs, My Menu, and whatever future preference lands here) each
+    // write only their own top-level key. A plain Prisma `update` would replace
+    // the whole JSON value, so a Workspace-only write would silently wipe out
+    // My Menu (and vice versa). Shallow-merge the incoming keys over whatever is
+    // already stored instead of overwriting the field outright.
+    if (dto.tablePreferences && typeof dto.tablePreferences === 'object') {
+      const existing = await this.prisma.userSettings.findFirst({ where: { userId } });
+      const existingPrefs = (existing?.tablePreferences as Record<string, any>) ?? {};
+      dto = { ...dto, tablePreferences: { ...existingPrefs, ...dto.tablePreferences } };
+    }
+
     return this.prisma.userSettings.upsert({
       where: { userId },
       create: { ...dto, userId },
