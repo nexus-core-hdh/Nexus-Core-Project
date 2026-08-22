@@ -16,6 +16,12 @@ export class UnitSetController {
     return this.svc.getByCode(code);
   }
 
+  // Preview only — declared ahead of the generic :id route below so "next-code" is never
+  // parsed as an id.
+  @Get('next-code') async previewNextCode() {
+    return { code: await this.svc.previewNextCode() };
+  }
+
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
     return this.svc.get(id);
   }

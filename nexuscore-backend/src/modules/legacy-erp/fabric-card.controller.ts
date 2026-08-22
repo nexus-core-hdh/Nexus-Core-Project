@@ -27,6 +27,12 @@ export class FabricCardController {
     return this.svc.getByCode(code);
   }
 
+  // Preview only — declared ahead of the generic :id route below so "next-code" is never
+  // parsed as an id. Mirrors yarn-card.controller.ts's own next-code route exactly.
+  @Get('next-code') async previewNextCode() {
+    return { code: await this.svc.nextInventoryCode() };
+  }
+
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
     return this.svc.get(id);
   }

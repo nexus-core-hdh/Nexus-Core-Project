@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
@@ -9,13 +9,18 @@ import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 // IM_Item already carries dedicated fabric columns (FabricTypeId -> MD_Fabric, UD_FabGSM,
 // UD_FabDyeType, UD_FabComposition, UD_FabYarnCount/1/2/3, UD_FYarnRatio1-4, FWidth/FWeight/
 // FRawWidth/FRawWeight, UD_FabDia, UD_FabGuage, UD_FinWidth, ...) — no dedicated Fabric table
-// exists or is needed. Follows the simpler Code/Name-required convention already used by
-// account.service.ts/trim-card.service.ts/unit-set.service.ts (manual Code entry via the
-// header search box, not the auto-generated-code pattern built specifically for Yarn Card).
+// exists or is needed. Code is server-generated, same pattern/prefix-convention as
+// yarn-card.service.ts's own nextInventoryCode() (same IM_Item table, same "{ACCESS_CODE}-NNNNN"
+// shape) — see that file's own comment for why no shared numbering service exists to reuse
+// instead. Client-sent inventoryCode is always ignored; the value assigned at create() time is
+// the sole source of truth, matching Yarn Card exactly.
 const TABLE = 'IM_Item';
 const ACCESS_CODE = 'FABRIC';
+const CODE_PREFIX = 'FABRIC';
 
-const HEADER_COLUMNS = [
+// Exported for worklist-fields.service.ts (Customize Worklist field-metadata source) — raw
+// column names as-is, matching exactly what unified-grid.service.ts's own `SELECT *` returns.
+export const HEADER_COLUMNS = [
   // Top section + General tab / General Information
   'InventoryCode', 'InventoryName', 'InUse', 'InventoryType', 'AccessCode', 'SpecialCode',
   'GroupId', 'ProcessId', 'FabricTypeId',
@@ -84,31 +89,62 @@ export class FabricCardService {
     return sanitizeRawRow(rows[0]);
   }
 
+  // Same shape/prefix convention as yarn-card.service.ts's own nextInventoryCode() — scans ALL
+  // rows including soft-deleted ones so a deleted card's code is never reissued. Public so the
+  // controller can expose a preview-only endpoint for the Create screen.
+  async nextInventoryCode(): Promise<string> {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "InventoryCode" as code FROM "IM_Item"
+      WHERE "AccessCode" = ${ACCESS_CODE} AND "InventoryCode" LIKE ${CODE_PREFIX + '-%'}
+      ORDER BY "InventoryCode" DESC LIMIT 1
+    `);
+    const lastSeq = rows.length ? parseInt(String(rows[0].code).split('-').pop() || '0', 10) : 0;
+    const next = (Number.isFinite(lastSeq) ? lastSeq : 0) + 1;
+    return `${CODE_PREFIX}-${String(next).padStart(5, '0')}`;
+  }
+
+  private static readonly MAX_CODE_RETRIES = 5;
+
   async create(dto: Record<string, any>, userId: number, insertedByUserId?: string) {
-    if (!dto.inventoryCode) throw new NotFoundException('inventoryCode is required');
     const toDb = await this.toDb();
     // AccessCode always defaults to FABRIC for this screen — it's what scopes IM_Item rows
     // to "Fabric Card" in list()/get()/getByCode(), regardless of what the form sends.
-    const effective = { ...dto, accessCode: ACCESS_CODE };
-    const cols = HEADER_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
-    // InsertedByUserId is the real NexusCore User.id (text/uuid) — separate from the legacy
-    // InsertedBy integer (which Number(uuid) always collapses to a fallback value, so it can
-    // never resolve to a real user). Lets the Inventory Card List join back to the real
-    // Users/Auth table for a real creator name instead of a placeholder.
-    const colList = Prisma.raw(['"CompanyId"', '"WorkplaceId"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"InsertedByUserId"', '"IsDeleted"', '"UUID"'].join(', '));
-    const values = cols.map((c) => toDb(c, effective[camel(c)]));
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      INSERT INTO "IM_Item" (${colList})
-      VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
-      RETURNING ${HEADER_SELECT}
-    `);
-    return sanitizeRawRow(rows[0]);
+    // InventoryCode is always server-generated — client input for it is ignored, same as
+    // Yarn Card. The DB's real (CompanyId, InventoryCode) unique constraint is the actual
+    // source of truth; a collision against it just regenerates the next code and retries.
+    for (let attempt = 1; attempt <= FabricCardService.MAX_CODE_RETRIES; attempt++) {
+      const inventoryCode = await this.nextInventoryCode();
+      const effective = { ...dto, accessCode: ACCESS_CODE, inventoryCode };
+      const cols = HEADER_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
+      // InsertedByUserId is the real NexusCore User.id (text/uuid) — separate from the legacy
+      // InsertedBy integer (which Number(uuid) always collapses to a fallback value, so it can
+      // never resolve to a real user). Lets the Inventory Card List join back to the real
+      // Users/Auth table for a real creator name instead of a placeholder.
+      const colList = Prisma.raw(['"CompanyId"', '"WorkplaceId"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"InsertedByUserId"', '"IsDeleted"', '"UUID"'].join(', '));
+      const values = cols.map((c) => toDb(c, effective[camel(c)]));
+      try {
+        const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+          INSERT INTO "IM_Item" (${colList})
+          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
+          RETURNING ${HEADER_SELECT}
+        `);
+        return sanitizeRawRow(rows[0]);
+      } catch (err: any) {
+        const msg = String(err?.message ?? '');
+        const isCodeCollision = msg.includes('23505') && msg.includes('InventoryCode');
+        if (isCodeCollision && attempt < FabricCardService.MAX_CODE_RETRIES) continue;
+        throw err;
+      }
+    }
+    throw new ConflictException('Could not generate a unique Code — please try again.');
   }
 
   async update(id: number, dto: Record<string, any>, userId: number) {
     await this.get(id);
     const toDb = await this.toDb();
-    const cols = HEADER_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
+    // InventoryCode is immutable after creation — never editable via update, regardless of
+    // what the client sends. Matches yarn-card.service.ts's own update() guard.
+    const cols = HEADER_COLUMNS.filter((c) => c !== 'InventoryCode' && toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) return this.get(id);
     const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`

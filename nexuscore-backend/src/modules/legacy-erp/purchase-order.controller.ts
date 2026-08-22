@@ -4,6 +4,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { PurchaseOrderService } from './purchase-order.service';
 import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Legacy ERP - Purchase Orders')
 @Controller('legacy-erp/purchase-orders')
@@ -13,8 +14,8 @@ export class PurchaseOrderController {
     private readonly attachments: PurchaseOrderAttachmentsService,
   ) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Query('approvalStatus') approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected') {
+    return this.svc.list(search, approvalStatus);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptNo') receiptNo: string) {
@@ -33,6 +34,12 @@ export class PurchaseOrderController {
     return this.svc.listItemVariantOptions(inventoryId);
   }
 
+  // Purchase Receipt -> Current Account -> right-click -> Pending Orders. Same defensive
+  // ordering as the static routes above — declared before ':id'.
+  @Get('pending') listPending(@Query('currentAccountId', ParseIntPipe) currentAccountId: number) {
+    return this.svc.listPending(currentAccountId);
+  }
+
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
     return this.svc.get(id);
   }
@@ -47,6 +54,29 @@ export class PurchaseOrderController {
 
   @Delete(':id') remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
     return this.svc.remove(id, Number(userId) || 1);
+  }
+
+  // Approval (General Settings -> Approval Configuration) — no-op (existing workflow
+  // unchanged) whenever approval isn't configured/required for this screen. Same routes/
+  // permission shape as inventory-receipt.controller.ts's own approval routes.
+  @Get(':id/approval-status') getApprovalStatus(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.getApprovalStatus(id);
+  }
+
+  @Post(':id/submit-for-approval') submitForApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
+    return this.svc.submitForApproval(id, userId);
+  }
+
+  @Permissions({ module: 'approval', action: 'approve' })
+  @Post(':id/approve')
+  approve(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks?: string }, @CurrentUser('id') userId: string) {
+    return this.svc.approve(id, userId, dto?.remarks);
+  }
+
+  @Permissions({ module: 'approval', action: 'reject' })
+  @Post(':id/reject')
+  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks: string }, @CurrentUser('id') userId: string) {
+    return this.svc.reject(id, userId, dto.remarks);
   }
 
   // Detail lines (the grid)

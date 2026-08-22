@@ -15,7 +15,9 @@ import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 const TABLE = 'IM_Item';
 const ACCESS_CODE = 'YARN';
 
-const HEADER_COLUMNS = [
+// Exported for worklist-fields.service.ts (Customize Worklist field-metadata source) — raw
+// column names as-is, matching exactly what unified-grid.service.ts's own `SELECT *` returns.
+export const HEADER_COLUMNS = [
   // Top section + General tab / General Information
   'InventoryCode', 'InventoryName', 'InUse', 'InventoryType', 'AccessCode', 'SpecialCode',
   'GroupId', 'CategoryId', 'YarnTypeId', 'ShelfLife', 'ShelfLifeUnit', 'MarkId', 'ModelId',

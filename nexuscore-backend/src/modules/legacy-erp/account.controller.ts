@@ -28,6 +28,13 @@ export class AccountController {
     return this.svc.getByCode(code);
   }
 
+  // Declared ahead of the generic :id route below so "next-code" is never parsed as an id.
+  // Preview only — see AccountService.previewNextCode's own comment for why this doesn't
+  // consume a sequence slot; the real code is (re)generated inside create() itself.
+  @Get('next-code') async nextCode(@Query('type') type: string) {
+    return { code: await this.svc.previewNextCode(type) };
+  }
+
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
     return this.svc.get(id);
   }

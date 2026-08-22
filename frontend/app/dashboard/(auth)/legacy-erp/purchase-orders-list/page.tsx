@@ -7,21 +7,37 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import {
-  Search, RefreshCw, Plus, MoreHorizontal, Eye, Pencil, Trash2, ShoppingCart, SearchX,
+  Search, RefreshCw, Plus, Eye, Pencil, Trash2, ShoppingCart, SearchX,
   ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown,
 } from "lucide-react";
+import { formatCell } from "@/lib/legacy-erp/humanize";
+import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
+import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
+import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 
 type SortKey = "receiptNo" | "documentNo" | "receiptDate";
+type ApprovalFilter = "all" | "approved" | "unapproved" | "rejected";
+// General Settings -> Approval Configuration screenKey for this screen — must match
+// purchase-order.service.ts's own APPROVAL_SCREEN_KEY exactly.
+const APPROVAL_SCREEN_KEY = "/dashboard/legacy-erp/purchase-orders-list";
+
+function ApprovalStatusBadge({ status }: { status?: string }) {
+  if (status === "approved") return <Badge className="h-5 text-[11px] font-normal">Approved</Badge>;
+  if (status === "rejected") return <Badge variant="destructive" className="h-5 text-[11px] font-normal">Rejected</Badge>;
+  return <Badge variant="secondary" className="h-5 text-[11px] font-normal">Unapproved</Badge>;
+}
 
 function SortableHead({
   children, sortKey, activeKey, dir, onSort,
@@ -55,12 +71,32 @@ export default function PurchaseOrderListPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("receiptNo");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const wl = useWorklist({ storageKey: "purchaseOrdersListWorklists" });
 
-  const load = async (term?: string) => {
+  // General Settings -> Approval Configuration — the status filter (and its column) only ever
+  // appears when this screen is actually configured to require approval; hidden entirely
+  // otherwise, same "no approval UI when Approval Required = No" rule the detail screen follows.
+  const [approvalRequired, setApprovalRequired] = useState(false);
+  const [approvalFilter, setApprovalFilter] = useState<ApprovalFilter>("all");
+  useEffect(() => {
+    approvalConfigApi.list()
+      .then((r: any) => {
+        const found = Array.isArray(r) ? r.find((c: any) => c.screenKey === APPROVAL_SCREEN_KEY) : null;
+        setApprovalRequired(!!found?.approvalRequired);
+      })
+      .catch(() => {});
+  }, []);
+
+  const load = async (term?: string, worklistOverride?: Worklist | null, statusOverride?: ApprovalFilter) => {
     setLoading(true);
     try {
-      const r: any = await legacyErpApi.purchaseOrders.list(term);
-      setRows(Array.isArray(r) ? r : []);
+      const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
+      const status = statusOverride ?? approvalFilter;
+      const r: any = worklist
+        ? await legacyErpApi.worklistFields.resolve("purchase-order-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
+        : await legacyErpApi.purchaseOrders.list(term, status === "all" ? undefined : status);
+      const list = Array.isArray(r) ? r : [];
+      setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load purchase orders");
       setRows([]);
@@ -74,6 +110,23 @@ export default function PurchaseOrderListPage() {
 
   const doSearch = () => load(search.trim() || undefined);
   const refresh = () => { setSearch(""); load(); };
+  const onApprovalFilterChange = (value: ApprovalFilter) => {
+    setApprovalFilter(value);
+    load(search.trim() || undefined, undefined, value);
+  };
+
+  const onWorklistChange = (id: string) => {
+    const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
+    wl.setActiveWorklistId(id);
+    load(search.trim() || undefined, worklist);
+  };
+
+  const handleSaveWorklists = async (next: Worklist[]) => {
+    const { activeWorklist } = await wl.saveWorklists(next);
+    load(search.trim() || undefined, activeWorklist);
+  };
+
+  const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
 
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/purchase-orders?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/purchase-orders?id=${id}&mode=edit`);
@@ -149,6 +202,19 @@ export default function PurchaseOrderListPage() {
           <Button variant="outline" size="sm" onClick={refresh} title="Refresh">
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
+          {approvalRequired && (
+            <Select value={approvalFilter} onValueChange={(v) => onApprovalFilterChange(v as ApprovalFilter)}>
+              <SelectTrigger size="sm" className="h-9 w-40">
+                <SelectValue placeholder="Approval Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="unapproved">Unapproved</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <Button size="sm" onClick={createNew}>
           <Plus className="h-3.5 w-3.5 mr-2" />Create New
@@ -160,21 +226,32 @@ export default function PurchaseOrderListPage() {
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                <SortableHead sortKey="receiptNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt No</SortableHead>
-                <SortableHead sortKey="receiptDate" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Order Date</SortableHead>
-                <SortableHead sortKey="documentNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Document No</SortableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Grand Total</TableHead>
+                {activeColumns ? (
+                  activeColumns.map((c) => (
+                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                      {wl.columnLabel(c)}
+                    </TableHead>
+                  ))
+                ) : (
+                  <>
+                    <SortableHead sortKey="receiptNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt No</SortableHead>
+                    <SortableHead sortKey="receiptDate" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Order Date</SortableHead>
+                    <SortableHead sortKey="documentNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Document No</SortableHead>
+                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Grand Total</TableHead>
+                    {approvalRequired && <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Approval Status</TableHead>}
+                  </>
+                )}
                 <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? (approvalRequired ? 5 : 4)) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               ) : rows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={5} className="py-12">
+                  <TableCell colSpan={(activeColumns?.length ?? (approvalRequired ? 5 : 4)) + 1} className="py-12">
                     <Empty>
                       <EmptyHeader>
                         <EmptyMedia variant="icon">{searched ? <SearchX /> : <ShoppingCart />}</EmptyMedia>
@@ -189,37 +266,59 @@ export default function PurchaseOrderListPage() {
                     </Empty>
                   </TableCell>
                 </TableRow>
-              ) : sortedRows.map((row) => (
-                <TableRow key={row.id} className="group cursor-pointer hover:bg-muted/40" onDoubleClick={() => view(row.id)}>
-                  <TableCell className="py-3">
-                    <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>
-                  </TableCell>
-                  <TableCell className="py-3">{row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"}</TableCell>
-                  <TableCell className="py-3">{row.documentNo || <span className="text-muted-foreground">—</span>}</TableCell>
-                  <TableCell className="py-3 font-medium">{row.grandTotal != null ? Number(row.grandTotal).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</TableCell>
+              ) : sortedRows.map((row) => {
+                const rowActions: RowAction[] = [
+                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
+                ];
+                return (
+                <RowContextMenu key={row.id} actions={rowActions}>
+                <TableRow className="group cursor-pointer hover:bg-muted/40" onDoubleClick={() => view(row.id)}>
+                  {activeColumns ? (
+                    activeColumns.map((c) => (
+                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
+                    ))
+                  ) : (
+                    <>
+                      <TableCell className="py-3">
+                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>
+                      </TableCell>
+                      <TableCell className="py-3">{row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"}</TableCell>
+                      <TableCell className="py-3">{row.documentNo || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="py-3 font-medium">{row.grandTotal != null ? Number(row.grandTotal).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</TableCell>
+                      {approvalRequired && <TableCell className="py-3"><ApprovalStatusBadge status={row.approvalStatus} /></TableCell>}
+                    </>
+                  )}
                   <TableCell className="py-3 text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuItem onClick={() => view(row.id)}><Eye className="h-4 w-4 mr-2" />View</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => update(row.id)}><Pencil className="h-4 w-4 mr-2" />Update</DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget({ id: row.id, code: row.receiptNo })}>
-                          <Trash2 className="h-4 w-4 mr-2" />Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                   </TableCell>
                 </TableRow>
-              ))}
+                </RowContextMenu>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
       </div>
+
+      <WorklistBar
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        onActiveWorklistChange={onWorklistChange}
+        onDesignOpen={() => wl.setDesignOpen(true)}
+      />
+
+      <WorklistDesignModal
+        open={wl.designOpen}
+        onOpenChange={wl.setDesignOpen}
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        activeTableSource="purchase-order"
+        primaryScope="purchase-order-list"
+        gridLabel="the Purchase Orders grid"
+        onSave={handleSaveWorklists}
+      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

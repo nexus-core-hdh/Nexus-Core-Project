@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LookupField } from "@/components/legacy-erp/lookup-field";
+import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
+import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
-import { Search, Save, FilePlus2, Plus, Trash2, Scissors, ListX, Settings2, ChevronRight } from "lucide-react";
+import { Search, Save, FilePlus2, Plus, Trash2, Scissors, ListX, Settings2 } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField, FormSwitchField } from "@/components/forms/form-field";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
@@ -23,6 +27,13 @@ interface TrimLine {
   trimCode: string; trimName: string; explanation: string;
   orderQuantity: string; unit: string; quantity: string; wastePct: string;
   forexId: string; forexPrice: string; unitPrice: string;
+  // Real Trim Card (IM_Item, AccessCode='TRIM') RecId the row's Trim Code was picked from — the
+  // dependency-flow anchor for Name/Unit auto-binding. Client-side only: MA_YarnTrimCardItem has
+  // no FK column to IM_Item (TrimCode/TrimName/Unit are plain varchar, confirmed live against the
+  // actual table), so there is nothing to persist this into — Save keeps writing TrimCode/
+  // TrimName/Unit as text through the existing columns, exactly as before. On reload it's
+  // re-resolved by matching the saved TrimCode against the live Trim Card list (see loadLines).
+  trimInventoryId: number | null;
 }
 
 const emptyForm = {
@@ -36,36 +47,119 @@ const emptyForm = {
 const blankLine = (): TrimLine => ({
   id: uid(), savedId: null, trimCode: "", trimName: "", explanation: "",
   orderQuantity: "", unit: "", quantity: "", wastePct: "", forexId: "", forexPrice: "", unitPrice: "",
+  trimInventoryId: null,
 });
 
 export default function CustomerDefineTrimsPage() {
   const [codeInput, setCodeInput] = useState("");
   const [trimCardId, setTrimCardId] = useState<number | null>(null);
   const [form, setForm] = useState<any>(emptyForm);
-  const [lines, setLines] = useState<TrimLine[]>([]);
+  // A brand-new, unsaved Customer Define Trim always starts with exactly one empty, ready-to-use
+  // row — never an empty grid requiring "Add Row" before Trim Code can even be selected.
+  const [lines, setLines] = useState<TrimLine[]>(() => [blankLine()]);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("General");
 
   const set = (k: string, v: any) => setForm((p: any) => ({ ...p, [k]: v }));
 
+  // Real Trim Card master data (IM_Item, AccessCode='TRIM') — the SAME source
+  // trim-inventory-cards/page.tsx (the Trim Card screen itself) reads and writes, via the
+  // existing TrimInventoryCardService/API. Fetched once (same "one unscoped list call, filter
+  // client-side while typing" convention purchase-order-line-grid.tsx already established for
+  // its own Code field) — no hardcoded Trim Codes, no second/duplicate lookup.
+  const [trimCardOptions, setTrimCardOptions] = useState<AutocompleteOption[]>([]);
+  useEffect(() => {
+    legacyErpApi.trimInventoryCards.list()
+      .then((r: any) => setTrimCardOptions(Array.isArray(r) ? r.map((t: any) => ({ id: String(t.id), code: t.inventoryCode, name: t.inventoryName })) : []))
+      .catch(() => {});
+  }, []);
+
+  // Per-Trim-Card valid Unit options (IM_ItemUnitItemSize), keyed by trimInventoryId — the EXACT
+  // same lookupItemUnits() endpoint/table Purchase Order's own per-line Unit cell already binds
+  // to (see purchase-order-line-grid.tsx's itemUnitsByInventoryId), reused as-is rather than a
+  // new Unit master/lookup. Sorted IsMainUnit DESC server-side, so index 0 is always the Trim
+  // Card's own configured (main) Unit.
+  const [unitOptionsByTrim, setUnitOptionsByTrim] = useState<Record<string, AutocompleteOption[]>>({});
+  const unitOptionsRef = useRef(unitOptionsByTrim);
+  unitOptionsRef.current = unitOptionsByTrim;
+  const ensureUnitOptionsLoaded = useCallback((trimInventoryId: number, onLoaded?: (opts: AutocompleteOption[]) => void) => {
+    const key = String(trimInventoryId);
+    const cached = unitOptionsRef.current[key];
+    if (cached) { onLoaded?.(cached); return; }
+    legacyErpApi.lookupItemUnits(trimInventoryId)
+      .then((r: any) => {
+        const opts: AutocompleteOption[] = Array.isArray(r) ? r.map((u: any) => ({ id: String(u.id), code: u.code, name: u.name })) : [];
+        setUnitOptionsByTrim((prev) => ({ ...prev, [key]: opts }));
+        onLoaded?.(opts);
+      })
+      .catch(() => setUnitOptionsByTrim((prev) => ({ ...prev, [key]: [] })));
+  }, []);
+
+  // Which single cell (row + field) currently has its searchable editor mounted — this screen's
+  // other cells are permanently-mounted plain inputs (no click-to-edit), so Trim Code/Unit use
+  // this minimal local gate purely to keep AutocompleteTextCell's suggestion popover closed until
+  // the user actually activates the cell, matching every other lookup cell's closed-at-rest
+  // behavior in the app (see autocomplete-text-cell.tsx's own startOpen comment).
+  const [activeAutocomplete, setActiveAutocomplete] = useState<{ lineId: string; field: "trimCode" | "unit" } | null>(null);
+
+  // Shows the code the next Save will get, before Save is ever pressed — a preview only (see
+  // trim-card.controller.ts's next-code route). Mirrors yarn-cards/page.tsx's own
+  // loadPreviewCode; Code is never user-editable here.
+  const loadPreviewCode = async () => {
+    try {
+      const r: any = await legacyErpApi.trimCards.previewNextCode();
+      set("code", r.code);
+      lastSavedRef.current = { ...lastSavedRef.current, form: { ...lastSavedRef.current.form, code: r.code } };
+    } catch {
+      // Non-critical — Save still generates the real code even if this preview fails to load.
+    }
+  };
+
+  useEffect(() => {
+    loadPreviewCode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Tracks the last loaded/saved {form, lines} snapshot so the Workspace Tab Bar
   // can warn before closing a tab with unsaved edits. Only updated at clean-state
   // moments (initial state, search, save, New) — never by `set()`/`updateLine()`,
   // which is exactly what should make the screen "dirty".
-  const lastSavedRef = useRef<{ form: any; lines: TrimLine[] }>({ form: emptyForm, lines: [] });
+  // Seeded with the SAME `lines` array the initial useState above already produced (not a fresh
+  // `[]`) — otherwise the default row would make a brand-new, untouched screen look "dirty" the
+  // instant it opens, since isDirty below is a plain JSON.stringify comparison against this ref.
+  const lastSavedRef = useRef<{ form: any; lines: TrimLine[] }>({ form: emptyForm, lines });
+  const { clearDraft } = useDraftForm({ storageKey: "trimCardDraft", enabled: trimCardId == null, form, setForm });
 
   const loadLines = async (id: number) => {
     const rows: any = await legacyErpApi.trimCards.listItems(id);
     const list = Array.isArray(rows) ? rows : [];
-    const mapped = list.map((r: any) => ({
-      id: String(r.id), savedId: r.id,
-      trimCode: r.trimCode ?? "", trimName: r.trimName ?? "", explanation: r.explanation ?? "",
-      orderQuantity: r.orderQuantity ?? "", unit: r.unit ?? "", quantity: r.quantity ?? "",
-      wastePct: r.wastePct ?? "", forexId: r.forexId ?? "", forexPrice: r.forexPrice ?? "", unitPrice: r.unitPrice ?? "",
-    }));
-    setLines(mapped);
-    return mapped;
+    const mapped = list.map((r: any) => {
+      // No persisted FK to re-derive from (see TrimLine's own comment) — a saved row's
+      // TrimCode is matched back against the live Trim Card list on a best-effort basis, purely
+      // so further edits (e.g. changing Unit) still have a resolved id to fetch valid units
+      // from. An unmatched code (Trim Card since renamed/deleted) just leaves it null — the
+      // saved TrimCode/TrimName/Unit text still displays exactly as before, never erased.
+      const matched = trimCardOptions.find((o) => o.code === r.trimCode);
+      return {
+        id: String(r.id), savedId: r.id,
+        trimCode: r.trimCode ?? "", trimName: r.trimName ?? "", explanation: r.explanation ?? "",
+        orderQuantity: r.orderQuantity ?? "", unit: r.unit ?? "", quantity: r.quantity ?? "",
+        wastePct: r.wastePct ?? "", forexId: r.forexId ?? "", forexPrice: r.forexPrice ?? "", unitPrice: r.unitPrice ?? "",
+        trimInventoryId: matched ? Number(matched.id) : null,
+      };
+    });
+    // Prefetch each resolved row's valid Unit options (no autofill — an already-saved Unit value
+    // must never be overwritten just because the grid reloaded), same prefetch-on-load courtesy
+    // purchase-order-line-grid.tsx already gives its own Unit cell.
+    new Set(mapped.map((r) => r.trimInventoryId).filter((v): v is number => v != null)).forEach((id) => ensureUnitOptionsLoaded(id));
+    // Never leaves the grid with zero rows: an existing Customer's previously-saved lines are
+    // shown exactly as saved, but a record that (still) has none — brand new, or every line was
+    // removed — always gets the one ready-to-use empty row back, matching what a fresh "New"
+    // already shows. Add Row remains the only way to get a SECOND row.
+    const withDefault = mapped.length ? mapped : [blankLine()];
+    setLines(withDefault);
+    return withDefault;
   };
 
   const search = async () => {
@@ -73,7 +167,17 @@ export default function CustomerDefineTrimsPage() {
     setSearching(true);
     try {
       const r: any = await legacyErpApi.trimCards.getByCode(codeInput.trim());
-      const loadedForm = { ...emptyForm, ...r };
+      // trim-card.service.ts's get()/getByCode() return the bare CustomerId FK only (no join —
+      // see that file's own comment: "the Customer Define Trim form already resolves the
+      // customer via its own LookupField"), so a loaded/reloaded record needs an explicit
+      // resolve here, same pattern purchase-orders/page.tsx uses for its own Current Account
+      // field. accounts.get() (unlike accounts.list()) returns the full FI_Account row under
+      // its raw camelCase names — currentAccountCode/currentAccountName, not code/name.
+      const customer = r.customerId ? await legacyErpApi.accounts.get(r.customerId).catch(() => null) : null;
+      const loadedForm = {
+        ...emptyForm, ...r,
+        customerLabel: customer ? `${(customer as any).currentAccountCode} — ${(customer as any).currentAccountName}` : "",
+      };
       setForm(loadedForm);
       setTrimCardId(r.id);
       const loadedLines = await loadLines(r.id);
@@ -82,10 +186,11 @@ export default function CustomerDefineTrimsPage() {
     } catch {
       toast.error("No trim card found with that code");
       setTrimCardId(null);
-      setLines([]);
-      const draft = { ...emptyForm, code: codeInput.trim() };
-      setForm(draft);
-      lastSavedRef.current = { form: draft, lines: [] };
+      const resetLines = [blankLine()];
+      setLines(resetLines);
+      setForm(emptyForm);
+      lastSavedRef.current = { form: emptyForm, lines: resetLines };
+      loadPreviewCode();
     } finally {
       setSearching(false);
     }
@@ -95,12 +200,13 @@ export default function CustomerDefineTrimsPage() {
     setTrimCardId(null);
     setCodeInput("");
     setForm(emptyForm);
-    setLines([]);
-    lastSavedRef.current = { form: emptyForm, lines: [] };
+    const resetLines = [blankLine()];
+    setLines(resetLines);
+    lastSavedRef.current = { form: emptyForm, lines: resetLines };
+    loadPreviewCode();
   };
 
   const save = async () => {
-    if (!form.code) return toast.error("Code is required");
     setSaving(true);
     try {
       const payload = {
@@ -122,6 +228,7 @@ export default function CustomerDefineTrimsPage() {
         setTrimCardId(id);
         setCodeInput(r.code);
         setForm((p: any) => { savedForm = { ...p, ...r }; return savedForm; });
+        clearDraft();
         toast.success("Created");
       }
 
@@ -148,6 +255,45 @@ export default function CustomerDefineTrimsPage() {
 
   const addLine = () => setLines((p) => [...p, blankLine()]);
   const updateLine = (id: string, patch: Partial<TrimLine>) => setLines((p) => p.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+
+  // Picking a real Trim Card is the ONLY way a row's dependent Name/Unit get bound — Code is
+  // the source selection, Name and Unit are dependent values (see the enhancement spec's own
+  // "Dependency Flow"). Unit starts blank and is filled in the moment lookupItemUnits resolves
+  // this Trim Card's configured (main) Unit, without blocking the Code/Name binding on that
+  // second request.
+  const handleTrimCodeSelect = useCallback((lineId: string, option: AutocompleteOption) => {
+    const trimInventoryId = Number(option.id);
+    updateLine(lineId, { trimCode: option.code || "", trimName: option.name || "", trimInventoryId, unit: "" });
+    ensureUnitOptionsLoaded(trimInventoryId, (opts) => {
+      const mainUnit = opts[0];
+      if (mainUnit) updateLine(lineId, { unit: mainUnit.code || mainUnit.name || "" });
+    });
+  }, [ensureUnitOptionsLoaded]);
+
+  // Fires on blur/Enter when nothing was picked from the suggestion list — AutocompleteTextCell
+  // never rejects free-typed text (see its own comment), but a Code that no longer matches the
+  // row's currently bound Trim Card is exactly the "stale dependent value" the spec calls out:
+  // clearing Code clears Name/Unit/trimInventoryId, and typing something that doesn't match the
+  // existing binding does too, rather than silently keeping a Name/Unit that belongs to a
+  // different (or no longer selected) Trim Card.
+  const commitTrimCode = useCallback((lineId: string, typedValue: string) => {
+    setLines((prev) => prev.map((l) => {
+      if (l.id !== lineId) return l;
+      const trimmed = typedValue.trim();
+      if (!trimmed) return { ...l, trimCode: "", trimName: "", unit: "", trimInventoryId: null };
+      const boundOption = l.trimInventoryId != null ? trimCardOptions.find((o) => o.id === String(l.trimInventoryId)) : null;
+      if (boundOption && boundOption.code === trimmed) return { ...l, trimCode: trimmed };
+      return { ...l, trimCode: trimmed, trimName: "", unit: "", trimInventoryId: null };
+    }));
+  }, [trimCardOptions]);
+
+  // Unit stays user-editable (matching this screen's existing workflow), just scoped to the
+  // selected Trim Card's own valid units instead of a free-for-all — picking one is the normal
+  // path; typing free text is still tolerated, same as Code, rather than inventing a new
+  // rejection rule the rest of this screen doesn't otherwise enforce.
+  const handleUnitSelect = (lineId: string, option: AutocompleteOption) => updateLine(lineId, { unit: option.code || option.name || "" });
+  const commitUnit = (lineId: string, typedValue: string) => updateLine(lineId, { unit: typedValue.trim() });
+
   const removeLine = async (line: TrimLine) => {
     if (line.savedId && trimCardId) {
       try {
@@ -168,17 +314,12 @@ export default function CustomerDefineTrimsPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>Legacy ERP</span>
-        <ChevronRight className="h-3 w-3" />
-        <span>Customer Define Trims</span>
-        {trimCardId && (
-          <>
-            <ChevronRight className="h-3 w-3" />
-            <span className="font-medium text-foreground">{form.code}</span>
-          </>
-        )}
-      </div>
+      <LegacyErpBreadcrumb trail={[
+        { label: "Legacy ERP" },
+        { label: "Inventory" },
+        { label: "Customer Define Trim", href: "/dashboard/legacy-erp/trim-cards-list" },
+        ...(trimCardId ? [{ label: form.code }] : []),
+      ]} />
 
       <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-4">
@@ -187,9 +328,9 @@ export default function CustomerDefineTrimsPage() {
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-[22px] font-semibold leading-tight tracking-tight">
-              {trimCardId ? (form.code || "Trim Card") : "New Trim Card"}
+              {trimCardId ? (form.code || "Customer Define Trim") : "New Customer Define Trim"}
             </h1>
-            <p className="mt-1 text-xs text-muted-foreground">Customer Define Trims</p>
+            <p className="mt-1 text-xs text-muted-foreground">Customer Define Trim</p>
           </div>
         </div>
 
@@ -219,6 +360,9 @@ export default function CustomerDefineTrimsPage() {
 
       <div className="space-y-4">
         <FormSection title="Identification">
+          {/* Code is read-only everywhere: server-generated on Save (TC-001, ...) and never
+              user-editable, matching yarn-cards/page.tsx's own Code field convention. */}
+          <FormTextField label="Code" value={form.code || "Generating..."} onChange={() => {}} disabled />
           <FormTextField label="Explanation" value={form.explanation} onChange={(v) => set("explanation", v)} span="wide" />
           <FormSwitchField label="In Use" checked={form.inUse} onChange={(v) => set("inUse", v)} />
         </FormSection>
@@ -228,9 +372,12 @@ export default function CustomerDefineTrimsPage() {
             label="Customer"
             displayValue={form.customerLabel || (form.customerId ? String(form.customerId) : "")}
             fetchOptions={(s) => legacyErpApi.accounts.list(s) as any}
-            getLabel={(item: any) => `${item.currentAccountCode} — ${item.currentAccountName}`}
+            // accounts.list() (this screen's own search source) returns the short "code"/"name"
+            // aliases — see account.service.ts's list() — not currentAccountCode/
+            // currentAccountName (that shape only comes back from accounts.get()/getByCode()).
+            getLabel={(item: any) => `${item.code} — ${item.name}`}
             getValue={(item: any) => item.id}
-            onSelect={(item: any) => setForm((p: any) => ({ ...p, customerId: item.id, customerLabel: `${item.currentAccountCode} — ${item.currentAccountName}` }))}
+            onSelect={(item: any) => setForm((p: any) => ({ ...p, customerId: item.id, customerLabel: `${item.code} — ${item.name}` }))}
           />
           <LookupField
             label="Style Group"
@@ -303,11 +450,65 @@ export default function CustomerDefineTrimsPage() {
                     </TableRow>
                   ) : lines.map((line) => (
                     <TableRow key={line.id} className="group">
-                      <TableCell><GridInput value={line.trimCode} onChange={(v) => updateLine(line.id, { trimCode: v })} /></TableCell>
-                      <TableCell><GridInput value={line.trimName} onChange={(v) => updateLine(line.id, { trimName: v })} /></TableCell>
+                      {/* Trim Code — real Trim Card binding. Searchable over the live IM_Item
+                          (AccessCode='TRIM') list; picking a suggestion resolves
+                          trimInventoryId + Code + Name + (async) Unit together. Closed at rest
+                          (a plain input, matching every other cell's look) — activating it swaps
+                          in the same AutocompleteTextCell every other lookup cell in the app
+                          uses, only opening its suggestion list once the user actually engages. */}
+                      <TableCell>
+                        {activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "trimCode" ? (
+                          <AutocompleteTextCell
+                            autoFocus
+                            startOpen={false}
+                            value={line.trimCode}
+                            options={trimCardOptions}
+                            showDropdownIcon
+                            onChange={(v) => updateLine(line.id, { trimCode: v })}
+                            onCommit={(v) => { commitTrimCode(line.id, v); setActiveAutocomplete(null); }}
+                            onCancel={() => setActiveAutocomplete(null)}
+                            onSelectOption={(opt) => { handleTrimCodeSelect(line.id, opt); setActiveAutocomplete(null); }}
+                          />
+                        ) : (
+                          <EditableGridInput
+                            value={line.trimCode}
+                            onChange={() => {}}
+                            onFocus={() => setActiveAutocomplete({ lineId: line.id, field: "trimCode" })}
+                            readOnly
+                            placeholder="Search Trim Code..."
+                          />
+                        )}
+                      </TableCell>
+                      {/* Trim Name — never typed, always the selected Trim Card's own name. */}
+                      <TableCell><EditableGridInput value={line.trimName} onChange={() => {}} disabled placeholder="Auto-filled from Trim Code" /></TableCell>
                       <TableCell><GridInput value={line.explanation} onChange={(v) => updateLine(line.id, { explanation: v })} /></TableCell>
                       <TableCell><GridInput type="number" align="right" value={line.orderQuantity} onChange={(v) => updateLine(line.id, { orderQuantity: v })} /></TableCell>
-                      <TableCell><GridInput value={line.unit} onChange={(v) => updateLine(line.id, { unit: v })} /></TableCell>
+                      {/* Unit — auto-bound to the selected Trim Card's configured Unit, still
+                          user-searchable/editable but scoped to only that Trim Card's own valid
+                          units (IM_ItemUnitItemSize via the existing lookupItemUnits binding). */}
+                      <TableCell>
+                        {activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "unit" ? (
+                          <AutocompleteTextCell
+                            autoFocus
+                            startOpen={false}
+                            value={line.unit}
+                            options={line.trimInventoryId != null ? (unitOptionsByTrim[String(line.trimInventoryId)] ?? []) : []}
+                            showDropdownIcon
+                            onChange={(v) => updateLine(line.id, { unit: v })}
+                            onCommit={(v) => { commitUnit(line.id, v); setActiveAutocomplete(null); }}
+                            onCancel={() => setActiveAutocomplete(null)}
+                            onSelectOption={(opt) => { handleUnitSelect(line.id, opt); setActiveAutocomplete(null); }}
+                          />
+                        ) : (
+                          <EditableGridInput
+                            value={line.unit}
+                            onChange={() => {}}
+                            onFocus={() => setActiveAutocomplete({ lineId: line.id, field: "unit" })}
+                            readOnly
+                            placeholder="Unit"
+                          />
+                        )}
+                      </TableCell>
                       <TableCell><GridInput type="number" align="right" value={line.quantity} onChange={(v) => updateLine(line.id, { quantity: v })} /></TableCell>
                       <TableCell><GridInput type="number" align="right" value={line.wastePct} onChange={(v) => updateLine(line.id, { wastePct: v })} /></TableCell>
                       <TableCell><GridInput value={line.forexId} onChange={(v) => updateLine(line.id, { forexId: v })} /></TableCell>

@@ -1,8 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
+import { ApprovalService } from '../approval/approval.service';
+import { screenKeyFor as receiptScreenKeyFor } from './inventory-receipt.service';
 
 // Purchase Order — NOT a new entity. IM_OrderReceipt/IM_OrderReceiptItem are the same
 // generic "goods receipt" spine the legacy system uses for every receipt kind (Purchase
@@ -18,10 +20,24 @@ const HEADER_TABLE = 'IM_OrderReceipt';
 const ITEM_TABLE = 'IM_OrderReceiptItem';
 const RECEIPT_TYPE = 1; // "[1-Purchase Order]" — see comment above
 
-const HEADER_COLUMNS = [
+// General Settings -> Approval Configuration screenKey for this screen — matches this screen's
+// real MenuItem.href exactly (see prisma/seed.ts's Legacy ERP menu), same convention
+// inventory-receipt.service.ts's own screenKeyFor() already establishes.
+const APPROVAL_SCREEN_KEY = '/dashboard/legacy-erp/purchase-orders-list';
+
+// Exported for worklist-fields.service.ts (Customize Worklist field-metadata source).
+// IsApproved/ApprovedAt/ApprovedBy/IsRejected/RejectedAt/RejectedBy/RejectedExplanation are
+// real, pre-existing IM_OrderReceipt columns (confirmed via information_schema — the migrated
+// schema already had a full approve/reject shape for Purchase Order, richer than IM_Receipt's
+// own IsApproved-only flag) that no writer ever selected/populated before this pass. Added here
+// purely as this screen's own existing-column "current status" mirror of the real source of
+// truth (ApprovalRequest.status, via ApprovalService) — exactly the same role IM_Receipt's own
+// IsApproved already plays for Inventory Receipt. No schema change.
+export const HEADER_COLUMNS = [
   'ReceiptNo', 'ReceiptType', 'ReceiptDate', 'DocumentNo',
   'CurrentAccountId', 'WarehouseId', 'ForexId',
   'SubTotal', 'VatAmount', 'GrandTotal',
+  'IsApproved', 'ApprovedAt', 'ApprovedBy', 'IsRejected', 'RejectedAt', 'RejectedBy', 'RejectedExplanation',
 ] as const;
 
 // Grid columns (Type/Code via InventoryId or ServiceCardId depending on ItemType/Quantity/
@@ -37,7 +53,7 @@ const HEADER_COLUMNS = [
 // was already a live FK on this table (-> SM_Service), just never populated by any writer
 // until now (Type=Service).
 const ITEM_COLUMNS = [
-  'ItemOrderNo', 'ItemType', 'InventoryId', 'ServiceCardId', 'UnitId', 'Quantity',
+  'ItemOrderNo', 'ItemType', 'InventoryId', 'ServiceCardId', 'UnitId', 'Quantity', 'GrossQuantity',
   'UnitPrice', 'ForexId', 'ForexRate', 'ForexUnitPrice',
   'VatIncluded', 'VatRate', 'VatAmount', 'ItemTotal', 'NetItemTotal',
   'ReceivedQuantity', 'ManufacturingOrderNo', 'ManufacturingOrderId', 'WorkOrderReceiptItemId', 'ColorCardId',
@@ -68,7 +84,10 @@ const ITEM_VARIANT_SELECT = Prisma.raw(['"RecId" as id', '"OrderReceiptItemId" a
 
 @Injectable()
 export class PurchaseOrderService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly approvalSvc: ApprovalService,
+  ) {}
 
   private async headerToDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, HEADER_TABLE));
@@ -80,19 +99,30 @@ export class PurchaseOrderService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, ITEM_VARIANT_TABLE));
   }
 
-  async list(search?: string) {
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt"
-          WHERE "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE}
-            AND ("ReceiptNo" ILIKE ${`%${search}%`} OR "DocumentNo" ILIKE ${`%${search}%`})
-          ORDER BY "ReceiptNo" DESC LIMIT 50
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt"
-          WHERE "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE}
-          ORDER BY "ReceiptNo" DESC LIMIT 50
-        `);
+  // approvalStatus: "all" (default/omitted) | "approved" | "unapproved" | "rejected" — reuses the
+  // same ApprovalRequest table every other approval surface reads, joined by this screen's own
+  // APPROVAL_SCREEN_KEY + the row's id as transactionId (identical join shape to
+  // inventory-card.service.ts's stockLateral() approval gate). "unapproved" means "not yet
+  // decided": no ApprovalRequest row at all (never submitted/approval not required) OR still
+  // pending_approval — matching the List filter's job of surfacing everything not yet Approved
+  // or Rejected, not inventing a third "draft" bucket the UI doesn't ask for.
+  async list(search?: string, approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected') {
+    const statusFilter = !approvalStatus || approvalStatus === 'all'
+      ? Prisma.sql``
+      : approvalStatus === 'approved'
+        ? Prisma.sql`AND ar."status" = 'approved'`
+        : approvalStatus === 'rejected'
+          ? Prisma.sql`AND ar."status" = 'rejected'`
+          : Prisma.sql`AND (ar."status" IS NULL OR ar."status" = 'pending_approval')`;
+    const searchFilter = search ? Prisma.sql`AND ("t"."ReceiptNo" ILIKE ${`%${search}%`} OR "t"."DocumentNo" ILIKE ${`%${search}%`})` : Prisma.sql``;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT ${Prisma.raw(['t."RecId" as id', ...HEADER_COLUMNS.map((c) => `t."${c}" as "${camel(c)}"`)].join(', '))},
+        CASE WHEN ar."status" IN ('approved', 'rejected') THEN ar."status" ELSE 'unapproved' END as "approvalStatus"
+      FROM "IM_OrderReceipt" t
+      LEFT JOIN "ApprovalRequest" ar ON ar."screenKey" = ${APPROVAL_SCREEN_KEY} AND ar."transactionId" = t."RecId"::text
+      WHERE t."IsDeleted" = 0 AND t."ReceiptType" = ${RECEIPT_TYPE} ${searchFilter} ${statusFilter}
+      ORDER BY t."ReceiptNo" DESC LIMIT 50
+    `);
     return sanitizeRawRow(rows);
   }
 
@@ -102,6 +132,106 @@ export class PurchaseOrderService {
     `);
     if (!rows.length) throw new NotFoundException('Purchase order not found');
     return sanitizeRawRow(rows[0]);
+  }
+
+  // Purchase Receipt -> Current Account -> right-click -> Pending Orders. PendingQty is
+  // computed here, server-side, from real persisted data only — never trusted from the
+  // frontend: OrderQty (IM_OrderReceiptItem.Quantity) minus the live SUM of every non-deleted
+  // IM_ReceiptItem row already linked back to this PO line via its existing (previously unused)
+  // "OrderReceiptItemId" FK (see inventory-receipt.service.ts). A line/PO with nothing pending
+  // is excluded by the WHERE clause itself, not a stored flag, so a fully-received PO
+  // disappears automatically the instant its last receipt is saved — no write-back to
+  // IM_OrderReceiptItem.ReceivedQuantity (that legacy column isn't maintained by this app and
+  // is deliberately not trusted as a second source of truth).
+  //
+  // Approval consistency (two fixes, both mirroring inventory-card.service.ts's own stockLateral
+  // gate exactly — same NOT EXISTS ApprovalRequest pattern, same header-soft-delete join, not a
+  // second copy of either rule):
+  //  1. `recv` now also requires the RECEIPT's own header to be non-deleted (rec."IsDeleted"=0)
+  //     — previously a soft-deleted Purchase Receipt's items still counted as "received" here
+  //     even though stockLateral already correctly excludes them from Stock on Hand, so deleting
+  //     a receipt used to leave Pending Receiving permanently (and wrongly) reduced.
+  //  2. `recv` also excludes any receipt line whose OWN receipt is still pending_approval or was
+  //     rejected (NOT EXISTS ... status <> 'approved', scoped to Purchase Receipt's real
+  //     screenKey) — an Unapproved receipt must not reduce Pending Receiving (only an Approved
+  //     one has actually "received" the goods), and a Rejected one releases its quantity back to
+  //     Pending Receiving automatically, with no separate write-back needed, since it's simply no
+  //     longer counted in this SUM. A receipt whose screen never required approval has no
+  //     ApprovalRequest row at all, so NOT EXISTS is vacuously true and it counts immediately,
+  //     exactly as before — zero behavior change when Approval Required = OFF.
+  async listPending(currentAccountId: number) {
+    const purchaseReceiptScreenKey = receiptScreenKeyFor(2);
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        po."RecId" as "orderReceiptId", po."ReceiptNo" as "receiptNo", po."ReceiptDate" as "receiptDate", po."DocumentNo" as "documentNo",
+        poi."RecId" as "orderReceiptItemId", poi."InventoryId" as "inventoryId", poi."Explanation" as "explanation",
+        poi."Quantity" as "orderQty", poi."UnitId" as "unitId", poi."UnitPrice" as "unitPrice", poi."ColorCardId" as "colorCardId",
+        i."InventoryCode" as "code", i."InventoryName" as "name",
+        COALESCE(recv."qty", 0) as "receivedQty",
+        (poi."Quantity" - COALESCE(recv."qty", 0)) as "pendingQty"
+      FROM "IM_OrderReceipt" po
+      JOIN "IM_OrderReceiptItem" poi ON poi."OrderReceiptId" = po."RecId" AND poi."IsDeleted" = 0
+      LEFT JOIN "IM_Item" i ON i."RecId" = poi."InventoryId"
+      LEFT JOIN LATERAL (
+        SELECT SUM(ri."Quantity") as qty
+        FROM "IM_ReceiptItem" ri
+        JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+        WHERE ri."OrderReceiptItemId" = poi."RecId" AND ri."IsDeleted" = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM "ApprovalRequest" ar
+            WHERE ar."screenKey" = ${purchaseReceiptScreenKey} AND ar."transactionId" = ri."InventoryReceiptId"::text AND ar."status" <> 'approved'
+          )
+      ) recv ON true
+      WHERE po."IsDeleted" = 0 AND po."ReceiptType" = ${RECEIPT_TYPE} AND po."CurrentAccountId" = ${currentAccountId}
+        AND (poi."Quantity" - COALESCE(recv."qty", 0)) > 0
+        -- Same approval gate applied to the PO itself: a PO still pending approval or rejected
+        -- shouldn't be offered for receiving yet (its lines aren't authorized to receive
+        -- against). A PO never submitted for approval (screen not configured, or approval OFF)
+        -- has no ApprovalRequest row, so this stays vacuously true — unchanged behavior.
+        AND NOT EXISTS (
+          SELECT 1 FROM "ApprovalRequest" ar
+          WHERE ar."screenKey" = ${APPROVAL_SCREEN_KEY} AND ar."transactionId" = po."RecId"::text AND ar."status" <> 'approved'
+        )
+      ORDER BY po."ReceiptNo" DESC, poi."ItemOrderNo", poi."RecId"
+    `);
+    const clean = sanitizeRawRow(rows);
+
+    // Variant breakdown — a small follow-up query (same pattern inventory-receipt.service.ts's
+    // own listItems() already uses to resolve orderReceiptNo) rather than joining into the
+    // pending-quantity query above, so it can't perturb that query's own WHERE/GROUP shape.
+    // Grouped onto each line as `variants` so Pending Orders import can copy them across
+    // verbatim onto the new IM_ReceiptItemVariant rows (see inventory-receipt.service.ts's own
+    // createItemVariantLine).
+    const lineIds = clean.map((r: any) => r.orderReceiptItemId);
+    const variantsByLine = new Map<number, any[]>();
+    if (lineIds.length) {
+      const variantRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT "RecId" as id, "OrderReceiptItemId" as "orderReceiptItemId",
+          "InventoryVariantId" as "inventoryVariantId", "Quantity" as "quantity", "NetUnitPrice" as "netUnitPrice"
+        FROM "IM_OrderReceiptItemVariant"
+        WHERE "OrderReceiptItemId" IN (${Prisma.join(lineIds)}) AND "IsDeleted" = 0
+        ORDER BY "RecId"
+      `);
+      for (const v of sanitizeRawRow(variantRows)) {
+        const list = variantsByLine.get(v.orderReceiptItemId) ?? [];
+        list.push(v);
+        variantsByLine.set(v.orderReceiptItemId, list);
+      }
+    }
+
+    const byPo = new Map<number, { id: number; receiptNo: string; receiptDate: any; documentNo: string | null; lines: any[] }>();
+    for (const r of clean) {
+      if (!byPo.has(r.orderReceiptId)) {
+        byPo.set(r.orderReceiptId, { id: r.orderReceiptId, receiptNo: r.receiptNo, receiptDate: r.receiptDate, documentNo: r.documentNo, lines: [] });
+      }
+      byPo.get(r.orderReceiptId)!.lines.push({
+        orderReceiptItemId: r.orderReceiptItemId, inventoryId: r.inventoryId, code: r.code, name: r.name,
+        explanation: r.explanation, unitId: r.unitId, unitPrice: r.unitPrice, colorCardId: r.colorCardId,
+        orderQty: r.orderQty, receivedQty: r.receivedQty, pendingQty: r.pendingQty,
+        variants: variantsByLine.get(r.orderReceiptItemId) ?? [],
+      });
+    }
+    return Array.from(byPo.values());
   }
 
   async getByReceiptNo(receiptNo: string) {
@@ -145,7 +275,20 @@ export class PurchaseOrderService {
 
   private static readonly MAX_CODE_RETRIES = 5;
 
+  // Direct-write bypass guard — same shape as inventory-receipt.service.ts's own create()/
+  // update() guard on IsApproved. A plain POST/PUT can't set Approved/Rejected state directly
+  // once this screen is configured to require approval; that state only ever changes through
+  // approve()/reject() below (permission-checked, pending-state-checked, self-approval-checked,
+  // atomic). No-op (unchanged) whenever approval isn't required for this screen.
+  private async assertNoDirectApprovalWrite(dto: Record<string, any>) {
+    if (dto.isApproved === undefined && dto.isRejected === undefined) return;
+    if (await this.approvalSvc.isApprovalRequired(APPROVAL_SCREEN_KEY)) {
+      throw new ForbiddenException('This screen requires approval — use the Approve/Reject actions instead of setting status directly.');
+    }
+  }
+
   async create(dto: Record<string, any>, userId: number) {
+    await this.assertNoDirectApprovalWrite(dto);
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
 
@@ -196,6 +339,7 @@ export class PurchaseOrderService {
 
   async update(id: number, dto: Record<string, any>, userId: number) {
     await this.get(id);
+    await this.assertNoDirectApprovalWrite(dto);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) return this.get(id);
@@ -214,6 +358,65 @@ export class PurchaseOrderService {
       UPDATE "IM_OrderReceipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
     `;
     return { message: 'Deleted' };
+  }
+
+  // --- Approval (General Settings -> Approval Configuration) ------------------------------
+  // Same thin-adapter shape as inventory-receipt.service.ts's own submitForApproval/approve/
+  // reject/getApprovalStatus: this owns the one existence check (this.get — throws NotFound for
+  // a deleted/nonexistent PO, closing the "approve a deleted transaction" gap) plus the one
+  // Purchase-Order-specific completion side effect; every permission/pending-state/self-approval/
+  // idempotency/audit concern is owned entirely by the generic ApprovalService.
+
+  async submitForApproval(id: number, userId: string) {
+    await this.get(id);
+    return this.approvalSvc.submit(APPROVAL_SCREEN_KEY, String(id), userId);
+  }
+
+  // Unlike inventory-receipt.service.ts's approve() (which preserves a genuinely pre-existing
+  // "unrestricted Approve button" behavior for when approval isn't required), Purchase Order
+  // never had ANY prior approve/reject UI — there is no legacy behavior to preserve here. So
+  // both methods always delegate to ApprovalService first: with no ApprovalRequest row (approval
+  // not required / never submitted), that call itself throws NotFoundException, and the header
+  // column flip below never runs — IsApproved/IsRejected can only ever change as the direct
+  // consequence of a real, permission-checked approval decision.
+  async approve(id: number, userId: string, remarks: string | undefined) {
+    await this.get(id);
+    // Both writes — the ApprovalRequest decision (+ AuditLog) and this screen's own
+    // IsApproved/ApprovedAt/ApprovedBy/IsRejected/RejectedAt/RejectedBy/RejectedExplanation
+    // column flip — happen in one atomic transaction, same reasoning as
+    // inventory-receipt.service.ts's own approve(): neither can commit without the other.
+    const rows = await this.prisma.$transaction(async (tx) => {
+      await this.approvalSvc.approve(APPROVAL_SCREEN_KEY, String(id), userId, remarks, tx);
+      return tx.$queryRaw<any[]>(Prisma.sql`
+        UPDATE "IM_OrderReceipt" SET
+          "IsApproved" = 1, "ApprovedAt" = now(), "ApprovedBy" = ${Number(userId) || 1},
+          "IsRejected" = 0, "RejectedAt" = NULL, "RejectedBy" = NULL, "RejectedExplanation" = NULL,
+          "UpdatedAt" = now(), "UpdatedBy" = ${Number(userId) || 1}
+        WHERE "RecId" = ${id}
+        RETURNING ${HEADER_SELECT}
+      `);
+    });
+    return sanitizeRawRow(rows[0]);
+  }
+
+  async reject(id: number, userId: string, remarks: string) {
+    await this.get(id);
+    const rows = await this.prisma.$transaction(async (tx) => {
+      await this.approvalSvc.reject(APPROVAL_SCREEN_KEY, String(id), userId, remarks, tx);
+      return tx.$queryRaw<any[]>(Prisma.sql`
+        UPDATE "IM_OrderReceipt" SET
+          "IsRejected" = 1, "RejectedAt" = now(), "RejectedBy" = ${Number(userId) || 1}, "RejectedExplanation" = ${remarks},
+          "IsApproved" = 0, "ApprovedAt" = NULL, "ApprovedBy" = NULL,
+          "UpdatedAt" = now(), "UpdatedBy" = ${Number(userId) || 1}
+        WHERE "RecId" = ${id}
+        RETURNING ${HEADER_SELECT}
+      `);
+    });
+    return sanitizeRawRow(rows[0]);
+  }
+
+  getApprovalStatus(id: number) {
+    return this.approvalSvc.getStatus(APPROVAL_SCREEN_KEY, String(id));
   }
 
   // --- Detail lines (the grid) ------------------------------------------------------------

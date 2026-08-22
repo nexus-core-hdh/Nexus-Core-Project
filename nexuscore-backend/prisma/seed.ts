@@ -639,6 +639,7 @@ async function main() {
           { title: 'Composition Master', href: '/dashboard/legacy-erp/master-lookup?key=composition', icon: 'ListTree' },
           { title: 'Inventory Card List', href: '/dashboard/legacy-erp/inventory-cards-list', icon: 'Boxes', isNew: true },
           { title: 'Purchase Orders', href: '/dashboard/legacy-erp/purchase-orders-list', icon: 'ShoppingCart', isNew: true },
+          { title: 'Sizes', href: '/dashboard/legacy-erp/sizes-list', icon: 'Scaling', isNew: true },
         ],
       },
     ];

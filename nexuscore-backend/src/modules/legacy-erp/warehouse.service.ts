@@ -4,8 +4,26 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateWarehouseDto, UpdateWarehouseDto } from './dto/warehouse.dto';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { sanitizeRawRow } from './raw-row.util';
+import { nextLegacySeqCode, previewLegacySeqCode } from './legacy-code-sequence.util';
+
+// Code (IM_Warehouse.WarehouseCode) is server-generated via the shared LegacyCodeSequence
+// table — "WH-001", "WH-002", ... Client-sent warehouseCode is always ignored (still accepted
+// on the DTO — see warehouse.dto.ts — since the Create form still sends its previewed value;
+// create() below overwrites it with a freshly-generated one either way).
+const CODE_ENTITY = 'IM_Warehouse';
+const CODE_PREFIX = 'WH';
 
 const TABLE = 'IM_Warehouse';
+
+// Raw column names, purely for worklist-fields.service.ts (Customize Worklist field-metadata
+// source) — kept independent of ROW_SELECT below (a hand-written aliased template string, not
+// derived from an array like the other legacy-erp services) so this addition can't affect the
+// existing SELECT/INSERT/UPDATE query behavior in any way.
+export const WAREHOUSE_COLUMNS = [
+  'WarehouseCode', 'WarehouseName', 'AccessCode', 'SpecialCode', 'StartDate', 'EndDate',
+  'ControlType', 'MControlType', 'IsDefaultMain', 'IsDefaultShipment', 'IsVirtual',
+  'IsWarehouseDeclaration', 'IsShowRoom', 'IsSwatchCard', 'InUse',
+] as const;
 
 const ROW_SELECT = `
   "RecId" as id, "CompanyId" as "companyId", "WorkplaceId" as "workplaceId",
@@ -50,8 +68,13 @@ export class WarehouseService {
     return sanitizeRawRow(rows[0]);
   }
 
+  async previewNextCode(): Promise<string> {
+    return previewLegacySeqCode(this.prisma, CODE_ENTITY, CODE_PREFIX, TABLE, 'WarehouseCode');
+  }
+
   async create(dto: CreateWarehouseDto, userId: number) {
     const toDb = await this.toDb();
+    const warehouseCode = await nextLegacySeqCode(this.prisma, CODE_ENTITY, CODE_PREFIX, TABLE, 'WarehouseCode');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO "IM_Warehouse" (
         "CompanyId", "WorkplaceId", "WarehouseCode", "WarehouseName", "AccessCode", "SpecialCode",
@@ -59,7 +82,7 @@ export class WarehouseService {
         "IsDefaultMain", "IsDefaultShipment", "IsVirtual", "IsWarehouseDeclaration", "IsShowRoom", "IsSwatchCard",
         "InUse", "InsertedAt", "InsertedBy", "IsDeleted", "UUID"
       ) VALUES (
-        1, ${toDb('WorkplaceId', dto.workplaceId) ?? 1}, ${dto.warehouseCode}, ${dto.warehouseName},
+        1, ${toDb('WorkplaceId', dto.workplaceId) ?? 1}, ${warehouseCode}, ${dto.warehouseName},
         ${toDb('AccessCode', dto.accessCode) ?? null}, ${toDb('SpecialCode', dto.specialCode) ?? null},
         ${toDb('StartDate', dto.startDate) ?? null}, ${toDb('EndDate', dto.endDate) ?? null},
         ${toDb('ControlType', dto.controlType) ?? 0}, ${toDb('MControlType', dto.mControlType) ?? 0},
@@ -75,10 +98,11 @@ export class WarehouseService {
   async update(id: number, dto: UpdateWarehouseDto, userId: number) {
     await this.get(id);
     const toDb = await this.toDb();
+    // WarehouseCode is immutable after creation — never editable via update, regardless of
+    // what the client sends (deliberately omitted from the SET list below).
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE "IM_Warehouse" SET
         "WorkplaceId" = COALESCE(${toDb('WorkplaceId', dto.workplaceId) ?? null}, "WorkplaceId"),
-        "WarehouseCode" = COALESCE(${dto.warehouseCode ?? null}, "WarehouseCode"),
         "WarehouseName" = COALESCE(${dto.warehouseName ?? null}, "WarehouseName"),
         "AccessCode" = COALESCE(${toDb('AccessCode', dto.accessCode) ?? null}, "AccessCode"),
         "SpecialCode" = COALESCE(${toDb('SpecialCode', dto.specialCode) ?? null}, "SpecialCode"),

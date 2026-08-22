@@ -254,14 +254,25 @@ export const legacyErpApi = {
   warehouses: {
     list: (search?: string) => api.get(`/legacy-erp/warehouses${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/warehouses/${id}`),
+    // Preview only — the authoritative code is always (re)generated server-side at create()
+    // time; this is just what the Create form shows before Save. See warehouse.service.ts.
+    previewNextCode: () => api.get(`/legacy-erp/warehouses/next-code`),
     create: (d: any) => api.post('/legacy-erp/warehouses', d),
     update: (id: number, d: any) => api.put(`/legacy-erp/warehouses/${id}`, d),
     delete: (id: number) => api.delete(`/legacy-erp/warehouses/${id}`),
+  },
+  // Module ('FABRIC'|'YARN'|'TRIM') + Warehouse scoped config — see warehouse-parameter.service.ts.
+  warehouseParameters: {
+    get: (module: string, warehouseId: number) => api.get(`/legacy-erp/warehouse-parameters?module=${encodeURIComponent(module)}&warehouseId=${warehouseId}`),
+    save: (d: any) => api.put('/legacy-erp/warehouse-parameters', d),
   },
   accounts: {
     list: (search?: string) => api.get(`/legacy-erp/accounts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/accounts/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/accounts/by-code/${encodeURIComponent(code)}`),
+    // Preview only — the authoritative code is always (re)generated server-side at create()
+    // time; this is just what the Create form shows before Save. See account.service.ts.
+    nextCode: (type: string | number) => api.get(`/legacy-erp/accounts/next-code?type=${encodeURIComponent(String(type))}`),
     create: (d: any) => api.post('/legacy-erp/accounts', d),
     update: (id: number, d: any) => api.put(`/legacy-erp/accounts/${id}`, d),
     delete: (id: number) => api.delete(`/legacy-erp/accounts/${id}`),
@@ -279,6 +290,7 @@ export const legacyErpApi = {
     list: (search?: string) => api.get(`/legacy-erp/trim-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/trim-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/trim-cards/by-code/${encodeURIComponent(code)}`),
+    previewNextCode: () => api.get(`/legacy-erp/trim-cards/next-code`),
     create: (d: any) => api.post('/legacy-erp/trim-cards', d),
     update: (id: number, d: any) => api.put(`/legacy-erp/trim-cards/${id}`, d),
     delete: (id: number) => api.delete(`/legacy-erp/trim-cards/${id}`),
@@ -291,6 +303,7 @@ export const legacyErpApi = {
     list: (search?: string) => api.get(`/legacy-erp/unit-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/unit-sets/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/unit-sets/by-code/${encodeURIComponent(code)}`),
+    previewNextCode: () => api.get(`/legacy-erp/unit-sets/next-code`),
     create: (d: any) => api.post('/legacy-erp/unit-sets', d),
     update: (id: number, d: any) => api.put(`/legacy-erp/unit-sets/${id}`, d),
     delete: (id: number) => api.delete(`/legacy-erp/unit-sets/${id}`),
@@ -298,6 +311,20 @@ export const legacyErpApi = {
     createItem: (id: number, d: any) => api.post(`/legacy-erp/unit-sets/${id}/items`, d),
     updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/unit-sets/${id}/items/${itemId}`, d),
     removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/unit-sets/${id}/items/${itemId}`),
+  },
+  // MA_SizeSet/MA_SizeSetItem — same shape as unitSets above (see size-set.service.ts).
+  sizeSets: {
+    list: (search?: string) => api.get(`/legacy-erp/size-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/size-sets/${id}`),
+    getByCode: (code: string) => api.get(`/legacy-erp/size-sets/by-code/${encodeURIComponent(code)}`),
+    previewNextCode: () => api.get(`/legacy-erp/size-sets/next-code`),
+    create: (d: any) => api.post('/legacy-erp/size-sets', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/size-sets/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/size-sets/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/size-sets/${id}/items`),
+    createItem: (id: number, d: any) => api.post(`/legacy-erp/size-sets/${id}/items`, d),
+    updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/size-sets/${id}/items/${itemId}`, d),
+    removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/size-sets/${id}/items/${itemId}`),
   },
   yarnCards: {
     list: (search?: string) => api.get(`/legacy-erp/yarn-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
@@ -309,6 +336,7 @@ export const legacyErpApi = {
     delete: (id: number) => api.delete(`/legacy-erp/yarn-cards/${id}`),
     listTab: (id: number, tab: string) => api.get(`/legacy-erp/yarn-cards/${id}/${tab}`),
     createTabRow: (id: number, tab: string, d: any) => api.post(`/legacy-erp/yarn-cards/${id}/${tab}`, d),
+    updateTabRow: (id: number, tab: string, lineId: number, d: any) => api.put(`/legacy-erp/yarn-cards/${id}/${tab}/${lineId}`, d),
     removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/yarn-cards/${id}/${tab}/${lineId}`),
     listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/yarn-cards/${id}/attachments?kind=${kind}`),
     uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/yarn-cards/${id}/attachments`, d),
@@ -319,6 +347,7 @@ export const legacyErpApi = {
     list: (search?: string) => api.get(`/legacy-erp/fabric-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/fabric-cards/by-code/${encodeURIComponent(code)}`),
+    previewNextCode: () => api.get(`/legacy-erp/fabric-cards/next-code`),
     create: (d: any) => api.post('/legacy-erp/fabric-cards', d),
     update: (id: number, d: any) => api.put(`/legacy-erp/fabric-cards/${id}`, d),
     delete: (id: number) => api.delete(`/legacy-erp/fabric-cards/${id}`),
@@ -332,7 +361,13 @@ export const legacyErpApi = {
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/fabric-cards/${id}/attachments/${attId}/content`,
   },
   purchaseOrders: {
-    list: (search?: string) => api.get(`/legacy-erp/purchase-orders${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected") => {
+      const qs = new URLSearchParams();
+      if (search) qs.set("search", search);
+      if (approvalStatus) qs.set("approvalStatus", approvalStatus);
+      const query = qs.toString();
+      return api.get(`/legacy-erp/purchase-orders${query ? `?${query}` : ''}`);
+    },
     get: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}`),
     getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/purchase-orders/by-receipt-no/${encodeURIComponent(receiptNo)}`),
     previewNextReceiptNo: () => api.get(`/legacy-erp/purchase-orders/next-receipt-no`),
@@ -347,6 +382,10 @@ export const legacyErpApi = {
     // available for a given inventory item (item-master-driven, not order-specific), plus
     // CRUD for the per-line variant quantity rows.
     itemVariantOptions: (inventoryId: number) => api.get(`/legacy-erp/purchase-orders/item-variant-options/${inventoryId}`),
+    // Purchase Receipt -> Current Account -> right-click -> Pending Orders — POs for this
+    // account with real outstanding quantity, grouped with their pending lines. See
+    // purchase-order.service.ts's listPending() for how PendingQty is computed.
+    listPending: (currentAccountId: number) => api.get(`/legacy-erp/purchase-orders/pending?currentAccountId=${currentAccountId}`),
     listItemVariants: (id: number, itemId: number) => api.get(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants`),
     createItemVariant: (id: number, itemId: number, d: any) => api.post(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants`, d),
     updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants/${variantLineId}`, d),
@@ -358,11 +397,121 @@ export const legacyErpApi = {
     uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/purchase-orders/${id}/attachments`, d),
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/purchase-orders/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/purchase-orders/${id}/attachments/${attId}/content`,
+    // General Settings -> Approval Configuration — no-op (existing workflow unchanged) whenever
+    // approval isn't configured/required for this screen. Same shape as inventoryReceipts' own.
+    getApprovalStatus: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}/approval-status`),
+    submitForApproval: (id: number) => api.post(`/legacy-erp/purchase-orders/${id}/submit-for-approval`, {}),
+    approve: (id: number, remarks?: string) => api.post(`/legacy-erp/purchase-orders/${id}/approve`, { remarks }),
+    reject: (id: number, remarks: string) => api.post(`/legacy-erp/purchase-orders/${id}/reject`, { remarks }),
+  },
+  // IM_Receipt/IM_ReceiptItem — a separate "physical goods receipt" spine from Purchase Order's
+  // IM_OrderReceipt (see inventory-receipt.service.ts's own comment). Same shape as
+  // purchaseOrders above minus the variant/explanation endpoints (not part of this screen).
+  inventoryReceipts: {
+    list: (search?: string) => api.get(`/legacy-erp/inventory-receipts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}`),
+    getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/inventory-receipts/by-receipt-no/${encodeURIComponent(receiptNo)}`),
+    previewNextReceiptNo: () => api.get(`/legacy-erp/inventory-receipts/next-receipt-no`),
+    create: (d: any) => api.post('/legacy-erp/inventory-receipts', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/inventory-receipts/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/inventory-receipts/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}/items`),
+    createItem: (id: number, d: any) => api.post(`/legacy-erp/inventory-receipts/${id}/items`, d),
+    updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/inventory-receipts/${id}/items/${itemId}`, d),
+    removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/inventory-receipts/${id}/items/${itemId}`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/inventory-receipts/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/inventory-receipts/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/inventory-receipts/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/inventory-receipts/${id}/attachments/${attId}/content`,
+    // General Settings -> Approval Configuration — no-op (existing workflow unchanged) whenever
+    // approval isn't configured/required for this screen. See inventory-receipt.service.ts.
+    getApprovalStatus: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}/approval-status`),
+    submitForApproval: (id: number) => api.post(`/legacy-erp/inventory-receipts/${id}/submit-for-approval`, {}),
+    approve: (id: number, remarks?: string) => api.post(`/legacy-erp/inventory-receipts/${id}/approve`, { remarks }),
+    reject: (id: number, remarks: string) => api.post(`/legacy-erp/inventory-receipts/${id}/reject`, { remarks }),
+    // Variant breakdown — same shape as legacyErpApi.purchaseOrders' own itemVariantOptions/
+    // listItemVariants/createItemVariant/updateItemVariant/removeItemVariant (IM_ItemVariant
+    // read-side is identical; the write side targets IM_ReceiptItemVariant instead of
+    // IM_OrderReceiptItemVariant — see inventory-receipt.service.ts).
+    itemVariantOptions: (inventoryId: number) => api.get(`/legacy-erp/inventory-receipts/item-variant-options/${inventoryId}`),
+    listItemVariants: (id: number, itemId: number) => api.get(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants`),
+    createItemVariant: (id: number, itemId: number, d: any) => api.post(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants`, d),
+    updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants/${variantLineId}`, d),
+    removeItemVariant: (id: number, itemId: number, variantLineId: number) => api.delete(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants/${variantLineId}`),
+  },
+  // Financial Receipt (FI_Receipt) — a genuinely separate legacy entity from IM_Receipt above
+  // (see fi-receipt.service.ts's own header comment). Same shape as `inventoryReceipts`.
+  financialReceipts: {
+    list: (search?: string) => api.get(`/legacy-erp/financial-receipts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/financial-receipts/${id}`),
+    getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/financial-receipts/by-receipt-no/${encodeURIComponent(receiptNo)}`),
+    previewNextReceiptNo: () => api.get(`/legacy-erp/financial-receipts/next-receipt-no`),
+    create: (d: any) => api.post('/legacy-erp/financial-receipts', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/financial-receipts/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/financial-receipts/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/financial-receipts/${id}/items`),
+    createItem: (id: number, d: any) => api.post(`/legacy-erp/financial-receipts/${id}/items`, d),
+    updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/financial-receipts/${id}/items/${itemId}`, d),
+    removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/financial-receipts/${id}/items/${itemId}`),
+    listAttachments: (id: number, kind: "document" | "picture") => api.get(`/legacy-erp/financial-receipts/${id}/attachments?kind=${kind}`),
+    uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/financial-receipts/${id}/attachments`, d),
+    removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/financial-receipts/${id}/attachments/${attId}`),
+    attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/financial-receipts/${id}/attachments/${attId}/content`,
+  },
+  // Receipt Screen Replication — same shape as `inventoryReceipts` above (drop-in for
+  // InventoryReceiptLineGrid's `api` prop and AttachmentsTab's `AttachmentsApi`), just hitting
+  // receipt-type.controller.ts's generic `/legacy-erp/receipts/:receiptType/...` route instead.
+  // Purchase Receipt (type 1) stays on `inventoryReceipts` above — this is for the other 11.
+  receipts: (receiptType: number) => {
+    const base = `/legacy-erp/receipts/${receiptType}`;
+    return {
+      list: (search?: string) => api.get(`${base}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+      get: (id: number) => api.get(`${base}/${id}`),
+      getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
+      previewNextReceiptNo: () => api.get(`${base}/next-receipt-no`),
+      create: (d: any) => api.post(base, d),
+      update: (id: number, d: any) => api.put(`${base}/${id}`, d),
+      delete: (id: number) => api.delete(`${base}/${id}`),
+      listItems: (id: number) => api.get(`${base}/${id}/items`),
+      createItem: (id: number, d: any) => api.post(`${base}/${id}/items`, d),
+      updateItem: (id: number, itemId: number, d: any) => api.put(`${base}/${id}/items/${itemId}`, d),
+      removeItem: (id: number, itemId: number) => api.delete(`${base}/${id}/items/${itemId}`),
+      listAttachments: (id: number, kind: "document" | "picture") => api.get(`${base}/${id}/attachments?kind=${kind}`),
+      uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`${base}/${id}/attachments`, d),
+      removeAttachment: (id: number, attId: number) => api.delete(`${base}/${id}/attachments/${attId}`),
+      attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}${base}/${id}/attachments/${attId}/content`,
+    };
+  },
+  // "00-Purchase Contract" / "00-Sale Contract" — same shape as `receipts` above (drop-in for
+  // ContractLineGrid's `api` prop and AttachmentsTab's `AttachmentsApi`), hitting
+  // contract.controller.ts's generic `/legacy-erp/contracts/:receiptType/...` route. Both
+  // contract kinds share this one client, parameterized by receiptType — no dedicated "master"
+  // route exists here (unlike inventoryReceipts/receipts).
+  contracts: (receiptType: number) => {
+    const base = `/legacy-erp/contracts/${receiptType}`;
+    return {
+      list: (search?: string) => api.get(`${base}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+      get: (id: number) => api.get(`${base}/${id}`),
+      getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
+      previewNextReceiptNo: () => api.get(`${base}/next-receipt-no`),
+      create: (d: any) => api.post(base, d),
+      update: (id: number, d: any) => api.put(`${base}/${id}`, d),
+      delete: (id: number) => api.delete(`${base}/${id}`),
+      listItems: (id: number) => api.get(`${base}/${id}/items`),
+      createItem: (id: number, d: any) => api.post(`${base}/${id}/items`, d),
+      updateItem: (id: number, itemId: number, d: any) => api.put(`${base}/${id}/items/${itemId}`, d),
+      removeItem: (id: number, itemId: number) => api.delete(`${base}/${id}/items/${itemId}`),
+      listAttachments: (id: number, kind: "document" | "picture") => api.get(`${base}/${id}/attachments?kind=${kind}`),
+      uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`${base}/${id}/attachments`, d),
+      removeAttachment: (id: number, attId: number) => api.delete(`${base}/${id}/attachments/${attId}`),
+      attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}${base}/${id}/attachments/${attId}/content`,
+    };
   },
   trimInventoryCards: {
     list: (search?: string) => api.get(`/legacy-erp/trim-inventory-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/trim-inventory-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/trim-inventory-cards/by-code/${encodeURIComponent(code)}`),
+    previewNextCode: () => api.get(`/legacy-erp/trim-inventory-cards/next-code`),
     create: (d: any) => api.post('/legacy-erp/trim-inventory-cards', d),
     update: (id: number, d: any) => api.put(`/legacy-erp/trim-inventory-cards/${id}`, d),
     delete: (id: number) => api.delete(`/legacy-erp/trim-inventory-cards/${id}`),
@@ -374,6 +523,19 @@ export const legacyErpApi = {
     uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/trim-inventory-cards/${id}/attachments`, d),
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/trim-inventory-cards/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/trim-inventory-cards/${id}/attachments/${attId}/content`,
+  },
+  // Item Statement / Transaction History — reachable from Trim/Fabric/Yarn/Inventory Card
+  // List's "View Statement" row action. `itemId` is always the row's real IM_Item.RecId.
+  itemStatement: {
+    get: (itemId: number, filters?: { dateFrom?: string; dateTo?: string; receiptType?: number; receiptNo?: string }) => {
+      const qs = new URLSearchParams();
+      if (filters?.dateFrom) qs.set("dateFrom", filters.dateFrom);
+      if (filters?.dateTo) qs.set("dateTo", filters.dateTo);
+      if (filters?.receiptType != null) qs.set("receiptType", String(filters.receiptType));
+      if (filters?.receiptNo) qs.set("receiptNo", filters.receiptNo);
+      const query = qs.toString();
+      return api.get(`/legacy-erp/inventory-items/${itemId}/statement${query ? `?${query}` : ''}`);
+    },
   },
   // Unified read-only aggregation over Fabric/Yarn/Trim (Inventory Card List) — see
   // inventory-card.service.ts; never writes, each card type is still created/edited through
@@ -402,9 +564,55 @@ export const legacyErpApi = {
   lookupTable: (
     key: "category" | "group" | "mark" | "model" | "variant-type" | "tax" | "withholding-type" | "warehouse"
       | "fabric" | "process" | "finish-gsm" | "dye-type" | "composition" | "forex" | "unit"
-      | "service" | "manufacturing-order",
+      | "service" | "manufacturing-order" | "size-parameter" | "city" | "state" | "country"
+      | "cash" | "cost-center",
     search?: string,
   ) => api.get(`/legacy-erp/lookup/tables/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  // Purchase Order per-line Unit dropdown, scoped to the selected Item's own configured units
+  // (IM_ItemUnitItemSize) — not the flat cross-item `unit` lookup above.
+  lookupItemUnits: (inventoryId: number) => api.get(`/legacy-erp/lookup/tables/item-units/${inventoryId}`),
+  // Read-only "Receipt & Master Data" unified grid (see unified-grid.service.ts) — every
+  // write action from that screen still calls the tables above (inventoryReceipts/accounts/
+  // warehouses/masterLookup/accounts.removeTabRow), never this.
+  unifiedGrid: {
+    meta: () => api.get(`/legacy-erp/unified-grid/meta`),
+    list: (key: string, search?: string) => api.get(`/legacy-erp/unified-grid/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  },
+  // "Customize Worklist" — shared by Receipt & Master Data, Financial Receipt & Master Data,
+  // and every per-entity list screen. See worklist-fields.service.ts / worklist-rows.service.ts.
+  // No write path; persistence goes through settingsApi.updateCurrentSettings
+  // (tablePreferences.<screen>Worklists, one key per screen).
+  worklistFields: {
+    // `primary` is optional and scopes the returned sources to one screen's own source(s) (see
+    // ALLOWED_SOURCES_BY_PRIMARY in worklist-fields.service.ts). Omitted by Receipt & Master
+    // Data / Financial Receipt & Master Data, which intentionally see every source.
+    list: (primary?: string) => api.get(`/legacy-erp/worklist-fields${primary ? `?primary=${encodeURIComponent(primary)}` : ''}`),
+    // Server-side relational resolution: primaryTable stays the sole row-identity/search source
+    // (unchanged priority), fields are resolved against it via real FK relationships only.
+    resolve: (primaryTable: string, fields: { source: string; key: string }[], search?: string) =>
+      api.post(`/legacy-erp/worklist-fields/resolve`, { primaryTable, fields, search }),
+  },
+};
+
+// Centralized General Settings -> Approval Configuration framework. screenKey values are
+// Legacy ERP MenuItem.href strings (the existing screen/module registry) — they already
+// contain "/" and often their own "?query=", so they travel in the body/query string rather
+// than as URL path segments. See nexuscore-backend/src/modules/approval/.
+export const approvalConfigApi = {
+  list: () => api.get('/general-settings/approval-configurations'),
+  update: (d: { screenKey: string; approvalRequired?: boolean; approvalLevel?: number; isActive?: boolean; selfApprovalAllowed?: boolean }) =>
+    api.put('/general-settings/approval-configurations', d),
+};
+
+export const approvalApi = {
+  submit: (screenKey: string, transactionId: string | number) => api.post('/approval/submit', { screenKey, transactionId }),
+  approve: (screenKey: string, transactionId: string | number, remarks?: string) => api.post('/approval/approve', { screenKey, transactionId, remarks }),
+  reject: (screenKey: string, transactionId: string | number, remarks: string) => api.post('/approval/reject', { screenKey, transactionId, remarks }),
+  pending: (screenKey?: string) => api.get(`/approval/pending${screenKey ? `?screenKey=${encodeURIComponent(screenKey)}` : ''}`),
+  history: (screenKey: string, transactionId: string | number) =>
+    api.get(`/approval/history?screenKey=${encodeURIComponent(screenKey)}&transactionId=${encodeURIComponent(String(transactionId))}`),
+  status: (screenKey: string, transactionId: string | number) =>
+    api.get(`/approval/status?screenKey=${encodeURIComponent(screenKey)}&transactionId=${encodeURIComponent(String(transactionId))}`),
 };
 
 // BPM helpers

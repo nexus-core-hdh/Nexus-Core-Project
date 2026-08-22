@@ -90,6 +90,27 @@ const TABLES: Record<string, TableLookupConfig> = {
   // Named distinctly from the grid's separate pre-existing "Work Order No" column (which FKs
   // into the child table MA_WorkOrderItem, not this header table) to avoid conflating the two.
   'manufacturing-order': { table: 'MA_WorkOrder', codeColumn: 'WorkOrderNo', nameColumn: 'WorkOrderNo', searchColumns: ['WorkOrderNo'] },
+  // Size Parameter — already-existing flat master (MA_SizeSetParameter: RecId/Code/Name1/Name2/
+  // Name3/InUse, 0 rows), already FK'd from IM_ItemPieceSize/MA_InitialCostItem/MA_RecipeItem/
+  // MA_WorkOrderQCTestItem. Needed for the Size screen's Detail tab Code picker
+  // (size-set.service.ts's MA_SizeSetItem.SizeSetParameterId) — same "expose an existing table
+  // through the already-existing generic endpoint" reuse as Unit/Forex above. No new table.
+  'size-parameter': { table: 'MA_SizeSetParameter', codeColumn: 'Code', nameColumn: 'Name1', searchColumns: ['Code', 'Name1'] },
+  // City/State/Country — already-existing masters (MD_City/MD_State/MD_Country, confirmed via
+  // pg_catalog: each has its own Code/Name pair plus InUse/IsDeleted, same shape as every other
+  // manageable master here). Needed as three of the "Receipt & Master Data" unified screen's
+  // dropdown sources (unified-grid.service.ts's own TABLES config handles their read side;
+  // this is their write side). No new table — configuration only, same reuse pattern this
+  // file's own comments already describe for Group/Fab Type.
+  city: { table: 'MD_City', codeColumn: 'CityCode', nameColumn: 'CityName', searchColumns: ['CityCode', 'CityName'], activeColumn: 'InUse', label: 'City Master' },
+  state: { table: 'MD_State', codeColumn: 'StateCode', nameColumn: 'StateName', searchColumns: ['StateCode', 'StateName'], activeColumn: 'InUse', label: 'State Master' },
+  country: { table: 'MD_Country', codeColumn: 'CountryCode', nameColumn: 'CountryName', searchColumns: ['CountryCode', 'CountryName'], activeColumn: 'InUse', label: 'Country Master' },
+  // Cash / Cost Center — already-existing masters (FI_Cash/FI_CostCenter, confirmed via
+  // pg_catalog, 0 rows). Needed for the new Financial Receipt screen's Cash/Cost Center picker
+  // fields (fi-receipt.service.ts's CashId/CostCenterId columns). No new table. FI_Cash has no
+  // separate Name column — same "use Explanation as the display name" convention as `tax` above.
+  cash: { table: 'FI_Cash', codeColumn: 'CashCode', nameColumn: 'Explanation', searchColumns: ['CashCode', 'Explanation'] },
+  'cost-center': { table: 'FI_CostCenter', codeColumn: 'CostCenterCode', nameColumn: 'CostCenterName', searchColumns: ['CostCenterCode', 'CostCenterName'] },
 };
 export type MasterLookupKey = keyof typeof TABLES;
 
@@ -101,6 +122,25 @@ export class LegacyMasterLookupService {
     const cfg = TABLES[key];
     if (!cfg) throw new BadRequestException(`Unknown lookup table "${key}"`);
     return cfg;
+  }
+
+  // Purchase Order -> per-line Unit dropdown, scoped to the selected Item. Item-specific units
+  // live in "IM_ItemUnitItemSize" — the exact same table Fabric/Trim/Yarn Card's own Unit tab
+  // (unit-tab.tsx) already reads/writes via each card's listTab(id, "unit"), keyed by
+  // InventoryId regardless of the owning IM_Item's AccessCode (confirmed live: inventory-card
+  // .service.ts's own stock/unit lookups already join this same table the same way). No new
+  // table, no per-item-type branching — one query serves Fabric/Trim/Yarn/Fixed Asset PO lines
+  // alike, unlike the flat cross-set `unit` lookup above which returns every MD_UnitSetItem in
+  // the database regardless of item.
+  async listItemUnits(inventoryId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT usi."RecId" as id, usi."UnitCode" as code, usi."UnitName" as name
+      FROM "IM_ItemUnitItemSize" iuis
+      JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+      WHERE iuis."InventoryId" = ${inventoryId} AND iuis."IsDeleted" = 0
+      ORDER BY iuis."IsMainUnit" DESC NULLS LAST, usi."UnitName" ASC
+    `);
+    return sanitizeRawRow(rows);
   }
 
   private manageable(key: string): Required<Pick<TableLookupConfig, 'activeColumn' | 'label' | 'codeColumn'>> & TableLookupConfig {

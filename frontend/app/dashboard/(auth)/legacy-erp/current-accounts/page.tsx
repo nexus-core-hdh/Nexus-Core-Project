@@ -8,8 +8,10 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
-import { Search, Save, FilePlus2, UserSquare2, Lock, LayoutGrid, Wallet, Users, ShieldCheck, Paperclip, ChevronRight } from "lucide-react";
+import { Search, Save, FilePlus2, UserSquare2, Lock, LayoutGrid, Wallet, Users, ShieldCheck, Paperclip } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { cn } from "@/lib/utils";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
@@ -114,6 +116,7 @@ export default function CurrentAccountCardPage() {
   // (initial load, search, save, New) — never by the field-level `set()` updater,
   // which is exactly what should make the form "dirty".
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
+  const { clearDraft } = useDraftForm({ storageKey: "currentAccountDraft", enabled: accountId == null, form, setForm });
 
   // Arrived from the Current Account List screen (?id=&mode=view|edit) — load that record
   // straight away instead of requiring a manual Code search.
@@ -134,6 +137,23 @@ export default function CurrentAccountCardPage() {
   }, []);
 
   const set = (k: string, v: any) => setForm((p) => ({ ...p, [k]: v }));
+
+  // Code is never typed — it's always server-generated (see account.service.ts's
+  // generateCode/nextSeq, atomic and concurrency-safe). This just refreshes what the Create
+  // form SHOWS as soon as a type is picked, purely for UX; account.service.ts.create()
+  // discards whatever's in currentAccountCode and (re)generates it fresh at Save time anyway,
+  // so a stale preview here can never produce a duplicate.
+  const handleTypeChange = async (type: string) => {
+    set("currentAccountType", type);
+    if (accountId) return; // editing an existing record — its code must stay exactly as-is
+    try {
+      const r: any = await legacyErpApi.accounts.nextCode(type);
+      set("currentAccountCode", r.code);
+    } catch {
+      // Preview is best-effort UX only — leave the field blank rather than surface an error
+      // for what Save doesn't actually depend on.
+    }
+  };
 
   const search = async () => {
     if (!codeInput.trim()) return;
@@ -165,7 +185,8 @@ export default function CurrentAccountCardPage() {
   };
 
   const save = async () => {
-    if (!form.currentAccountCode || !form.currentAccountName) return toast.error("Code and Name are required");
+    if (!form.currentAccountName) return toast.error("Name is required");
+    if (!accountId && !form.currentAccountType) return toast.error("Current Account Type is required");
     setSaving(true);
     try {
       if (accountId) {
@@ -179,6 +200,7 @@ export default function CurrentAccountCardPage() {
         lastSavedRef.current = { ...emptyForm, ...r };
         setAccountId(r.id);
         setCodeInput(r.currentAccountCode);
+        clearDraft();
         toast.success("Created");
       }
     } catch (e: any) {
@@ -193,17 +215,11 @@ export default function CurrentAccountCardPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>Legacy ERP</span>
-        <ChevronRight className="h-3 w-3" />
-        <span>Current Accounts</span>
-        {accountId && (
-          <>
-            <ChevronRight className="h-3 w-3" />
-            <span className="font-medium text-foreground">{form.currentAccountCode}</span>
-          </>
-        )}
-      </div>
+      <LegacyErpBreadcrumb trail={[
+        { label: "Legacy ERP" },
+        { label: "Current Accounts", href: "/dashboard/legacy-erp/current-accounts-list" },
+        ...(accountId ? [{ label: form.currentAccountCode }] : []),
+      ]} />
 
       <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-4">
@@ -291,14 +307,14 @@ export default function CurrentAccountCardPage() {
         <TabsContent value="General" className="space-y-4">
           <fieldset disabled={readOnly} className="contents">
           <FormSection title="Identity">
-            <FieldText label="Code" value={form.currentAccountCode} onChange={(v) => set("currentAccountCode", v)} />
+            <FieldText label="Code" value={form.currentAccountCode || (readOnly ? "" : "Select a Current Account Type to generate")} onChange={() => {}} disabled />
             <FieldText label="Name" value={form.currentAccountName} onChange={(v) => set("currentAccountName", v)} span="wide" />
             <FieldText label="Access Code" value={form.accessCode} onChange={(v) => set("accessCode", v)} />
             <FieldText label="Special Code" value={form.specialCode} onChange={(v) => set("specialCode", v)} />
             <FieldText label="Group" value={form.groupId} onChange={(v) => set("groupId", v)} lookup />
             <FieldText label="Sector" value={form.sectorId} onChange={(v) => set("sectorId", v)} lookup />
             <FieldText label="Trading Group" value={form.tradingGroupId} onChange={(v) => set("tradingGroupId", v)} lookup />
-            <FieldSelect label="Current Account Type" value={form.currentAccountType} onChange={(v) => set("currentAccountType", v)} options={CURRENT_ACCOUNT_TYPE_OPTIONS} />
+            <FieldSelect label="Current Account Type" value={form.currentAccountType} onChange={handleTypeChange} options={CURRENT_ACCOUNT_TYPE_OPTIONS} />
             <FieldText label="Current Account Kind" value={form.currentAccountKind} onChange={(v) => set("currentAccountKind", v)} type="number" />
             <FieldText label="Trade Name" value={form.tradeName} onChange={(v) => set("tradeName", v)} span="wide" />
             <FieldText label="Employee" value={form.employeeId} onChange={(v) => set("employeeId", v)} lookup />

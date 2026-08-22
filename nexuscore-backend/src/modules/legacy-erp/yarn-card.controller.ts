@@ -97,6 +97,18 @@ export class YarnCardController {
     return this.satellites.create(tab, id, dto, Number(userId) || 1);
   }
 
+  // Same route Trim/Fabric Card's controllers already expose against this identical
+  // entity-agnostic satellites service — Yarn Card's own Unit tab (unlike its private
+  // add/remove-only grid) needs update() to edit a copied unit row in place.
+  @Put(':id/:tab/:lineId') updateTabRow(
+    @Param('tab') tab: string,
+    @Param('lineId', ParseIntPipe) lineId: number,
+    @Body() dto: Record<string, any>,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.satellites.update(tab, lineId, dto, Number(userId) || 1);
+  }
+
   @Delete(':id/:tab/:lineId') removeTabRow(
     @Param('tab') tab: string,
     @Param('lineId', ParseIntPipe) lineId: number,

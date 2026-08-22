@@ -49,6 +49,7 @@ import { MenuItemsModule } from './modules/menu-items/menu-items.module';
 import { StubsModule } from './modules/stubs/stubs.module';
 import { DocketManagementModule } from './modules/docket-management/docket-management.module';
 import { LegacyErpModule } from './modules/legacy-erp/legacy-erp.module';
+import { ApprovalModule } from './modules/approval/approval.module';
 
 @Module({
   imports: [
@@ -108,6 +109,9 @@ import { LegacyErpModule } from './modules/legacy-erp/legacy-erp.module';
 
     // Migrated SQL Server ERP schema (raw SQL via PrismaService, tables not in schema.prisma)
     LegacyErpModule,
+
+    // Centralized General Settings -> Approval Configuration framework
+    ApprovalModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

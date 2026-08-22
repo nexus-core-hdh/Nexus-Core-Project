@@ -3552,6 +3552,13 @@ export const tableApi = {
   }),
 };
 
+// Every customerApi method below hits FinanceController (nexuscore-backend/src/modules/finance),
+// which is the only Customer CRUD that actually exists — there is no standalone /customers
+// route. Was previously pointed at the nonexistent bare /customers path (always "Cannot GET"),
+// left over from before this CRUD moved under /finance. companyId/branchId query params are
+// harmlessly ignored server-side: FinanceController scopes every one of these by the
+// authenticated user's own companyId/branchId (@CurrentUser()), not by client-supplied params —
+// the correct, tenant-safe behavior, so they're kept here only for callers that still pass them.
 export const customerApi = {
   // Get all customers
   getCustomers: (params?: { companyId?: number; branchId?: number; search?: string }) => {
@@ -3560,7 +3567,7 @@ export const customerApi = {
     if (params?.branchId) searchParams.append('branchId', params.branchId.toString());
     if (params?.search) searchParams.append('search', params.search);
     const query = searchParams.toString();
-    return apiRequest(`/customers${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/customers${query ? `?${query}` : ''}`, {
       headers: getAuthHeaders(),
     });
   },
@@ -3576,7 +3583,7 @@ export const customerApi = {
   },
 
   // Get customer by ID
-  getCustomerById: (id: number) => apiRequest(`/customers/${id}`, {
+  getCustomerById: (id: number) => apiRequest(`/finance/customers/${id}`, {
     headers: getAuthHeaders(),
   }),
 
@@ -3598,14 +3605,15 @@ export const customerApi = {
     if (customer.branchId) searchParams.append('branchId', customer.branchId.toString());
     const query = searchParams.toString();
     const { companyId, branchId, ...customerData } = customer;
-    return apiRequest(`/customers${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/customers${query ? `?${query}` : ''}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(customerData),
     });
   },
 
-  // Update customer
+  // Update customer — PATCH, matching FinanceController's @Patch('customers/:id') (was
+  // previously sent as PUT, which that route never accepted either).
   updateCustomer: (id: number, customer: {
     name?: string;
     email?: string;
@@ -3615,14 +3623,14 @@ export const customerApi = {
     state?: string;
     country?: string;
     postalCode?: string;
-  }) => apiRequest(`/customers/${id}`, {
-    method: 'PUT',
+  }) => apiRequest(`/finance/customers/${id}`, {
+    method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(customer),
   }),
 
   // Delete customer
-  deleteCustomer: (id: number) => apiRequest(`/customers/${id}`, {
+  deleteCustomer: (id: number) => apiRequest(`/finance/customers/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
   }),

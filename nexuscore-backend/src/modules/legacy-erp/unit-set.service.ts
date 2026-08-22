@@ -3,11 +3,20 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
+import { nextLegacySeqCode, previewLegacySeqCode } from './legacy-code-sequence.util';
+
+// Header Code (MD_UnitSet.SetCode) is server-generated via the shared LegacyCodeSequence table
+// — "US-001", "US-002", ... Client-sent setCode is always ignored. The per-row item UnitCode
+// (e.g. "KG", "PCS") is NOT touched — a meaningful, manually-chosen unit symbol, not a
+// sequence-generated identity.
+const CODE_ENTITY = 'MD_UnitSet';
+const CODE_PREFIX = 'US';
 
 const HEADER_TABLE = 'MD_UnitSet';
 const ITEM_TABLE = 'MD_UnitSetItem';
 
-const HEADER_COLUMNS = ['SetCode', 'SetName', 'SpecialCode', 'AccessCode', 'SystemSet', 'InUse'] as const;
+// Exported for worklist-fields.service.ts (Customize Worklist field-metadata source).
+export const HEADER_COLUMNS = ['SetCode', 'SetName', 'SpecialCode', 'AccessCode', 'SystemSet', 'InUse'] as const;
 const ITEM_COLUMNS = [
   'UnitCode', 'UnitName', 'UnitFactor', 'UnitDivisor',
   'UnitWidth', 'UnitWidthUnitId', 'UnitLength', 'UnitLengthUnitId', 'UnitHeight', 'UnitHeightUnitId',
@@ -64,12 +73,17 @@ export class UnitSetService {
     return sanitizeRawRow(rows[0]);
   }
 
+  async previewNextCode(): Promise<string> {
+    return previewLegacySeqCode(this.prisma, CODE_ENTITY, CODE_PREFIX, HEADER_TABLE, 'SetCode');
+  }
+
   async create(dto: Record<string, any>, userId: number) {
-    if (!dto.setCode) throw new NotFoundException('setCode is required');
     const toDb = await this.headerToDb();
-    const cols = HEADER_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
+    const setCode = await nextLegacySeqCode(this.prisma, CODE_ENTITY, CODE_PREFIX, HEADER_TABLE, 'SetCode');
+    const effective = { ...dto, setCode };
+    const cols = HEADER_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const colList = Prisma.raw([...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
-    const values = cols.map((c) => toDb(c, dto[camel(c)]));
+    const values = cols.map((c) => toDb(c, effective[camel(c)]));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO "MD_UnitSet" (${colList})
       VALUES (${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
@@ -81,7 +95,9 @@ export class UnitSetService {
   async update(id: number, dto: Record<string, any>, userId: number) {
     await this.get(id);
     const toDb = await this.headerToDb();
-    const cols = HEADER_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
+    // SetCode is immutable after creation — never editable via update, regardless of what
+    // the client sends. Matches yarn-card.service.ts's own update() guard.
+    const cols = HEADER_COLUMNS.filter((c) => c !== 'SetCode' && toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) return this.get(id);
     const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`

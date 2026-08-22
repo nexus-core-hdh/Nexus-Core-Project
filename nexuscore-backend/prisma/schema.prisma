@@ -3112,6 +3112,44 @@ model AuditLog {
   user User @relation(fields: [changedBy], references: [id])
 }
 
+// ── APPROVAL FRAMEWORK ───────────────────────────────────────────────────────
+// Centralized, cross-module approval gate (General Settings -> Approval Configuration).
+// History is deliberately NOT duplicated here — every submit/approve/reject/config-change is
+// written to the existing generic AuditLog above (entityType = screenKey, entityId =
+// transactionId), so this section only needs to track *current* state. screenKey is a Legacy
+// ERP MenuItem.href (the existing screen/module registry), not a hardcoded label.
+
+model ApprovalConfiguration {
+  id                  String   @id @default(uuid())
+  screenKey           String   @unique
+  approvalRequired    Boolean  @default(false)
+  approvalLevel       Int      @default(1)
+  isActive            Boolean  @default(true)
+  selfApprovalAllowed Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  createdBy           String?
+  updatedAt           DateTime @updatedAt
+  updatedBy           String?
+}
+
+model ApprovalRequest {
+  id            String    @id @default(uuid())
+  screenKey     String
+  transactionId String
+  status        String    @default("draft") // draft | pending_approval | approved | rejected | completed
+  submittedBy   String
+  submittedAt   DateTime  @default(now())
+  decidedBy     String?
+  decidedAt     DateTime?
+  remarks       String?
+  approvalLevel Int       @default(1)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([screenKey, transactionId])
+  @@index([screenKey, status])
+}
+
 // ── PLM — General Definitions ─────────────────────────────────────────────────
 
 model StyleSampleType {

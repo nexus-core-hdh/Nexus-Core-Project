@@ -29,6 +29,28 @@ import { InventoryCardService } from './inventory-card.service';
 import { PurchaseOrderController } from './purchase-order.controller';
 import { PurchaseOrderService } from './purchase-order.service';
 import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.service';
+import { WarehouseParameterController } from './warehouse-parameter.controller';
+import { WarehouseParameterService } from './warehouse-parameter.service';
+import { InventoryReceiptController } from './inventory-receipt.controller';
+import { InventoryReceiptService } from './inventory-receipt.service';
+import { InventoryReceiptAttachmentsService } from './inventory-receipt-attachments.service';
+import { SizeSetController } from './size-set.controller';
+import { SizeSetService } from './size-set.service';
+import { UnifiedGridController } from './unified-grid.controller';
+import { UnifiedGridService } from './unified-grid.service';
+import { WorklistFieldsController } from './worklist-fields.controller';
+import { WorklistFieldsService } from './worklist-fields.service';
+import { WorklistRowsService } from './worklist-rows.service';
+import { ReceiptTypeController } from './receipt-type.controller';
+import { FiReceiptController } from './fi-receipt.controller';
+import { FiReceiptService } from './fi-receipt.service';
+import { FiReceiptAttachmentsService } from './fi-receipt-attachments.service';
+import { ContractController } from './contract.controller';
+import { ContractService } from './contract.service';
+import { ContractAttachmentsService } from './contract-attachments.service';
+import { ItemStatementController } from './item-statement.controller';
+import { ItemStatementService } from './item-statement.service';
+import { ApprovalModule } from '../approval/approval.module';
 
 @Module({
   imports: [
@@ -41,6 +63,9 @@ import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.se
       }),
       inject: [ConfigService],
     }),
+    // Centralized approval policy engine — InventoryReceiptService (Purchase Receipt) consumes
+    // ApprovalService rather than having its own hardcoded approval rules.
+    ApprovalModule,
   ],
   controllers: [
     WarehouseController,
@@ -55,6 +80,15 @@ import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.se
     TrimInventoryCardController,
     InventoryCardController,
     PurchaseOrderController,
+    WarehouseParameterController,
+    InventoryReceiptController,
+    SizeSetController,
+    UnifiedGridController,
+    WorklistFieldsController,
+    ReceiptTypeController,
+    FiReceiptController,
+    ContractController,
+    ItemStatementController,
   ],
   providers: [
     WarehouseService,
@@ -73,6 +107,18 @@ import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.se
     InventoryCardService,
     PurchaseOrderService,
     PurchaseOrderAttachmentsService,
+    WarehouseParameterService,
+    InventoryReceiptService,
+    InventoryReceiptAttachmentsService,
+    SizeSetService,
+    UnifiedGridService,
+    WorklistFieldsService,
+    WorklistRowsService,
+    FiReceiptService,
+    FiReceiptAttachmentsService,
+    ContractService,
+    ContractAttachmentsService,
+    ItemStatementService,
   ],
 })
 export class LegacyErpModule {}

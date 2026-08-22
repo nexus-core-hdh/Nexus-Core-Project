@@ -51,6 +51,9 @@ interface UnitSetForm {
 const emptySetForm: UnitSetForm = { setCode: "", setName: "", accessCode: "", specialCode: "", inUse: true, systemSet: false };
 
 const normalize = (s: string) => s.trim().toLowerCase();
+// Same convention as sizes/page.tsx's own disabledDisplayClass — the visual treatment for a
+// server-assigned, never-user-editable value (Code, here).
+const disabledDisplayClass = "flex h-full w-full items-center rounded-sm border border-input/40 bg-muted/30 px-2 text-xs text-muted-foreground";
 
 /**
  * The Unit Set detail/editor screen. A Master-Detail ERP workspace, not a
@@ -127,11 +130,30 @@ export default function UnitSetDetailPage() {
     await loadItems(r.id);
   };
 
+  // Shows the code the next Save will get, before Save is ever pressed — a preview only (see
+  // unit-set.controller.ts's next-code route). Mirrors yarn-cards/page.tsx's own
+  // loadPreviewCode; Code is never user-editable here.
+  const loadPreviewCode = async () => {
+    try {
+      const r: any = await legacyErpApi.unitSets.previewNextCode();
+      setForm((p) => ({ ...p, setCode: r.code }));
+      lastSavedRef.current = { ...lastSavedRef.current, setCode: r.code };
+    } catch {
+      // Non-critical — Save still generates the real code even if this preview fails to load.
+    }
+  };
+
   useEffect(() => {
     if (!initialId) return;
     loadSet(Number(initialId), initialMode === "view" ? "view" : "edit").catch((e: any) => {
       toast.error(e.message || "Could not load unit set");
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (initialId) return;
+    loadPreviewCode();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -160,11 +182,10 @@ export default function UnitSetDetailPage() {
   };
 
   const validateSetForm = (): string | null => {
-    const code = form.setCode.trim();
     const name = form.setName.trim();
-    if (!code || !name) return "Code and Name are required";
-    const dup = allSets.find((s) => s.id !== unitSetId && (normalize(s.setCode) === normalize(code) || normalize(s.setName) === normalize(name)));
-    if (dup) return normalize(dup.setCode) === normalize(code) ? "A unit set with this Code already exists" : "A unit set with this Name already exists";
+    if (!name) return "Name is required";
+    const dup = allSets.find((s) => s.id !== unitSetId && normalize(s.setName) === normalize(name));
+    if (dup) return "A unit set with this Name already exists";
     return null;
   };
 
@@ -207,6 +228,7 @@ export default function UnitSetDetailPage() {
     setSelectedId(null);
     setItemForm(emptyItemForm);
     itemLastSavedRef.current = null;
+    loadPreviewCode();
   };
 
   const refresh = () => {
@@ -373,8 +395,10 @@ export default function UnitSetDetailPage() {
           <GridSection title="Unit Set Information">
             <div className="divide-y">
               <FormRow>
+                {/* Code is read-only everywhere: server-generated on Save (US-001, ...) and
+                    never user-editable, matching yarn-cards/page.tsx's own Code field. */}
                 <FieldCell label="Code">
-                  <Input value={form.setCode} onChange={(e) => setField("setCode", e.target.value)} className={controlClass} />
+                  <div className={disabledDisplayClass} title="Generated automatically">{form.setCode || "Generating..."}</div>
                 </FieldCell>
                 <FieldCell label="Name">
                   <Input value={form.setName} onChange={(e) => setField("setName", e.target.value)} className={controlClass} />

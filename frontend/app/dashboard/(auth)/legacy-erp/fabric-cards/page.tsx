@@ -9,8 +9,10 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
-import { Search, Save, FilePlus2, Shirt, Lock, ChevronRight } from "lucide-react";
+import { Search, Save, FilePlus2, Shirt, Lock } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { FormSection } from "@/components/forms/form-section";
@@ -125,6 +127,7 @@ export default function FabricCardPage() {
   const [yarnOptions, setYarnOptions] = useState<LookupOption[]>([]);
 
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
+  const { clearDraft } = useDraftForm({ storageKey: "fabricCardDraft", enabled: itemId == null, form, setForm });
 
   useEffect(() => {
     (async () => {
@@ -140,6 +143,25 @@ export default function FabricCardPage() {
     const r: any = await legacyErpApi.yarnCards.list(term || undefined);
     return (Array.isArray(r) ? r : []).map((y: any) => ({ id: y.id, code: y.inventoryCode, name: y.inventoryName }));
   };
+
+  // Shows the code the next Save will get, before Save is ever pressed — a preview only (see
+  // fabric-card.controller.ts's next-code route): the code actually assigned at Save time is
+  // decided fresh there too. Mirrors yarn-cards/page.tsx's own loadPreviewCode exactly.
+  const loadPreviewCode = async () => {
+    try {
+      const r: any = await legacyErpApi.fabricCards.previewNextCode();
+      setForm((p) => ({ ...p, inventoryCode: r.code }));
+      lastSavedRef.current = { ...lastSavedRef.current, inventoryCode: r.code };
+    } catch {
+      // Non-critical — Save still generates the real code even if this preview fails to load.
+    }
+  };
+
+  useEffect(() => {
+    if (initialId) return;
+    loadPreviewCode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!initialId) return;
@@ -174,9 +196,9 @@ export default function FabricCardPage() {
     } catch {
       toast.error("No fabric card found with that code");
       setItemId(null);
-      const draft = { ...emptyForm, inventoryCode: codeInput.trim() };
-      setForm(draft);
-      lastSavedRef.current = draft;
+      setForm(emptyForm);
+      lastSavedRef.current = emptyForm;
+      loadPreviewCode();
     } finally {
       setSearching(false);
     }
@@ -188,10 +210,11 @@ export default function FabricCardPage() {
     setForm(emptyForm);
     lastSavedRef.current = emptyForm;
     setMode("create");
+    loadPreviewCode();
   };
 
   const save = async () => {
-    if (!form.inventoryCode.trim() || !form.inventoryName.trim()) return toast.error("Code and Name are required");
+    if (!form.inventoryName.trim()) return toast.error("Name is required");
     setSaving(true);
     try {
       if (itemId) {
@@ -207,6 +230,7 @@ export default function FabricCardPage() {
         lastSavedRef.current = f;
         setItemId(r.id);
         setCodeInput(r.inventoryCode);
+        clearDraft();
         toast.success("Created");
       }
     } catch (e: any) {
@@ -243,17 +267,11 @@ export default function FabricCardPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>Legacy ERP</span>
-        <ChevronRight className="h-3 w-3" />
-        <span>Fabric Cards</span>
-        {itemId && (
-          <>
-            <ChevronRight className="h-3 w-3" />
-            <span className="font-medium text-foreground">{form.inventoryCode}</span>
-          </>
-        )}
-      </div>
+      <LegacyErpBreadcrumb trail={[
+        { label: "Legacy ERP" },
+        { label: "Fabric Cards", href: "/dashboard/legacy-erp/fabric-cards-list" },
+        ...(itemId ? [{ label: form.inventoryCode }] : []),
+      ]} />
 
       <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-4">
@@ -333,7 +351,14 @@ export default function FabricCardPage() {
 
                   {/* Row 2 — Code and Name, exactly equal width and height. */}
                   <div className="grid grid-cols-2 gap-4">
-                    <FieldText label="Code" value={form.inventoryCode} onChange={(v) => set("inventoryCode", v)} />
+                    {/* Code is read-only everywhere: server-generated on Save (FABRIC-00001, ...)
+                        and never user-editable, matching yarn-cards/page.tsx's own Code field. */}
+                    <FieldText
+                      label="Code"
+                      value={form.inventoryCode || "Generating..."}
+                      onChange={() => {}}
+                      disabled
+                    />
                     <FieldText label="Name" value={form.inventoryName} onChange={(v) => set("inventoryName", v)} />
                   </div>
                 </IdentitySection>

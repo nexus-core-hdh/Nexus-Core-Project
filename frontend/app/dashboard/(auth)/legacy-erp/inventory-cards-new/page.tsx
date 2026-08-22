@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronRight, Boxes } from "lucide-react";
+import { Boxes } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import FabricCardPage from "../fabric-cards/page";
 import YarnCardPage from "../yarn-cards/page";
 import TrimInventoryCardPage from "../trim-inventory-cards/page";
@@ -32,13 +33,11 @@ export default function AddInventoryCardPage() {
           that card's own page renders below with its own full breadcrumb/toolbar/tabs
           (unwrapped, not nested inside this container), exactly as it looks on its own route. */}
       <div className="mx-auto max-w-[1600px] space-y-6 p-6 pb-0 lg:p-8 lg:pb-0">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Legacy ERP</span>
-          <ChevronRight className="h-3 w-3" />
-          <span>Inventory Card List</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="font-medium text-foreground">Add New Inventory Card</span>
-        </div>
+        <LegacyErpBreadcrumb trail={[
+          { label: "Legacy ERP" },
+          { label: "Inventory Card List", href: "/dashboard/legacy-erp/inventory-cards-list" },
+          { label: "Add New Inventory Card" },
+        ]} />
 
         <div className="flex items-center gap-4 border-b pb-6">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">

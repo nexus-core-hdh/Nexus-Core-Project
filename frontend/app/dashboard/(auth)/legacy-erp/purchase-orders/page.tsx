@@ -10,9 +10,15 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
+import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
-import { Search, Save, FilePlus2, ShoppingCart, Lock, ChevronRight, Trash2, Plus, BadgeCheck } from "lucide-react";
+import { Search, Save, FilePlus2, ShoppingCart, Lock, Trash2, Plus, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { FormSection } from "@/components/forms/form-section";
@@ -30,6 +36,10 @@ import { PurchaseOrderLineGrid, type PurchaseOrderLineGridHandle } from "@/compo
 // elsewhere — no new lookup UI for either.
 const TABS = ["General", "Detail", "Explanation", "Attachments", "Certificates"];
 const CURRENT_ACCOUNTS_LIST_PATH = "/dashboard/legacy-erp/current-accounts-list";
+// General Settings -> Approval Configuration screenKey for this screen — must match
+// purchase-order.service.ts's own APPROVAL_SCREEN_KEY exactly (both derive from this screen's
+// real MenuItem.href). Same integration shape as inventory-receipts/page.tsx's own.
+const APPROVAL_SCREEN_KEY = "/dashboard/legacy-erp/purchase-orders-list";
 
 const emptyForm: Record<string, any> = {
   receiptNo: "", receiptDate: new Date().toISOString().slice(0, 10), documentNo: "",
@@ -72,6 +82,74 @@ export default function PurchaseOrderPage() {
 
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
   const lineGridRef = useRef<PurchaseOrderLineGridHandle>(null);
+
+  // New-record draft preservation — see use-draft-form.ts. Active only while this screen has no
+  // id yet (a genuine New Purchase Order flow); an Edit/View of an existing PO never restores or
+  // overwrites it, so unrelated records can't leak into each other's draft.
+  const { clearDraft } = useDraftForm({ storageKey: "purchaseOrderDraft", enabled: poId == null, form, setForm });
+
+  // General Settings -> Approval Configuration — same integration shape as
+  // inventory-receipts/page.tsx's own (see that file's own comments on each piece below).
+  const [approvalRequired, setApprovalRequired] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState<{ status: string; remarks?: string | null } | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectRemarks, setRejectRemarks] = useState("");
+
+  useEffect(() => {
+    approvalConfigApi.list()
+      .then((r: any) => {
+        const found = Array.isArray(r) ? r.find((c: any) => c.screenKey === APPROVAL_SCREEN_KEY) : null;
+        setApprovalRequired(!!found?.approvalRequired);
+      })
+      .catch(() => {});
+  }, []);
+
+  const refreshApprovalStatus = async (id: number) => {
+    try {
+      const s: any = await legacyErpApi.purchaseOrders.getApprovalStatus(id);
+      setApprovalStatus(s ?? null);
+    } catch {
+      setApprovalStatus(null);
+    }
+  };
+
+  useEffect(() => {
+    if (poId) refreshApprovalStatus(poId); else setApprovalStatus(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poId]);
+
+  const runApprovePo = async () => {
+    if (!poId) return;
+    setApproving(true);
+    try {
+      const r: any = await legacyErpApi.purchaseOrders.approve(poId);
+      setForm((p) => ({ ...p, isApproved: r.isApproved }));
+      toast.success("Approved");
+      await refreshApprovalStatus(poId);
+    } catch (e: any) {
+      toast.error(e.message || "Approval failed");
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const runRejectPo = async () => {
+    if (!poId) return;
+    if (!rejectRemarks.trim()) return toast.error("A rejection reason is required.");
+    setApproving(true);
+    try {
+      await legacyErpApi.purchaseOrders.reject(poId, rejectRemarks.trim());
+      toast.success("Rejected");
+      setRejectOpen(false);
+      setRejectRemarks("");
+      await refreshApprovalStatus(poId);
+    } catch (e: any) {
+      toast.error(e.message || "Rejection failed");
+    } finally {
+      setApproving(false);
+    }
+  };
 
   useEffect(() => {
     if (!poId) {
@@ -157,6 +235,7 @@ export default function PurchaseOrderPage() {
     try {
       const dto: Record<string, any> = { receiptDate: form.receiptDate, documentNo: form.documentNo, currentAccountId: Number(form.currentAccountId), warehouseId: Number(form.warehouseId) };
       if (!poId) dto.receiptNo = form.receiptNo?.trim() || undefined; // manual entry, else server auto-numbers
+      let savedId: number | undefined;
       if (poId) {
         const r: any = await legacyErpApi.purchaseOrders.update(poId, dto);
         const f = sanitizeRecord({
@@ -165,6 +244,7 @@ export default function PurchaseOrderPage() {
         });
         setForm(f);
         lastSavedRef.current = f;
+        savedId = r.id;
         toast.success("Updated");
       } else {
         // Standard ERP transaction workflow: header first, then any lines the user already
@@ -181,7 +261,22 @@ export default function PurchaseOrderPage() {
         setPoId(r.id);
         setCodeInput(r.receiptNo);
         await lineGridRef.current?.commitDrafts(r.id);
+        savedId = r.id;
+        clearDraft();
         toast.success("Created");
+      }
+      // General Settings -> Approval Configuration — Create/Modify -> Submit -> Pending
+      // Approval. A no-op call chain (nothing below runs) whenever approval isn't required for
+      // this screen, so Save's own behavior is otherwise completely unchanged. Also covers
+      // "Rejected -> correction -> Save again -> Unapproved" (ApprovalService.submit() is
+      // idempotent per transaction — a resubmission just moves the same row back to
+      // pending_approval, clearing the prior rejection decision).
+      if (approvalRequired && savedId) {
+        await legacyErpApi.purchaseOrders.submitForApproval(savedId);
+        await refreshApprovalStatus(savedId);
+        toast.message("Approval Required", {
+          description: "This transaction cannot be completed until it has been approved by an authorized user.",
+        });
       }
     } catch (e: any) {
       toast.error(e.message);
@@ -205,17 +300,11 @@ export default function PurchaseOrderPage() {
 
   return (
     <div className="mx-auto max-w-[1700px] space-y-6 p-6 lg:p-8">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>Legacy ERP</span>
-        <ChevronRight className="h-3 w-3" />
-        <span>Purchase Orders</span>
-        {poId && (
-          <>
-            <ChevronRight className="h-3 w-3" />
-            <span className="font-medium text-foreground">{form.receiptNo}</span>
-          </>
-        )}
-      </div>
+      <LegacyErpBreadcrumb trail={[
+        { label: "Legacy ERP" },
+        { label: "Purchase Orders", href: "/dashboard/legacy-erp/purchase-orders-list" },
+        ...(poId ? [{ label: form.receiptNo }] : []),
+      ]} />
 
       <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-4">
@@ -228,6 +317,20 @@ export default function PurchaseOrderPage() {
             </h1>
             <div className="mt-1 flex items-center gap-2">
               <p className="text-xs text-muted-foreground">Purchase Order</p>
+              {/* Do not show approval controls when Approval Required = No — nothing else about
+                  this screen's identity block changes in that case. */}
+              {poId && approvalRequired && (
+                <Badge
+                  variant={approvalStatus?.status === "approved" ? "default" : approvalStatus?.status === "rejected" ? "destructive" : "secondary"}
+                  className="h-5 text-[11px] font-normal"
+                >
+                  {approvalStatus?.status === "pending_approval" ? "Pending Approval"
+                    : approvalStatus?.status === "approved" ? "Approved"
+                    : approvalStatus?.status === "rejected" ? "Rejected"
+                    : approvalStatus?.status === "completed" ? "Completed"
+                    : "Draft"}
+                </Badge>
+              )}
               {readOnly && (
                 <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
                   <Lock className="h-2.5 w-2.5" />View Only
@@ -258,8 +361,43 @@ export default function PurchaseOrderPage() {
           <div className="hidden h-6 w-px bg-border sm:block" />
           <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
           {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
+          {/* Backend (approval:approve/reject permission + pending-state + self-approval check)
+              is authoritative — an unauthorized click just surfaces a toast. Same pattern
+              inventory-receipts/page.tsx's own Approve/Reject buttons already use. */}
+          {approvalRequired && approvalStatus?.status === "pending_approval" && (
+            <>
+              <div className="hidden h-6 w-px bg-border sm:block" />
+              <Button size="sm" onClick={runApprovePo} disabled={approving}>
+                <BadgeCheck className="h-3.5 w-3.5 mr-2" />Approve
+              </Button>
+              <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => { setRejectRemarks(""); setRejectOpen(true); }} disabled={approving}>
+                <XCircle className="h-3.5 w-3.5 mr-2" />Reject
+              </Button>
+            </>
+          )}
         </div>
       </div>
+
+      {approvalRequired && approvalStatus?.status === "pending_approval" && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Approval Required</p>
+            <p className="text-amber-700/90 dark:text-amber-400/90">This transaction cannot be completed until it has been approved by an authorized user.</p>
+          </div>
+        </div>
+      )}
+
+      {approvalRequired && approvalStatus?.status === "rejected" && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Rejected</p>
+            {approvalStatus.remarks && <p className="text-destructive/90">{approvalStatus.remarks}</p>}
+            <p className="mt-1 text-destructive/80">Make corrections and Save again to resubmit for approval.</p>
+          </div>
+        </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
         <div className="rounded-xl border bg-card shadow-sm">
@@ -346,6 +484,28 @@ export default function PurchaseOrderPage() {
           </div>
         </div>
       </Tabs>
+
+      <AlertDialog open={rejectOpen} onOpenChange={setRejectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject Purchase Order</AlertDialogTitle>
+            <AlertDialogDescription>A rejection reason is required and will be shown to the original submitter.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            value={rejectRemarks}
+            onChange={(e) => setRejectRemarks(e.target.value)}
+            placeholder="Reason for rejection..."
+            className="min-h-24"
+            autoFocus
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={runRejectPo} disabled={approving || !rejectRemarks.trim()}>
+              Reject
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

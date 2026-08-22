@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -22,9 +22,14 @@ import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
-  Search, RefreshCw, Plus, MoreHorizontal, Eye, Pencil, Trash2, Users, SearchX,
+  Search, RefreshCw, Plus, Eye, Pencil, Trash2, Users, SearchX,
   ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, MousePointerClick, XCircle,
 } from "lucide-react";
+import { formatCell } from "@/lib/legacy-erp/humanize";
+import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
+import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
+import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 
 // Also doubles as the Current Account lookup for Purchase Order (and any other screen that
 // needs it) — this same, unmodified manage screen gains a lookup mode (mode=lookup&
@@ -89,12 +94,17 @@ export default function CurrentAccountListPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("code");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const wl = useWorklist({ storageKey: "currentAccountsListWorklists" });
 
-  const load = async (term?: string) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null) => {
     setLoading(true);
     try {
-      const r: any = await legacyErpApi.accounts.list(term);
-      setRows(Array.isArray(r) ? r : []);
+      const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
+      const r: any = worklist
+        ? await legacyErpApi.worklistFields.resolve("current-account-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
+        : await legacyErpApi.accounts.list(term);
+      const list = Array.isArray(r) ? r : [];
+      setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load current accounts");
       setRows([]);
@@ -108,6 +118,19 @@ export default function CurrentAccountListPage() {
 
   const doSearch = () => load(search.trim() || undefined);
   const refresh = () => { setSearch(""); load(); };
+
+  const onWorklistChange = (id: string) => {
+    const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
+    wl.setActiveWorklistId(id);
+    load(search.trim() || undefined, worklist);
+  };
+
+  const handleSaveWorklists = async (next: Worklist[]) => {
+    const { activeWorklist } = await wl.saveWorklists(next);
+    load(search.trim() || undefined, activeWorklist);
+  };
+
+  const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
 
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/current-accounts?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/current-accounts?id=${id}&mode=edit`);
@@ -239,24 +262,34 @@ export default function CurrentAccountListPage() {
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                <SortableHead sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
-                <SortableHead sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
-                <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
-                <SortableHead sortKey="debit" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Debit</SortableHead>
-                <SortableHead sortKey="credit" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Credit</SortableHead>
-                <SortableHead sortKey="balance" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Balance</SortableHead>
-                <SortableHead sortKey="balanceTrial" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Balance Trial (BT)</SortableHead>
+                {activeColumns ? (
+                  activeColumns.map((c) => (
+                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                      {wl.columnLabel(c)}
+                    </TableHead>
+                  ))
+                ) : (
+                  <>
+                    <SortableHead sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
+                    <SortableHead sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
+                    <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
+                    <SortableHead sortKey="debit" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Debit</SortableHead>
+                    <SortableHead sortKey="credit" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Credit</SortableHead>
+                    <SortableHead sortKey="balance" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Balance</SortableHead>
+                    <SortableHead sortKey="balanceTrial" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Balance Trial (BT)</SortableHead>
+                  </>
+                )}
                 <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 7) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               ) : rows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={8} className="py-12">
+                  <TableCell colSpan={(activeColumns?.length ?? 7) + 1} className="py-12">
                     <Empty>
                       <EmptyHeader>
                         <EmptyMedia variant="icon">{searched ? <SearchX /> : <Users />}</EmptyMedia>
@@ -273,7 +306,13 @@ export default function CurrentAccountListPage() {
                     </Empty>
                   </TableCell>
                 </TableRow>
-              ) : sortedRows.map((row, index) => (
+              ) : sortedRows.map((row, index) => {
+                const rowActions: RowAction[] = [
+                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.code }), destructive: true, separatorBefore: true },
+                ];
+                const tableRow = (
                 <TableRow
                   key={row.id}
                   tabIndex={0}
@@ -285,44 +324,60 @@ export default function CurrentAccountListPage() {
                     selectedRowKey === String(row.id) && "bg-primary/10",
                   )}
                 >
-                  <TableCell className="py-3">
-                    <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span>
-                  </TableCell>
-                  <TableCell className="py-3 font-medium">{row.name}</TableCell>
-                  <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                  <TableCell className="py-3 text-right font-mono">{fmt(row.debit)}</TableCell>
-                  <TableCell className="py-3 text-right font-mono">{fmt(row.credit)}</TableCell>
-                  <TableCell className={cn("py-3 text-right font-mono font-semibold", balanceTone(row.balance))}>{fmt(row.balance)}</TableCell>
-                  <TableCell className={cn("py-3 text-right font-mono font-semibold", balanceTone(row.balanceTrial))}>{fmt(row.balanceTrial)}</TableCell>
+                  {activeColumns ? (
+                    activeColumns.map((c) => (
+                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
+                    ))
+                  ) : (
+                    <>
+                      <TableCell className="py-3">
+                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span>
+                      </TableCell>
+                      <TableCell className="py-3 font-medium">{row.name}</TableCell>
+                      <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="py-3 text-right font-mono">{fmt(row.debit)}</TableCell>
+                      <TableCell className="py-3 text-right font-mono">{fmt(row.credit)}</TableCell>
+                      <TableCell className={cn("py-3 text-right font-mono font-semibold", balanceTone(row.balance))}>{fmt(row.balance)}</TableCell>
+                      <TableCell className={cn("py-3 text-right font-mono font-semibold", balanceTone(row.balanceTrial))}>{fmt(row.balanceTrial)}</TableCell>
+                    </>
+                  )}
                   <TableCell className="py-3 text-right">
                     {mode === "lookup" ? (
                       <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
                         <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
                       </Button>
                     ) : (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                          <DropdownMenuItem onClick={() => view(row.id)}><Eye className="h-4 w-4 mr-2" />View</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => update(row.id)}><Pencil className="h-4 w-4 mr-2" />Update</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget({ id: row.id, code: row.code })}>
-                            <Trash2 className="h-4 w-4 mr-2" />Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                     )}
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+                return mode === "lookup" ? tableRow : (
+                  <RowContextMenu key={row.id} actions={rowActions}>{tableRow}</RowContextMenu>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
       </div>
+
+      <WorklistBar
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        onActiveWorklistChange={onWorklistChange}
+        onDesignOpen={() => wl.setDesignOpen(true)}
+      />
+
+      <WorklistDesignModal
+        open={wl.designOpen}
+        onOpenChange={wl.setDesignOpen}
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        activeTableSource="current-account"
+        primaryScope="current-account-list"
+        gridLabel="the Current Accounts List grid"
+        onSave={handleSaveWorklists}
+      />
 
       {mode === "lookup" && (
         <div className="flex items-center justify-end gap-2 border-t pt-4">

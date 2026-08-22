@@ -9,7 +9,8 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
-import { Search, Save, FilePlus2, Layers, Lock, ChevronRight } from "lucide-react";
+import { Search, Save, FilePlus2, Layers, Lock } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,8 @@ import {
 } from "@/components/forms/form-field";
 import { LookupField } from "@/components/legacy-erp/lookup-field";
 import { SatelliteGridTab } from "./_components/satellite-grid-tab";
+import { UnitTab } from "@/components/legacy-erp/unit-tab";
+import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { AttachmentsTab } from "./_components/attachments-tab";
 import { CustomizedFieldsTab } from "./_components/customized-fields-tab";
 
@@ -145,6 +148,7 @@ export default function YarnCardPage() {
   const [unitSets, setUnitSets] = useState<{ id: number; setName: string }[]>([]);
 
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
+  const { clearDraft } = useDraftForm({ storageKey: "yarnCardDraft", enabled: itemId == null, form, setForm });
 
   // Prefetch the small master lists once — same "fetch all, resolve locally" pattern
   // already used by Unit Sets for its Unit picker.
@@ -266,6 +270,7 @@ export default function YarnCardPage() {
         lastSavedRef.current = { ...emptyForm, ...r };
         setItemId(r.id);
         setCodeInput(r.inventoryCode);
+        clearDraft();
         toast.success("Created");
       }
     } catch (e: any) {
@@ -304,17 +309,11 @@ export default function YarnCardPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span>Legacy ERP</span>
-        <ChevronRight className="h-3 w-3" />
-        <span>Yarn Cards</span>
-        {itemId && (
-          <>
-            <ChevronRight className="h-3 w-3" />
-            <span className="font-medium text-foreground">{form.inventoryCode}</span>
-          </>
-        )}
-      </div>
+      <LegacyErpBreadcrumb trail={[
+        { label: "Legacy ERP" },
+        { label: "Yarn Cards", href: "/dashboard/legacy-erp/yarn-cards-list" },
+        ...(itemId ? [{ label: form.inventoryCode }] : []),
+      ]} />
 
       <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-4">
@@ -544,17 +543,14 @@ export default function YarnCardPage() {
                   ]} />
                 </TabsContent>
 
+                {/* Same shared UnitTab component Fabric/Trim Card use — Unit Set picker +
+                    master-detail editor over IM_ItemUnitItemSize via the same entity-agnostic
+                    YarnCardSatellitesService (tab="unit"), instead of this screen's own
+                    private add/remove-only grid. Yarn Card's separate top-level "Unit" field
+                    (General tab, IM_Item.UnitId -> MD_UnitSet) is untouched — Trim/Fabric have
+                    no equivalent single-Unit-Set field to reuse there. */}
                 <TabsContent value="Unit">
-                  <SatelliteGridTab itemId={itemId} readOnly={readOnly} tab="unit" addLabel="Add Unit" fields={[
-                    { key: "unitItemId", label: "Unit", type: "number" },
-                    { key: "unitFactor", label: "Factor", type: "number" },
-                    { key: "unitDivisor", label: "Divisor", type: "number" },
-                    { key: "isMainUnit", label: "Main Unit", type: "checkbox" },
-                    { key: "isDivisible", label: "Divisible", type: "checkbox" },
-                    { key: "useForCommon", label: "Common", type: "checkbox" },
-                    { key: "useForPurchase", label: "Purchase", type: "checkbox" },
-                    { key: "useForSale", label: "Sale", type: "checkbox" },
-                  ]} />
+                  <UnitTab itemId={itemId} readOnly={readOnly} api={legacyErpApi.yarnCards} />
                 </TabsContent>
 
                 <TabsContent value="Explanation">

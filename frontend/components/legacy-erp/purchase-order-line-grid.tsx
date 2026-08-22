@@ -21,9 +21,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
-import { Search, Plus, Trash2, ChevronDown, ListOrdered, GripVertical, Lock } from "lucide-react";
+import { Search, Plus, Trash2, ListOrdered, GripVertical, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 
 // ============================================================================================
 // EXCEL-STYLE ERP GRID — interaction model
@@ -42,7 +42,7 @@ import { cn } from "@/lib/utils";
 // CRUD). Only the rendering/interaction layer around that foundation changed in this pass.
 
 type ColKey =
-  | "type" | "code" | "name" | "variant" | "color" | "quantity" | "unit" | "rate" | "price"
+  | "type" | "code" | "name" | "variant" | "color" | "quantity" | "grossQuantity" | "unit" | "rate" | "price"
   | "forex" | "forexPrice" | "vatType" | "vatPct" | "itemAmount" | "received" | "mfgOrder" | "workOrder";
 
 interface ColumnDef {
@@ -55,7 +55,10 @@ interface ColumnDef {
 
 const COLUMNS: ColumnDef[] = [
   { key: "type", label: "Type", align: "left", navigable: true, editable: true },
-  { key: "code", label: "Code", align: "left", navigable: true, editable: true },
+  // Code is bound to the selected Inventory item and auto-populated — never typed directly,
+  // matching Purchase Contract/Inventory Receipt's own locked Code cell. Search/select now
+  // happens on Name (below); Code only ever displays whatever Name's selection resolved.
+  { key: "code", label: "Code", align: "left", navigable: true, editable: false },
   { key: "name", label: "Name", align: "left", navigable: true, editable: true },
   // Free text + autocomplete, same control and interaction model as Code/Color — no backend
   // field exists for this yet (see LineRow's own comment on `variant`), so it's UI scaffolding
@@ -63,6 +66,7 @@ const COLUMNS: ColumnDef[] = [
   { key: "variant", label: "Variant", align: "left", navigable: true, editable: true },
   { key: "color", label: "Color", align: "left", navigable: true, editable: true },
   { key: "quantity", label: "Quantity", align: "right", navigable: true, editable: true },
+  { key: "grossQuantity", label: "Gross Quantity", align: "right", navigable: true, editable: true },
   { key: "unit", label: "Unit", align: "left", navigable: true, editable: true },
   { key: "rate", label: "Rate", align: "right", navigable: true, editable: true },
   { key: "price", label: "Price", align: "right", navigable: true, editable: false },
@@ -123,7 +127,7 @@ const sanitizeHiddenColumns = (saved: unknown): ColKey[] =>
 // columns stay narrow." Widened a further pass over the previous values for readability —
 // "increase default column widths where appropriate."
 const DEFAULT_WIDTHS: Record<ColKey, number> = {
-  type: 116, code: 148, name: 280, variant: 104, color: 120, quantity: 92, unit: 80,
+  type: 116, code: 148, name: 280, variant: 104, color: 120, quantity: 92, grossQuantity: 120, unit: 80,
   rate: 100, price: 110, forex: 88, forexPrice: 114, vatType: 106, vatPct: 74,
   itemAmount: 128, received: 132, mfgOrder: 180, workOrder: 114,
 };
@@ -132,7 +136,7 @@ const DEFAULT_WIDTHS: Record<ColKey, number> = {
 // MIN width — "Manufacturing Order"/"Received / Shipped" are the two long outliers that drove
 // these up from a flat minimum; every other column stays tight and numeric-narrow.
 const MIN_WIDTHS: Record<ColKey, number> = {
-  type: 96, code: 104, name: 150, variant: 88, color: 90, quantity: 82, unit: 70,
+  type: 96, code: 104, name: 150, variant: 88, color: 90, quantity: 82, grossQuantity: 96, unit: 70,
   rate: 80, price: 90, forex: 76, forexPrice: 104, vatType: 90, vatPct: 66,
   itemAmount: 108, received: 116, mfgOrder: 150, workOrder: 104,
 };
@@ -209,13 +213,19 @@ interface LineRow {
   code: string;
   name: string;
   quantity: string;
+  // Gross Quantity — when > 0, drives Price/Item Amount instead of Quantity (effectiveQuantity
+  // = GrossQuantity > 0 ? GrossQuantity : Quantity, see recalc() below). Real, pre-existing
+  // IM_OrderReceiptItem column, just never exposed by this grid before now.
+  grossQuantity: string;
   unitId: number | null;
   unit: string; // display code, e.g. "PCS" — UnitId is the real persisted FK
-  // Stock on Hand — display-only, sourced from the SAME inventoryCards.list() call already
-  // used to resolve Code/Name (and, live, from the Inventory lookup's own already-fetched row
-  // data). Not persisted anywhere on this line — it's a live snapshot of the item master, not
-  // a field IM_OrderReceiptItem owns, so it's never sent in buildDto.
+  // Stock on Hand / Last Purchase Price — display-only, sourced from the SAME
+  // inventoryCards.list() call already used to resolve Code/Name (and, live, from the
+  // Inventory lookup's own already-fetched row data). Neither is persisted on this line — both
+  // are live snapshots derived server-side from real transaction history, not fields
+  // IM_OrderReceiptItem owns, so neither is ever sent in buildDto.
   stockOnHand: number | null;
+  lastPurchasePrice: number | null;
   colorCardId: string | null; // ColorCard.id (text/cuid) — null when a free-typed custom color hasn't resolved to a record yet
   color: string;
   rate: string;
@@ -243,7 +253,8 @@ interface LineRow {
 
 const emptyLine = (): LineRow => ({
   clientId: uid(), __rowId: null, itemType: 1, typeKind: "inventory", inventoryId: null, serviceCardId: null, sourceType: null,
-  code: "", name: "", quantity: "", unitId: null, unit: "", stockOnHand: null, colorCardId: null, color: "", rate: "", price: null,
+  code: "", name: "", quantity: "", grossQuantity: "", unitId: null, unit: "", stockOnHand: null, lastPurchasePrice: null,
+  colorCardId: null, color: "", rate: "", price: null,
   forexId: null, forexCode: "", forexRate: "", currencyPrice: "",
   vatIncluded: 0, vatRate: "", lineAmount: null,
   receivedQuantity: "", manufacturingOrderId: null, manufacturingOrderNo: "", workOrderReceiptItemId: "",
@@ -256,10 +267,13 @@ const fmt2 = (n: number | null) => (n ?? 0).toLocaleString(undefined, { minimumF
 // trimmed decimals, an em dash when empty (never "0" for a field nobody has typed into yet).
 const fmtCell = (v: string) => (v === "" || v == null ? "—" : num(v).toLocaleString(undefined, { maximumFractionDigits: 4 }));
 
-// Quantity x Rate -> Price -> VAT -> Line Amount, per the required calc chain. VAT Exclusive
-// adds VatRate% on top of Price; VAT Inclusive means Price already includes it.
+// effectiveQuantity x Rate -> Price -> VAT -> Line Amount, per the required calc chain.
+// effectiveQuantity = GrossQuantity > 0 ? GrossQuantity : Quantity — GrossQuantity is normally
+// blank/0 on this screen, in which case this is just Quantity, unchanged from before. VAT
+// Exclusive adds VatRate% on top of Price; VAT Inclusive means Price already includes it.
 function recalc(row: LineRow): LineRow {
-  const price = num(row.quantity) * num(row.rate);
+  const effectiveQuantity = num(row.grossQuantity) > 0 ? num(row.grossQuantity) : num(row.quantity);
+  const price = effectiveQuantity * num(row.rate);
   const vatAmount = price * (num(row.vatRate) / 100);
   const lineAmount = row.vatIncluded ? price : price + vatAmount;
   const currencyPrice = row.forexRate ? num(row.rate) * num(row.forexRate) : num(row.currencyPrice) || null;
@@ -308,6 +322,22 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   const [unitOptions, setUnitOptions] = useState<any[]>([]);
   const [forexOptions, setForexOptions] = useState<any[]>([]);
   const [colorOptions, setColorOptions] = useState<any[]>([]);
+  // Per-Item Unit options (IM_ItemUnitItemSize via legacyErpApi.lookupItemUnits) — replaces
+  // the flat `unitOptions` above as the Unit cell's actual dropdown source, keyed by
+  // inventoryId since each item has its own configured unit set. `unitOptions` itself is kept
+  // only for hydrateUnits' label-resolution use (an already-saved line's unit must still
+  // display correctly even if it's no longer in the item's current valid set).
+  const [itemUnitsByInventoryId, setItemUnitsByInventoryId] = useState<Record<string, any[]>>({});
+  const itemUnitsRef = useRef(itemUnitsByInventoryId);
+  itemUnitsRef.current = itemUnitsByInventoryId;
+  const ensureItemUnitsLoaded = useCallback((inventoryId: number | null | undefined) => {
+    if (inventoryId == null) return;
+    const key = String(inventoryId);
+    if (itemUnitsRef.current[key]) return;
+    legacyErpApi.lookupItemUnits(inventoryId)
+      .then((r: any) => setItemUnitsByInventoryId((prev) => ({ ...prev, [key]: Array.isArray(r) ? r : [] })))
+      .catch(() => setItemUnitsByInventoryId((prev) => ({ ...prev, [key]: [] })));
+  }, []);
   // Code field's smart-search datasource — the SAME Inventory Card List aggregation
   // hydrateCodesNames already uses to resolve saved lines' Code/Name, fetched once here too so
   // typing into a brand-new (not-yet-saved) row's Code field has something to search against
@@ -346,9 +376,11 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     sourceType: null,
     code: "", name: "",
     quantity: r.quantity != null ? String(r.quantity) : "",
+    grossQuantity: r.grossQuantity != null ? String(r.grossQuantity) : "",
     unitId: r.unitId ?? null,
     unit: "",
     stockOnHand: null,
+    lastPurchasePrice: null,
     colorCardId: r.colorCardId ?? null,
     color: "",
     rate: r.unitPrice != null ? String(r.unitPrice) : "",
@@ -381,7 +413,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
         if (!row.inventoryId) return row;
         const match = byId.get(String(row.inventoryId));
         if (!match) return row;
-        return { ...row, code: match.inventoryCode, name: match.inventoryName, sourceType: match.sourceType, unit: row.unit || match.unit || "", stockOnHand: match.stockOnHand ?? null };
+        return { ...row, code: match.inventoryCode, name: match.inventoryName, sourceType: match.sourceType, unit: row.unit || match.unit || "", stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
       });
     } catch {
       return list;
@@ -456,6 +488,10 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
       const withColors = await hydrateColors(withUnits);
       const withMOs = await hydrateManufacturingOrders(withColors);
       const recalculated = withMOs.map(recalc);
+      // Prefetch each distinct item's own valid units so the Unit cell's dropdown is ready
+      // the moment an existing line is opened for edit, not just newly-picked lines.
+      new Set(recalculated.map((row) => row.inventoryId).filter((id): id is number => id != null))
+        .forEach((id) => ensureItemUnitsLoaded(id));
       // No trailing blank row auto-appended here — rows are added ONLY by clicking Add Row
       // (see addRow below). A newly-loaded order with existing lines shows exactly those
       // lines; a brand-new order with none yet still gets the one starting blank row so
@@ -483,6 +519,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     inventoryId: row.inventoryId,
     serviceCardId: row.serviceCardId,
     quantity: row.quantity === "" ? undefined : num(row.quantity),
+    grossQuantity: row.grossQuantity === "" ? undefined : num(row.grossQuantity),
     unitId: row.unitId ?? undefined,
     unitPrice: row.rate === "" ? undefined : num(row.rate),
     forexId: row.forexId ?? undefined,
@@ -585,12 +622,18 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
       const clientId = pendingLookupClientId.current;
       pendingLookupClientId.current = null;
       if (!clientId) return;
+      ensureItemUnitsLoaded(Number(selection.id));
       updateRow(clientId, {
         inventoryId: Number(selection.id),
         sourceType: selection.meta?.sourceType ?? null,
         code: selection.code,
         name: selection.name,
+        // Unit is item-specific — a unit valid for the previously selected item may not be
+        // valid for this one, so it's cleared here the same way handleTypeChange already
+        // clears it on a Type change.
+        unitId: null, unit: "",
         stockOnHand: typeof selection.meta?.stockOnHand === "number" ? selection.meta.stockOnHand : null,
+        lastPurchasePrice: typeof selection.meta?.lastPurchasePrice === "number" ? selection.meta.lastPurchasePrice : null,
       }, true);
     },
     INVENTORY_CARDS_LIST_PATH,
@@ -631,6 +674,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     updateRow(clientId, {
       typeKind, itemType: opt.itemType,
       inventoryId: null, serviceCardId: null, sourceType: null, code: "", name: "",
+      stockOnHand: null, lastPurchasePrice: null,
       colorCardId: null, color: "",
       manufacturingOrderId: null, manufacturingOrderNo: "",
     }, true);
@@ -936,14 +980,38 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   // totalRecords counts actual saved/displayed records — every non-blank row, i.e. exactly what
   // isBlankLine already excludes (the empty starter row, and nothing else now that rows are
   // never auto-appended) — never the raw visual row count.
-  const { totalRecords, totalQuantity, totalAmount } = useMemo(() => {
+  const { totalRecords, totalQuantity, totalAmount, subTotal, vatAmount } = useMemo(() => {
     const realRows = rows.filter((r) => !isBlankLine(r));
+    const amount = realRows.reduce((s, r) => s + num(r.lineAmount ?? 0), 0);
+    const preVat = realRows.reduce((s, r) => s + num(r.price ?? 0), 0);
     return {
       totalRecords: realRows.length,
       totalQuantity: realRows.reduce((s, r) => s + num(r.quantity), 0),
-      totalAmount: realRows.reduce((s, r) => s + num(r.lineAmount ?? 0), 0),
+      totalAmount: amount,
+      // Header GrandTotal (IM_OrderReceipt.SubTotal/VatAmount/GrandTotal) — derived from the
+      // exact same per-line price/lineAmount recalc() above already computes, not a second
+      // calculation. SubTotal = sum of pre-VAT line amounts (`price`); VatAmount = the
+      // remainder (0 for a VAT-Inclusive line, same as recalc()'s own vatIncluded branch);
+      // GrandTotal is `totalAmount` itself, synced below.
+      subTotal: preVat,
+      vatAmount: amount - preVat,
     };
   }, [rows]);
+
+  // Keeps the persisted header total (IM_OrderReceipt.SubTotal/VatAmount/GrandTotal, read by
+  // the Purchase Order list screen and anything else that loads this PO) in sync with the
+  // footer above — the single existing total-calculation logic, just also written back to the
+  // server instead of staying display-only. Debounced the same way MasterDetailLayout already
+  // debounces its own per-user PATCHes, so typing a Rate doesn't fire one request per keystroke.
+  const totalsSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!orderReceiptId) return;
+    if (totalsSyncTimer.current) clearTimeout(totalsSyncTimer.current);
+    totalsSyncTimer.current = setTimeout(() => {
+      legacyErpApi.purchaseOrders.update(orderReceiptId, { subTotal, vatAmount, grandTotal: totalAmount }).catch(() => {});
+    }, 600);
+    return () => { if (totalsSyncTimer.current) clearTimeout(totalsSyncTimer.current); };
+  }, [orderReceiptId, subTotal, vatAmount, totalAmount]);
 
   // Stock on Hand — tracks whichever row is currently the active cell (the grid's own
   // "selected row" concept), showing that row's item stock when it's an Inventory or Fixed
@@ -1173,43 +1241,61 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   </TableCell>
                 ),
 
-                // CODE — always second column (FIXED_COLS). Smart-search autocomplete +
-                // escalate-to-full-lookup icon, gated behind click-to-edit.
+                // CODE — always second column (FIXED_COLS). Read-only: bound to whichever
+                // Inventory item Name's search/select resolved (see the Name cell below) —
+                // never typed directly, never regenerated. editable:false in COLUMNS already
+                // makes activateCell() a no-op beyond moving the cursor here, so this cell has
+                // no editing branch at all.
                 code: (
                   <TableCell key="code" className={cellCls("code")}>
-                    {isActive("code") && editing ? (
+                    <div {...staticProps("code", { value: r.code || "—", muted: !r.code })} />
+                  </TableCell>
+                ),
+
+                // NAME — always third column (FIXED_COLS). Smart-search autocomplete (the same
+                // AutocompleteTextCell + Inventory Card List datasource Code used to search)
+                // relocated here per spec: search/select by Name, Code auto-fills read-only.
+                // Selecting a suggestion resolves inventoryId/sourceType/Code/Name/Stock/Last
+                // Purchase Price together onto the row, mirroring the old Code cell's own
+                // onSelectOption exactly, just keyed off Name's input instead.
+                name: (
+                  <TableCell key="name" className={cellCls("name")}>
+                    {isActive("name") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <AutocompleteTextCell
                           autoFocus
-                          value={r.code}
+                          value={r.name}
                           // Service has no cached client-side list (it's a small, rarely-typed
                           // master already well served by the full lookup dialog below) — free
                           // typing still works there, just without inline suggestions.
                           options={r.typeKind === "fixedasset" ? fixedAssetCodeOptions : r.typeKind === "service" ? [] : inventoryCodeOptions}
                           disabled={readOnly}
                           showDropdownIcon
-                          onChange={(v) => updateRow(r.clientId, { code: v })}
+                          onChange={(v) => updateRow(r.clientId, { name: v })}
                           onCancel={() => cancelEdit(r.clientId)}
                           onDoubleClick={() => !readOnly && (r.typeKind === "service" ? setServiceLookupClientId(r.clientId) : openLookupForRow(r.clientId, r.typeKind))}
                           onSelectOption={(o) => {
                             const match = inventoryById.get(o.id);
                             setEditing(false);
+                            ensureItemUnitsLoaded(Number(o.id));
                             updateRow(r.clientId, {
                               inventoryId: Number(o.id),
                               sourceType: match?.sourceType ?? r.sourceType,
                               code: o.code ?? "",
                               name: o.name ?? "",
+                              unitId: null, unit: "",
                               stockOnHand: typeof match?.stockOnHand === "number" ? match.stockOnHand : null,
+                              lastPurchasePrice: typeof match?.lastPurchasePrice === "number" ? match.lastPurchasePrice : null,
                             }, true);
                           }}
                           onCommit={(finalValue) => {
                             // Free-typed text with nothing picked from the suggestion list —
-                            // save exactly what was typed, same as the plain input this
-                            // replaced; the row's inventoryId/sourceType are left untouched
-                            // (unchanged unless a suggestion above was picked, or the full
-                            // lookup dialog resolved it).
+                            // save exactly what was typed as the display Name; Code/inventoryId
+                            // are left untouched (unchanged unless a suggestion above was
+                            // picked, or the full lookup dialog resolved it) — Code must never
+                            // be silently regenerated from free text.
                             setEditing(false);
-                            updateRow(r.clientId, { code: finalValue }, true);
+                            updateRow(r.clientId, { name: finalValue }, true);
                           }}
                         />
                         <Button
@@ -1221,27 +1307,6 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                         >
                           <Search className="h-3.5 w-3.5" />
                         </Button>
-                      </div>
-                    ) : (
-                      <div {...staticProps("code", { value: r.code || "—", muted: !r.code })} />
-                    )}
-                  </TableCell>
-                ),
-
-                // NAME — always third column (FIXED_COLS).
-                name: (
-                  <TableCell key="name" className={cellCls("name")}>
-                    {isActive("name") && editing ? (
-                      <div className={EDITOR_WRAP}>
-                        <EditableGridInput
-                          autoFocus
-                          value={r.name}
-                          disabled={readOnly}
-                          onChange={(v) => updateRow(r.clientId, { name: v })}
-                          onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
-                          onKeyDown={(e) => handleEditorKeyDown(e, r)}
-                          className={EDITOR_CONTROL}
-                        />
                       </div>
                     ) : (
                       <div {...staticProps("name", { value: r.name || "—", muted: !r.name })} />
@@ -1336,25 +1401,51 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   </TableCell>
                 ),
 
-                unit: (
-                  <TableCell key="unit" className={cellCls("unit")}>
-                    {isActive("unit") && editing ? (
+                // GROSS QUANTITY — when > 0, this (not Quantity) drives Price/Item Amount; see
+                // recalc()'s effectiveQuantity. Blank/0 falls back to Quantity, unchanged from
+                // before this column existed.
+                grossQuantity: (
+                  <TableCell key="grossQuantity" className={cellCls("grossQuantity")}>
+                    {isActive("grossQuantity") && editing ? (
                       <div className={EDITOR_WRAP}>
-                        <Select
-                          value={r.unitId != null ? String(r.unitId) : ""}
-                          defaultOpen
-                          onOpenChange={(open) => !open && setEditing(false)}
-                          onValueChange={(v) => { const m = unitOptions.find((u) => String(u.id) === v); updateRow(r.clientId, { unitId: Number(v), unit: m?.code || m?.name || "" }, true); setEditing(false); }}
-                        >
-                          <SelectTrigger className={EDITOR_CONTROL}><SelectValue placeholder="—" /></SelectTrigger>
-                          <SelectContent>{unitOptions.map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.code || u.name}</SelectItem>)}</SelectContent>
-                        </Select>
+                        <EditableGridInput
+                          autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly}
+                          onChange={(v) => updateRow(r.clientId, { grossQuantity: v })}
+                          onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
+                          onKeyDown={(e) => handleEditorKeyDown(e, r)}
+                          className={EDITOR_CONTROL}
+                        />
                       </div>
                     ) : (
-                      <div {...staticProps("unit", { value: r.unit || "—", muted: !r.unit })} />
+                      <div {...staticProps("grossQuantity", { value: fmtCell(r.grossQuantity), align: "right", muted: r.grossQuantity === "" })} />
                     )}
                   </TableCell>
                 ),
+
+                unit: (() => {
+                  // Scoped to the selected item's own configured units (IM_ItemUnitItemSize) —
+                  // not every MD_UnitSetItem in the database. Empty until an item is picked.
+                  const rowUnitOptions = r.inventoryId != null ? (itemUnitsByInventoryId[String(r.inventoryId)] ?? []) : [];
+                  return (
+                    <TableCell key="unit" className={cellCls("unit")}>
+                      {isActive("unit") && editing ? (
+                        <div className={EDITOR_WRAP}>
+                          <Select
+                            value={r.unitId != null ? String(r.unitId) : ""}
+                            defaultOpen
+                            onOpenChange={(open) => !open && setEditing(false)}
+                            onValueChange={(v) => { const m = rowUnitOptions.find((u) => String(u.id) === v); updateRow(r.clientId, { unitId: Number(v), unit: m?.code || m?.name || "" }, true); setEditing(false); }}
+                          >
+                            <SelectTrigger className={EDITOR_CONTROL}><SelectValue placeholder={r.inventoryId == null ? "Select an item first" : "—"} /></SelectTrigger>
+                            <SelectContent>{rowUnitOptions.map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.code || u.name}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                      ) : (
+                        <div {...staticProps("unit", { value: r.unit || "—", muted: !r.unit })} />
+                      )}
+                    </TableCell>
+                  );
+                })(),
 
                 rate: (
                   <TableCell key="rate" className={cellCls("rate")}>
@@ -1555,13 +1646,25 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
         <span className="text-muted-foreground">Total Records <span className="ml-1.5 font-semibold text-foreground tabular-nums">{totalRecords}</span></span>
         <span className="text-muted-foreground">Total Quantity <span className="ml-1.5 font-semibold text-foreground tabular-nums">{totalQuantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span></span>
         <span className="text-muted-foreground">Total Amount <span className="ml-1.5 font-semibold text-foreground tabular-nums">{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>
-        {/* Stock on Hand — bottom-right, blank whenever the active row isn't a real inventory
-            item (no row selected yet, a blank trailing row, or a Service line). */}
+        {/* Stock on Hand / Last Purchase Price — bottom-right, blank whenever the active row
+            isn't a real inventory item (no row selected yet, a blank trailing row, or a
+            Service line). Stock on Hand is derived from Purchase Receipt minus Purchase Return
+            history (not a full perpetual-inventory ledger — see inventory-card.service.ts's own
+            comment); Last Purchase Price is the most recent price actually paid for this item
+            on a PO or Purchase Receipt line, not a true costed valuation (none exists). */}
         {showStock && (
           <span className="border-l border-border pl-5 text-muted-foreground">
             Stock on Hand
             <span className="ml-1.5 font-semibold text-foreground tabular-nums">
               {(stockRow!.stockOnHand ?? 0).toLocaleString()}{stockRow!.unit ? ` ${stockRow!.unit}` : ""}
+            </span>
+          </span>
+        )}
+        {showStock && stockRow!.lastPurchasePrice != null && (
+          <span className="border-l border-border pl-5 text-muted-foreground">
+            Last Purchase Price
+            <span className="ml-1.5 font-semibold text-foreground tabular-nums">
+              {stockRow!.lastPurchasePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </span>
         )}
@@ -1717,146 +1820,13 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
 
 // --- Removed: LineVariantDialog (the composite Variant1+Variant2 breakdown UI for
 // IM_OrderReceiptItemVariant) was taken off the Variant column per explicit confirmation, in
-// favor of a free-text field (AutocompleteTextCell below). The backend endpoints it used
+// favor of a free-text field (AutocompleteTextCell). The backend endpoints it used
 // (purchase-order.service.ts's listItemVariantOptions/listItemVariantLines/createItemVariantLine/
 // updateItemVariantLine/removeItemVariantLine, and the matching legacyErpApi.purchaseOrders.*
 // client methods) are untouched and still exist — only this screen's use of them was removed.
-
-
-interface AutocompleteOption {
-  id: string;
-  code?: string | null;
-  name?: string | null;
-}
-
-// Generic free-text-with-suggestions editor — same primary control as the Code field (a real
-// typable EditableGridInput, not a button that opens a picker), plus a lightweight suggestions
-// list that appears while typing. Unlike every forced-selection lookup in this grid, the typed
-// text is never rejected: closing without picking a suggestion just keeps whatever was typed.
-// Built generic on purpose (options + onCommit are the only per-field pieces) so a second field
-// reuses this exact component later — only the data source changes, never the UI or the
-// interaction model. Used by Code, Color and Variant.
 //
-// Matching CONTAINS anywhere in the string (not just a prefix) and case-insensitive throughout
-// — "verify-me" matches "v", "ify", "me", "fy", "ABC"/"abc"/"AbC" all match identically, since
-// both the query and the candidate text are lower-cased before the same String.includes() check.
-function AutocompleteTextCell({
-  value, options, disabled, autoFocus, showDropdownIcon, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
-}: {
-  value: string;
-  options: AutocompleteOption[];
-  disabled?: boolean;
-  autoFocus?: boolean;
-  // Purely visual — a chevron affordance so a searchable text field still reads as "this opens
-  // a list" at a glance, the same way every shadcn Select in this grid already does. Opt-in
-  // per field (currently just Code/"Inventory selector") rather than automatic, so it doesn't
-  // silently change the look of every other field built on this same component.
-  showDropdownIcon?: boolean;
-  onChange: (v: string) => void;
-  onCommit: (finalValue: string) => void;
-  onCancel: () => void;
-  // Fired instead of onCommit when the user explicitly picks a suggestion (click, or Enter/Tab
-  // while a suggestion is highlighted) — hands back the full matched record (id/code/name, and
-  // whatever else the caller's own datasource carries) instead of just the display string, for
-  // fields whose selection needs to resolve more than one value onto the row (Code sets
-  // inventoryId/sourceType/stockOnHand together, not just its own text). Fields that only ever
-  // need the label text (Color, Variant) simply omit it and keep using onCommit.
-  onSelectOption?: (option: AutocompleteOption) => void;
-  onDoubleClick?: () => void;
-}) {
-  const [open, setOpen] = useState(true);
-  const [highlighted, setHighlighted] = useState(0);
-  const q = value.trim().toLowerCase();
-  const filtered = (q ? options.filter((o) => (o.code || o.name || "").toLowerCase().includes(q)) : options).slice(0, 20);
-
-  // Re-anchor the highlighted row whenever the candidate set changes (new keystroke narrows or
-  // widens it) — an index left pointing past the new, shorter list would highlight nothing, or
-  // Enter/Tab would silently pick the wrong row.
-  useEffect(() => { setHighlighted(0); }, [q, options.length]);
-
-  const selectSuggestion = (o: AutocompleteOption) => {
-    const label = o.code || o.name || "";
-    onChange(label);
-    setOpen(false);
-    if (onSelectOption) onSelectOption(o); else onCommit(label);
-  };
-
-  // Shared by Enter and Tab: if a suggestion is currently highlighted, picking it wins (matches
-  // every native combobox); otherwise falls back to committing whatever was actually typed —
-  // free text is never rejected just because nothing in the list matched it.
-  const resolveHighlightedOrTyped = () => {
-    setOpen(false);
-    if (filtered.length && highlighted >= 0 && highlighted < filtered.length) selectSuggestion(filtered[highlighted]);
-    else onCommit(value);
-  };
-
-  return (
-    // Popover here is purely a portaling/positioning mechanism (PopoverAnchor + PopoverContent,
-    // no PopoverTrigger) — the visible control is still a plain input, matching Code exactly.
-    // A plain absolutely-positioned div would get silently clipped by the grid's own scrolling
-    // container whenever the active row is near the bottom of the visible area; portaling the
-    // suggestion list to the document root (what Popover already does for every other lookup in
-    // this grid) avoids that without changing what the field looks like at rest.
-    <Popover open={open && filtered.length > 0}>
-      {/* No `asChild` here — EditableGridInput isn't ref-forwarding (it's a plain function
-          component, same as everywhere else it's used in the app), so Radix couldn't measure
-          it directly for positioning. Anchor's own default wrapper element does the measuring
-          instead; the input renders as its normal child, unaffected either way. */}
-      <PopoverAnchor className="relative block h-full w-full">
-        <EditableGridInput
-          autoFocus={autoFocus}
-          value={value}
-          disabled={disabled}
-          onChange={(v) => { onChange(v); setOpen(true); }}
-          onBlur={() => { setOpen(false); onCommit(value); }}
-          onDoubleClick={onDoubleClick}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") { e.preventDefault(); setOpen(false); onCancel(); return; }
-            if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHighlighted((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0))); return; }
-            if (e.key === "ArrowUp") { e.preventDefault(); setHighlighted((h) => Math.max(h - 1, 0)); return; }
-            // Enter/Tab resolve immediately (same net effect as blur) rather than routing
-            // through the grid's shared handleEditorKeyDown — that helper calls persistRow
-            // synchronously off the row's current state, but resolving a brand-new typed value
-            // (or a picked suggestion) can mean an async "create the master record" call first
-            // (see the Color wiring below); committing here guarantees the row's real FK is set
-            // before anything tries to save it.
-            if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); resolveHighlightedOrTyped(); }
-          }}
-          className={cn(EDITOR_CONTROL, showDropdownIcon && "pr-7")}
-        />
-        {showDropdownIcon && (
-          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        )}
-      </PopoverAnchor>
-      <PopoverContent
-        align="start"
-        sideOffset={1}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        // The bare `w-[--radix-popover-trigger-width]` form never actually applied under
-        // Tailwind v4 — v4 treats a bracketed arbitrary value as a literal raw value, not an
-        // implicit var(...) wrap (that shorthand is v3-only); an explicit var(...) is required,
-        // which is why every suggestion popup used to silently ignore the trigger width and
-        // just grow to fit its longest suggestion's own text width instead of matching the
-        // cell it belongs to.
-        className="w-[var(--radix-popover-trigger-width)] max-h-44 overflow-y-auto p-1"
-      >
-        <div role="listbox">
-          {filtered.map((o, i) => (
-            <button
-              key={o.id}
-              type="button"
-              role="option"
-              aria-selected={i === highlighted}
-              onMouseDown={(e) => e.preventDefault()}
-              onMouseEnter={() => setHighlighted(i)}
-              onClick={() => selectSuggestion(o)}
-              className={cn("block w-full truncate rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-accent", i === highlighted && "bg-accent")}
-            >
-              {o.code ? `${o.code} - ${o.name}` : o.name}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
+// AutocompleteTextCell (Code/Color/Variant's shared free-text-with-suggestions editor) now
+// lives in its own file — components/legacy-erp/autocomplete-text-cell.tsx (see the `import`
+// at the top of this file) — so Inventory Receipt's own Code field can reuse the EXACT same
+// component instead of a second implementation. Purely a "give it its own file" move; nothing
+// about its behavior changed here.

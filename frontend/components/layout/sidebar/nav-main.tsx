@@ -84,6 +84,9 @@ import {
   Shirt,
   ListTree,
   Boxes,
+  Ribbon,
+  Sliders,
+  Truck,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -210,6 +213,7 @@ const iconMap: Record<string, LucideIcon> = {
   Package: Package,
   Plus: Plus,
   ShoppingCart: ShoppingCart,
+  Truck: Truck,
   FileText: FileText,
   RotateCcw: RotateCcw,
   BadgeDollarSign: BadgeDollarSignIcon,
@@ -261,6 +265,8 @@ const iconMap: Record<string, LucideIcon> = {
   Shirt: Shirt,
   ListTree: ListTree,
   Boxes: Boxes,
+  Ribbon: Ribbon,
+  Sliders: Sliders,
 };
 
 // Helper function to get icon component from string name

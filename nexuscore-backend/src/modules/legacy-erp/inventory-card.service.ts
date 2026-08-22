@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap } from './legacy-db-types.util';
+import { screenKeyFor } from './inventory-receipt.service';
 
 // Read-only aggregation over the three existing IM_Item-based inventory cards (Fabric, Yarn,
 // Trim) for the "Inventory Card List" screen — a UNION ALL of the same three AccessCode-
@@ -32,6 +33,17 @@ const SORTABLE_COLUMNS: Record<string, string> = {
   insertedAt: 'insertedAt',
   insertedBy: 'insertedBy',
 };
+
+// Exported for worklist-fields.service.ts (Customize Worklist field-metadata source) — the
+// synthetic UNION ALL's own fixed output columns (see list() below), not a real table's raw
+// columns like every other *_COLUMNS export in this module. Used only to drive the Worklist
+// Design field picker; the frontend resolves a custom worklist for this one screen by
+// projecting/reordering the rows its existing list() call already returns (see worklist-rows
+// .service.ts's own comment on why this source has no LIST_SCREEN_TABLES entry).
+export const INVENTORY_CARD_COLUMNS = [
+  'sourceType', 'inventoryCode', 'inventoryName', 'inventoryType', 'unit',
+  'stockOnHand', 'lastPurchasePrice', 'insertedAt', 'insertedBy',
+] as const;
 
 export interface InventoryCardListParams {
   search?: string;
@@ -108,7 +120,8 @@ export class InventoryCardService {
         i."InventoryName" AS "inventoryName",
         ${label} AS "inventoryType",
         COALESCE(unit_lookup."unitName", '') AS "unit",
-        0 AS "stockOnHand",
+        COALESCE(stock."qty", 0) AS "stockOnHand",
+        last_price."price" AS "lastPurchasePrice",
         i."InsertedAt" AS "insertedAt",
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
@@ -120,6 +133,8 @@ export class InventoryCardService {
         ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC
         LIMIT 1
       ) unit_lookup ON true
+      ${this.stockLateral()}
+      ${this.lastPurchasePriceLateral()}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"
       WHERE i."IsDeleted" = 0 AND i."AccessCode" = ${accessCode}
     `;
@@ -134,13 +149,126 @@ export class InventoryCardService {
         i."InventoryName" AS "inventoryName",
         'Yarn' AS "inventoryType",
         COALESCE(us."SetName", '') AS "unit",
-        0 AS "stockOnHand",
+        COALESCE(stock."qty", 0) AS "stockOnHand",
+        last_price."price" AS "lastPurchasePrice",
         i."InsertedAt" AS "insertedAt",
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
       LEFT JOIN "MD_UnitSet" us ON us."RecId" = i."UnitId"
+      ${this.stockLateral()}
+      ${this.lastPurchasePriceLateral()}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"
       WHERE i."IsDeleted" = 0 AND i."AccessCode" = 'YARN'
+    `;
+  }
+
+  // Stock on Hand — deliberately scoped to only the two unambiguous, purchase-side movement
+  // types on IM_ReceiptItem: Purchase Receipt (ReceiptType=2, +) and Purchase Return
+  // (ReceiptType=2, -). The other 16 "Receipt Screen Replication" types (Warehouse Transfer,
+  // Outside Process Send/Receive, Manufacture Send/Return, etc. — see receipt-types.config.ts)
+  // carry no explicit inbound/outbound flag anywhere in the schema; guessing a sign for each
+  // would risk a silently-wrong stock figure, which is worse than the narrower-but-correct
+  // "purchases minus returns" figure this computes instead. NOT a full perpetual-inventory
+  // balance — see the module's own final report for this documented scope limitation.
+  //
+  // BUG FIX: also requires the owning IM_Receipt header to be non-deleted. removeItem's own
+  // IsDeleted=0 filter only ever checked the LINE's own flag — but IM_Receipt.remove() (like
+  // every other header/detail pair in this module) soft-deletes only the header, never cascades
+  // to its items (confirmed live: several IM_OrderReceipt rows in the dev DB are IsDeleted=1
+  // with still-active IsDeleted=0 line items). Without this join, a cancelled/deleted Purchase
+  // Receipt or Return's quantity still counted toward Stock on Hand.
+  //
+  // BUG FIX: filters on the HEADER's "ReceiptType" (rec), not the line item's own denormalized
+  // copy (ri."ReceiptType"). inventory-receipt.service.ts's createItem does stamp both the same
+  // value at insert time, but confirmed live that at least one existing IM_ReceiptItem row has a
+  // stale/mismatched value on the item copy (item ReceiptType=1, its own header ReceiptType=2) —
+  // which silently excluded a real Purchase Receipt line from this sum. The header's ReceiptType
+  // is the single source of truth for "what kind of receipt this is" everywhere else in this
+  // module (list/get/nextReceiptNo all filter on it), so trusting it here instead is strictly
+  // more correct, not a new business rule.
+  //
+  // APPROVAL GATE: gated on the real ApprovalRequest row for this exact receipt (General
+  // Settings -> Approval Configuration's screenKey/transactionId, the same table
+  // ApprovalService.submit()/approve()/reject() already write — see inventory-receipt.service
+  // .ts), NOT on the current live "is approval required" config flag. This distinction matters:
+  // a receipt created back when Approval Required was OFF has no ApprovalRequest row at all —
+  // NOT EXISTS is true for it, so it keeps counting toward stock forever, exactly as before,
+  // even after an admin later turns Approval Required ON for this screen. Only a receipt that
+  // actually went through submit() and is sitting at pending_approval/rejected (status <>
+  // 'approved') is excluded. This is the one and only place stock is computed (see class
+  // comment / final report: there is no separate stored quantity to "not update"), so gating
+  // this SUM *is* the enforcement — approval-OFF / never-submitted behavior is untouched.
+  // `itemRef` is the correlated `i."RecId"` column reference when embedded in the per-row
+  // LATERAL join below, or a literal item id when used as a standalone scalar query (see
+  // getStockOnHand, added for item-statement.service.ts) — same SQL text either way, so the
+  // two call sites can never silently drift apart into two different stock formulas.
+  private stockSumSql(itemRef: Prisma.Sql) {
+    const purchaseReceiptKey = screenKeyFor(2);
+    const purchaseReturnKey = screenKeyFor(122);
+    return Prisma.sql`
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN rec."ReceiptType" = 2 AND NOT EXISTS (
+            SELECT 1 FROM "ApprovalRequest" ar
+            WHERE ar."screenKey" = ${purchaseReceiptKey} AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
+          ) THEN ri."Quantity"
+          WHEN rec."ReceiptType" = 122 AND NOT EXISTS (
+            SELECT 1 FROM "ApprovalRequest" ar
+            WHERE ar."screenKey" = ${purchaseReturnKey} AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
+          ) THEN -ri."Quantity"
+          ELSE 0
+        END
+      ), 0) AS "qty"
+      FROM "IM_ReceiptItem" ri
+      JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+      WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0 AND rec."ReceiptType" IN (2, 122)
+    `;
+  }
+
+  private stockLateral() {
+    return Prisma.sql`LEFT JOIN LATERAL ( ${this.stockSumSql(Prisma.sql`i."RecId"`)} ) stock ON true`;
+  }
+
+  // Single-item entry point for item-statement.service.ts's "Current Stock" header field and
+  // its cross-check against the statement's own transaction-derived closing balance — same
+  // formula as the list() grid's "Stock on Hand" column above, just scalar instead of a
+  // per-row LATERAL join. Never a second, divergent stock calculation.
+  async getStockOnHand(itemId: number): Promise<number> {
+    const rows = await this.prisma.$queryRaw<any[]>(this.stockSumSql(Prisma.sql`${itemId}`));
+    return Number(rows[0]?.qty ?? 0);
+  }
+
+  // "Stock Price" has no source anywhere in this schema (no cost/valuation column on IM_Item,
+  // no ledger) — approximated here as the most recent UnitPrice actually paid for this item,
+  // across either a Purchase Order line or a Purchase Receipt line, whichever is more recent.
+  // Exposed as "lastPurchasePrice" (not "stockPrice") so callers surface it honestly as a last-
+  // paid-price approximation rather than implying a true costed valuation.
+  //
+  // BUG FIX: same header-soft-delete gap as stockLateral above, on both sides of the UNION —
+  // confirmed live that this was actually surfacing prices from cancelled Purchase Orders
+  // (7 of 10 IM_OrderReceipt rows in the dev DB are soft-deleted with still-active items) before
+  // this join was added.
+  //
+  // BUG FIX: the IM_ReceiptItem side also filters on the HEADER's "ReceiptType" (rec), same
+  // stale-denormalized-column reasoning as stockLateral above.
+  private lastPurchasePriceLateral() {
+    return Prisma.sql`
+      LEFT JOIN LATERAL (
+        SELECT p."price"
+        FROM (
+          SELECT ooi."UnitPrice" AS "price", ooi."InsertedAt" AS "ts"
+          FROM "IM_OrderReceiptItem" ooi
+          JOIN "IM_OrderReceipt" po ON po."RecId" = ooi."OrderReceiptId" AND po."IsDeleted" = 0
+          WHERE ooi."InventoryId" = i."RecId" AND ooi."IsDeleted" = 0 AND ooi."UnitPrice" IS NOT NULL
+          UNION ALL
+          SELECT ri."UnitPrice" AS "price", ri."InsertedAt" AS "ts"
+          FROM "IM_ReceiptItem" ri
+          JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+          WHERE ri."InventoryId" = i."RecId" AND ri."IsDeleted" = 0 AND rec."ReceiptType" = 2 AND ri."UnitPrice" IS NOT NULL
+        ) p
+        ORDER BY p."ts" DESC
+        LIMIT 1
+      ) last_price ON true
     `;
   }
 }

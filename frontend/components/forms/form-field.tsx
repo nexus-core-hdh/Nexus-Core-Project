@@ -49,16 +49,16 @@ export function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function FormTextField({
-  label, value, onChange, lookup, type = "text", span = "normal",
+  label, value, onChange, lookup, type = "text", span = "normal", disabled,
 }: {
-  label: string; value: any; onChange: (v: any) => void; lookup?: boolean; type?: string; span?: FormFieldSpan;
+  label: string; value: any; onChange: (v: any) => void; lookup?: boolean; type?: string; span?: FormFieldSpan; disabled?: boolean;
 }) {
   if (lookup) {
     return (
       <div className={cn("space-y-2", spanClass(span))}>
         <FieldLabel>{label}</FieldLabel>
         <InputGroup className={CONTROL_HEIGHT}>
-          <InputGroupInput type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} className="text-sm" />
+          <InputGroupInput type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="text-sm" />
           <InputGroupAddon align="inline-end">
             <Search className="h-3.5 w-3.5 text-muted-foreground/70" />
           </InputGroupAddon>
@@ -69,7 +69,7 @@ export function FormTextField({
   return (
     <div className={cn("space-y-2", spanClass(span))}>
       <FieldLabel>{label}</FieldLabel>
-      <Input type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} className={fieldInputClass} />
+      <Input type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={fieldInputClass} />
     </div>
   );
 }

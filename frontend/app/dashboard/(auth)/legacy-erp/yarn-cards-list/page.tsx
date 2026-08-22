@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -22,9 +22,14 @@ import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
-  Search, RefreshCw, Plus, MoreHorizontal, Eye, Pencil, Trash2, Layers, SearchX,
+  Search, RefreshCw, Plus, Eye, Pencil, Trash2, Layers, SearchX, FileClock,
   ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, MousePointerClick, XCircle,
 } from "lucide-react";
+import { formatCell } from "@/lib/legacy-erp/humanize";
+import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
+import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
+import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 
 const YARN_CARDS_LIST_PATH = "/dashboard/legacy-erp/yarn-cards-list";
 
@@ -79,12 +84,17 @@ export default function YarnCardListPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("inventoryCode");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const wl = useWorklist({ storageKey: "yarnCardsListWorklists" });
 
-  const load = async (term?: string) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null) => {
     setLoading(true);
     try {
-      const r: any = await legacyErpApi.yarnCards.list(term);
-      setRows(Array.isArray(r) ? r : []);
+      const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
+      const r: any = worklist
+        ? await legacyErpApi.worklistFields.resolve("yarn-card-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
+        : await legacyErpApi.yarnCards.list(term);
+      const list = Array.isArray(r) ? r : [];
+      setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load yarn cards");
       setRows([]);
@@ -99,9 +109,26 @@ export default function YarnCardListPage() {
   const doSearch = () => load(search.trim() || undefined);
   const refresh = () => { setSearch(""); load(); };
 
+  const onWorklistChange = (id: string) => {
+    const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
+    wl.setActiveWorklistId(id);
+    load(search.trim() || undefined, worklist);
+  };
+
+  const handleSaveWorklists = async (next: Worklist[]) => {
+    const { activeWorklist } = await wl.saveWorklists(next);
+    load(search.trim() || undefined, activeWorklist);
+  };
+
+  const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/yarn-cards?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/yarn-cards?id=${id}&mode=edit`);
   const createNew = () => navigateOrOpenTab(router, `/dashboard/legacy-erp/yarn-cards?mode=create`);
+  const viewStatement = (id: number) => navigateOrOpenTab(
+    router,
+    `/dashboard/legacy-erp/item-statement?id=${id}&source=${encodeURIComponent(YARN_CARDS_LIST_PATH)}&sourceLabel=${encodeURIComponent("Yarn Cards")}`,
+  );
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -218,21 +245,31 @@ export default function YarnCardListPage() {
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                <SortableHead sortKey="inventoryCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
-                <SortableHead sortKey="inventoryName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
-                <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
+                {activeColumns ? (
+                  activeColumns.map((c) => (
+                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                      {wl.columnLabel(c)}
+                    </TableHead>
+                  ))
+                ) : (
+                  <>
+                    <SortableHead sortKey="inventoryCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
+                    <SortableHead sortKey="inventoryName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
+                    <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
+                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
+                  </>
+                )}
                 <TableHead className={cn("h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80", mode === "lookup" ? "w-40" : "w-14")} />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 4) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               ) : rows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={5} className="py-12">
+                  <TableCell colSpan={(activeColumns?.length ?? 4) + 1} className="py-12">
                     <Empty>
                       <EmptyHeader>
                         <EmptyMedia variant="icon">{searched ? <SearchX /> : <Layers />}</EmptyMedia>
@@ -247,9 +284,18 @@ export default function YarnCardListPage() {
                     </Empty>
                   </TableCell>
                 </TableRow>
-              ) : sortedRows.map((row, index) => (
+              ) : sortedRows.map((row, index) => {
+                // One action list, both surfaces (right-click + the Quick Actions trigger in
+                // the row's own cell) — see components/legacy-erp/row-actions.tsx.
+                const rowActions: RowAction[] = [
+                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+                  { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
+                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
+                ];
+                return (
+                <RowContextMenu key={row.id} actions={rowActions}>
                 <TableRow
-                  key={row.id}
                   ref={(el) => { if (el) rowRefs.current.set(row.id, el); else rowRefs.current.delete(row.id); }}
                   tabIndex={0}
                   onFocus={() => setSelectedId(row.id)}
@@ -261,16 +307,24 @@ export default function YarnCardListPage() {
                     mode === "lookup" && "cursor-pointer",
                   )}
                 >
-                  <TableCell className="py-3">
-                    <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>
-                  </TableCell>
-                  <TableCell className="py-3 font-medium">{row.inventoryName}</TableCell>
-                  <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                  <TableCell className="py-3">
-                    <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
-                      {row.inUse ? "Active" : "Inactive"}
-                    </Badge>
-                  </TableCell>
+                  {activeColumns ? (
+                    activeColumns.map((c) => (
+                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
+                    ))
+                  ) : (
+                    <>
+                      <TableCell className="py-3">
+                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>
+                      </TableCell>
+                      <TableCell className="py-3 font-medium">{row.inventoryName}</TableCell>
+                      <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="py-3">
+                        <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
+                          {row.inUse ? "Active" : "Inactive"}
+                        </Badge>
+                      </TableCell>
+                    </>
+                  )}
                   <TableCell className="py-3 text-right">
                     {/* Maintenance actions (View/Update/Delete) stay exactly as they were,
                         regardless of mode. Select is ADDITIONAL, shown only in lookup mode —
@@ -281,29 +335,35 @@ export default function YarnCardListPage() {
                           <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
                         </Button>
                       )}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 opacity-60 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                          <DropdownMenuItem onClick={() => view(row.id)}><Eye className="h-4 w-4 mr-2" />View</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => update(row.id)}><Pencil className="h-4 w-4 mr-2" />Update</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget({ id: row.id, code: row.inventoryCode })}>
-                            <Trash2 className="h-4 w-4 mr-2" />Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                </RowContextMenu>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
       </div>
+
+      <WorklistBar
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        onActiveWorklistChange={onWorklistChange}
+        onDesignOpen={() => wl.setDesignOpen(true)}
+      />
+
+      <WorklistDesignModal
+        open={wl.designOpen}
+        onOpenChange={wl.setDesignOpen}
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        activeTableSource="yarn-card"
+        primaryScope="yarn-card-list"
+        gridLabel="the Yarn Cards List grid"
+        onSave={handleSaveWorklists}
+      />
 
       {mode === "lookup" && (
         <div className="flex items-center justify-end gap-2 border-t pt-4">
