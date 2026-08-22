@@ -30,6 +30,11 @@ interface PendingLine {
   orderReceiptItemId: number; inventoryId: number; code: string; name: string;
   explanation: string | null; unitId: number | null; unitPrice: number | null; colorCardId: string | null;
   orderQty: number; receivedQty: number; pendingQty: number;
+  // Base Unit + Unit Conversion (spec Section 9) — additive display fields from
+  // purchase-order.service.ts's listPending(). `pendingQty`/`unitId` above stay expressed in the
+  // PO line's own unit (this dialog copies both straight onto the new receipt line unchanged —
+  // see confirmImport below), these are purely for showing the Base Unit figure alongside it.
+  baseUnitId: number | null; baseUnitCode: string | null; pendingBaseQty: number;
   // Variant breakdown (IM_OrderReceiptItemVariant rows for this PO line, if any) — copied
   // verbatim onto new IM_ReceiptItemVariant rows on import. See purchase-order.service.ts's
   // listPending() and inventory-receipt-line-grid.tsx's createPendingVariants.
@@ -214,7 +219,12 @@ export function PendingOrdersDialog({ open, onOpenChange, currentAccountId, alre
                             <TableCell className="py-2 text-[13px] text-muted-foreground">{colorLabel(l.colorCardId)}</TableCell>
                             <TableCell className="py-2 text-[13px] text-muted-foreground">{l.explanation || <span>—</span>}</TableCell>
                             <TableCell className="py-2 text-right text-[13px] font-mono">{fmtQty(l.orderQty)}</TableCell>
-                            <TableCell className="py-2 text-right text-[13px] font-mono font-semibold">{fmtQty(l.pendingQty)}</TableCell>
+                            <TableCell className="py-2 text-right text-[13px] font-mono font-semibold">
+                              {fmtQty(l.pendingQty)}
+                              {l.baseUnitId != null && l.unitId !== l.baseUnitId && (
+                                <div className="text-[11px] font-normal text-muted-foreground">{fmtQty(l.pendingBaseQty)} {l.baseUnitCode}</div>
+                              )}
+                            </TableCell>
                             <TableCell className="py-2 text-[13px] text-muted-foreground">{unitLabel(l.unitId)}</TableCell>
                             <TableCell className="py-2 text-right text-[13px] font-mono">{fmtPrice(l.unitPrice)}</TableCell>
                           </TableRow>

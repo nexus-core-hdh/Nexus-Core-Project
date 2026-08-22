@@ -5,6 +5,7 @@ import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { ApprovalService } from '../approval/approval.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
+import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, toBaseQuantity } from './unit-conversion.util';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -116,27 +117,11 @@ export class InventoryReceiptService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, ITEM_VARIANT_TABLE));
   }
 
-  // Item -> Unit backend enforcement. Reuses legacy-master-lookup.service.ts's own
-  // listItemUnits(inventoryId) — the exact same IM_ItemUnitItemSize -> MD_UnitSetItem query
-  // Purchase Order's line grid already drives its per-item Unit dropdown from — as the single
-  // source of truth for "which UnitIds are actually valid for this item", instead of a second
-  // copy of that join. listItemUnits orders by IsMainUnit DESC, so [0] is always the item's
-  // configured default/main unit.
-  //
-  // No inventoryId (e.g. a Service line) -> UnitId passes through untouched, nothing to check
-  // against. An inventoryId with zero configured units also passes the given value through
-  // (nothing to normalize against — matches today's behavior for such items). Otherwise an
-  // unrelated/stale UnitId (left over from a previously selected item, or a tampered payload)
-  // is silently normalized to the item's own main unit rather than rejected outright, so saves
-  // never hard-fail over a value the frontend itself already prevents a user from picking.
-  private async resolveUnitId(inventoryId: any, unitId: any): Promise<number | null | undefined> {
-    if (inventoryId === undefined) return unitId;
-    if (inventoryId === null) return unitId;
-    const validUnits = await this.masterLookupSvc.listItemUnits(Number(inventoryId));
-    if (!validUnits.length) return unitId ?? null;
-    const requested = unitId != null ? Number(unitId) : null;
-    if (requested != null && validUnits.some((u: any) => Number(u.id) === requested)) return requested;
-    return Number(validUnits[0].id);
+  // Item -> Unit backend enforcement — moved to unit-conversion.util.ts's resolveLineUnitId
+  // (identical logic, unchanged) so Purchase Order can reuse the exact same normalization instead
+  // of duplicating it. Thin wrapper kept here so every existing call site below is untouched.
+  private resolveUnitId(inventoryId: any, unitId: any): Promise<number | null | undefined> {
+    return resolveLineUnitId(this.masterLookupSvc, inventoryId, unitId);
   }
 
   // `receiptType`/`numberPrefix` default to Purchase Receipt's existing values everywhere below
@@ -416,20 +401,40 @@ export class InventoryReceiptService {
   // both pass this check and jointly over-receive it; reuses this codebase's existing
   // prisma.$transaction convention (see plm-operations.service.ts) rather than introducing a
   // new locking mechanism.
-  private async assertPendingQty(tx: Prisma.TransactionClient, orderReceiptItemId: number, requestedQty: number) {
+  // Base Unit + Unit Conversion (spec Section 6): the PO line's OrderQty and every prior receipt
+  // line's Quantity can legitimately be in different units (a Bag ordered, received partly in Kg),
+  // so this now normalizes everything to Base Unit before comparing — reusing the one conversion
+  // formula in unit-conversion.util.ts, not a second copy of purchase-order.service.ts's own
+  // listPending logic. `requestedInventoryId`/`requestedUnitId` are the new receipt line's own
+  // item/unit (needed to convert `requestedQty` into Base Unit the same way).
+  private async assertPendingQty(
+    tx: Prisma.TransactionClient,
+    orderReceiptItemId: number,
+    requestedQty: number,
+    requestedInventoryId: any,
+    requestedUnitId: any,
+  ) {
     const poLineRows = await tx.$queryRaw<any[]>(Prisma.sql`
-      SELECT "Quantity" as "orderQty" FROM "IM_OrderReceiptItem"
-      WHERE "RecId" = ${orderReceiptItemId} AND "IsDeleted" = 0
-      FOR UPDATE
+      SELECT poi."Quantity" as "orderQty",
+        ${baseQuantitySql(Prisma.sql`poi."Quantity"`, Prisma.sql`poi."InventoryId"`, Prisma.sql`poi."UnitId"`, 'po')} as "orderBaseQty"
+      FROM "IM_OrderReceiptItem" poi
+      ${baseQuantityJoinSql(Prisma.sql`poi."InventoryId"`, Prisma.sql`poi."UnitId"`, 'po')}
+      WHERE poi."RecId" = ${orderReceiptItemId} AND poi."IsDeleted" = 0
+      FOR UPDATE OF poi
     `);
     if (!poLineRows.length) throw new BadRequestException('The originating Purchase Order line was not found.');
     const receivedRows = await tx.$queryRaw<any[]>(Prisma.sql`
-      SELECT COALESCE(SUM("Quantity"), 0) as "receivedQty" FROM "IM_ReceiptItem"
-      WHERE "OrderReceiptItemId" = ${orderReceiptItemId} AND "IsDeleted" = 0
+      SELECT COALESCE(SUM(
+        ${baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
+      ), 0) as "receivedBaseQty"
+      FROM "IM_ReceiptItem" ri
+      ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
+      WHERE ri."OrderReceiptItemId" = ${orderReceiptItemId} AND ri."IsDeleted" = 0
     `);
-    const pendingQty = Number(poLineRows[0].orderQty) - Number(receivedRows[0].receivedQty);
-    if (requestedQty > pendingQty) {
-      throw new BadRequestException(`Cannot receive ${requestedQty} — only ${pendingQty} still pending on this Purchase Order line.`);
+    const requestedBaseQty = await toBaseQuantity(this.prisma, requestedInventoryId, requestedUnitId, requestedQty);
+    const pendingBaseQty = Number(poLineRows[0].orderBaseQty) - Number(receivedRows[0].receivedBaseQty);
+    if (requestedBaseQty > pendingBaseQty) {
+      throw new BadRequestException(`Cannot receive this quantity — only ${pendingBaseQty} still pending (Base Unit) on this Purchase Order line.`);
     }
   }
 
@@ -438,6 +443,13 @@ export class InventoryReceiptService {
     const toDb = await this.itemToDb();
     const effective: Record<string, any> = { ...dto, receiptType };
     effective.unitId = await this.resolveUnitId(effective.inventoryId, effective.unitId);
+    // Write-time enforcement (spec Section 3/10) — reject a unit with no configured conversion for
+    // this item, rather than silently accepting an arbitrary combination.
+    await assertValidItemUnit(this.prisma, effective.inventoryId, effective.unitId);
+    // Missing-Base-Unit blocking (spec Section 9) — applies uniformly across every receipt type
+    // this service backs (Purchase Receipt plus all 16 generic types in receipt-types.config.ts,
+    // since receipt-type.controller.ts calls this same createItem() unconditionally).
+    await assertHasBaseUnit(this.prisma, effective.inventoryId);
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const colList = Prisma.raw(['"InventoryReceiptId"', '"ReceiptType"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
     const values = cols.map((c) => toDb(c, effective[camel(c)]));
@@ -449,7 +461,13 @@ export class InventoryReceiptService {
 
     if (effective['orderReceiptItemId']) {
       const rows = await this.prisma.$transaction(async (tx) => {
-        await this.assertPendingQty(tx, Number(effective['orderReceiptItemId']), Number(effective['quantity'] ?? 0));
+        await this.assertPendingQty(
+          tx,
+          Number(effective['orderReceiptItemId']),
+          Number(effective['quantity'] ?? 0),
+          effective.inventoryId,
+          effective.unitId,
+        );
         return insert(tx);
       });
       return sanitizeRawRow(rows[0]);
@@ -486,6 +504,8 @@ export class InventoryReceiptService {
         invId = cur[0]?.inventoryId ?? null;
       }
       effective.unitId = await this.resolveUnitId(invId, effective.unitId);
+      await assertValidItemUnit(this.prisma, invId, effective.unitId);
+      await assertHasBaseUnit(this.prisma, invId);
     }
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     if (!cols.length) {

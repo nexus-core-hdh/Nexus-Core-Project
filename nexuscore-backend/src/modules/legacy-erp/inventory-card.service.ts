@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap } from './legacy-db-types.util';
 import { screenKeyFor } from './inventory-receipt.service';
+import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
 
 // Read-only aggregation over the three existing IM_Item-based inventory cards (Fabric, Yarn,
 // Trim) for the "Inventory Card List" screen — a UNION ALL of the same three AccessCode-
@@ -202,25 +203,32 @@ export class InventoryCardService {
   // LATERAL join below, or a literal item id when used as a standalone scalar query (see
   // getStockOnHand, added for item-statement.service.ts) — same SQL text either way, so the
   // two call sites can never silently drift apart into two different stock formulas.
+  // Base Unit + Unit Conversion (spec Section 7): two receipts of the same item in different
+  // units (e.g. one in Bags, one in Kg) must aggregate into one Stock on Hand figure, in Base
+  // Unit — a raw SUM("Quantity") across mixed units is meaningless. Reuses the one conversion
+  // formula in unit-conversion.util.ts (the same one purchase-order.service.ts's listPending and
+  // inventory-receipt.service.ts's assertPendingQty use) rather than a second stock formula.
   private stockSumSql(itemRef: Prisma.Sql) {
     const purchaseReceiptKey = screenKeyFor(2);
     const purchaseReturnKey = screenKeyFor(122);
+    const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
     return Prisma.sql`
       SELECT COALESCE(SUM(
         CASE
           WHEN rec."ReceiptType" = 2 AND NOT EXISTS (
             SELECT 1 FROM "ApprovalRequest" ar
             WHERE ar."screenKey" = ${purchaseReceiptKey} AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
-          ) THEN ri."Quantity"
+          ) THEN ${baseQty}
           WHEN rec."ReceiptType" = 122 AND NOT EXISTS (
             SELECT 1 FROM "ApprovalRequest" ar
             WHERE ar."screenKey" = ${purchaseReturnKey} AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
-          ) THEN -ri."Quantity"
+          ) THEN -${baseQty}
           ELSE 0
         END
       ), 0) AS "qty"
       FROM "IM_ReceiptItem" ri
       JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+      ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
       WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0 AND rec."ReceiptType" IN (2, 122)
     `;
   }

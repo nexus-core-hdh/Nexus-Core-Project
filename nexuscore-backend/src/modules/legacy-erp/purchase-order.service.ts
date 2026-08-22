@@ -5,6 +5,8 @@ import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { ApprovalService } from '../approval/approval.service';
 import { screenKeyFor as receiptScreenKeyFor } from './inventory-receipt.service';
+import { LegacyMasterLookupService } from './legacy-master-lookup.service';
+import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, fromBaseQuantitySql } from './unit-conversion.util';
 
 // Purchase Order — NOT a new entity. IM_OrderReceipt/IM_OrderReceiptItem are the same
 // generic "goods receipt" spine the legacy system uses for every receipt kind (Purchase
@@ -87,6 +89,7 @@ export class PurchaseOrderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly approvalSvc: ApprovalService,
+    private readonly masterLookupSvc: LegacyMasterLookupService,
   ) {}
 
   private async headerToDb() {
@@ -159,23 +162,50 @@ export class PurchaseOrderService {
   //     longer counted in this SUM. A receipt whose screen never required approval has no
   //     ApprovalRequest row at all, so NOT EXISTS is vacuously true and it counts immediately,
   //     exactly as before — zero behavior change when Approval Required = OFF.
+  // Base Unit + Unit Conversion (spec Section 6): PendingQty is compared/reported in Base Unit
+  // internally (poi.Quantity and every ri.Quantity can legitimately be in different units — a Bag
+  // ordered, received in KG — so a raw subtraction is meaningless), then converted back into the
+  // PO line's own unit for the existing `pendingQty`/`unitId` fields, because
+  // pending-orders-dialog.tsx copies both straight onto a new receipt line unchanged; switching
+  // that field to the Base Unit would silently corrupt that import. `orderBaseQty`/
+  // `receivedBaseQty`/`pendingBaseQty`/`baseUnitId`/`baseUnitCode` are new, additive fields for
+  // display only. Reuses the one conversion formula in unit-conversion.util.ts — not a second copy.
   async listPending(currentAccountId: number) {
     const purchaseReceiptScreenKey = receiptScreenKeyFor(2);
+    const poInvId = Prisma.sql`poi."InventoryId"`;
+    const poUnitId = Prisma.sql`poi."UnitId"`;
+    const poOrderBaseQty = baseQuantitySql(Prisma.sql`poi."Quantity"`, poInvId, poUnitId, 'po');
+    const poUnitJoin = baseQuantityJoinSql(poInvId, poUnitId, 'po');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         po."RecId" as "orderReceiptId", po."ReceiptNo" as "receiptNo", po."ReceiptDate" as "receiptDate", po."DocumentNo" as "documentNo",
         poi."RecId" as "orderReceiptItemId", poi."InventoryId" as "inventoryId", poi."Explanation" as "explanation",
         poi."Quantity" as "orderQty", poi."UnitId" as "unitId", poi."UnitPrice" as "unitPrice", poi."ColorCardId" as "colorCardId",
         i."InventoryCode" as "code", i."InventoryName" as "name",
+        base_unit.id as "baseUnitId", base_unit.code as "baseUnitCode",
+        ${poOrderBaseQty} as "orderBaseQty",
+        COALESCE(recv."baseQty", 0) as "receivedBaseQty",
+        (${poOrderBaseQty} - COALESCE(recv."baseQty", 0)) as "pendingBaseQty",
         COALESCE(recv."qty", 0) as "receivedQty",
-        (poi."Quantity" - COALESCE(recv."qty", 0)) as "pendingQty"
+        ${fromBaseQuantitySql(Prisma.sql`(${poOrderBaseQty} - COALESCE(recv."baseQty", 0))`, 'po')} as "pendingQty"
       FROM "IM_OrderReceipt" po
       JOIN "IM_OrderReceiptItem" poi ON poi."OrderReceiptId" = po."RecId" AND poi."IsDeleted" = 0
       LEFT JOIN "IM_Item" i ON i."RecId" = poi."InventoryId"
+      ${poUnitJoin}
       LEFT JOIN LATERAL (
-        SELECT SUM(ri."Quantity") as qty
+        SELECT usi."RecId" as id, usi."UnitCode" as code
+        FROM "IM_ItemUnitItemSize" iuis
+        JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+        WHERE iuis."InventoryId" = poi."InventoryId" AND iuis."IsDeleted" = 0 AND iuis."IsMainUnit" = 1
+        LIMIT 1
+      ) base_unit ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(ri."Quantity") as qty,
+          SUM(${baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}) as "baseQty"
         FROM "IM_ReceiptItem" ri
         JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+        ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
         WHERE ri."OrderReceiptItemId" = poi."RecId" AND ri."IsDeleted" = 0
           AND NOT EXISTS (
             SELECT 1 FROM "ApprovalRequest" ar
@@ -183,7 +213,7 @@ export class PurchaseOrderService {
           )
       ) recv ON true
       WHERE po."IsDeleted" = 0 AND po."ReceiptType" = ${RECEIPT_TYPE} AND po."CurrentAccountId" = ${currentAccountId}
-        AND (poi."Quantity" - COALESCE(recv."qty", 0)) > 0
+        AND (${poOrderBaseQty} - COALESCE(recv."baseQty", 0)) > 0
         -- Same approval gate applied to the PO itself: a PO still pending approval or rejected
         -- shouldn't be offered for receiving yet (its lines aren't authorized to receive
         -- against). A PO never submitted for approval (screen not configured, or approval OFF)
@@ -228,6 +258,8 @@ export class PurchaseOrderService {
         orderReceiptItemId: r.orderReceiptItemId, inventoryId: r.inventoryId, code: r.code, name: r.name,
         explanation: r.explanation, unitId: r.unitId, unitPrice: r.unitPrice, colorCardId: r.colorCardId,
         orderQty: r.orderQty, receivedQty: r.receivedQty, pendingQty: r.pendingQty,
+        baseUnitId: r.baseUnitId, baseUnitCode: r.baseUnitCode,
+        orderBaseQty: r.orderBaseQty, receivedBaseQty: r.receivedBaseQty, pendingBaseQty: r.pendingBaseQty,
         variants: variantsByLine.get(r.orderReceiptItemId) ?? [],
       });
     }
@@ -439,7 +471,17 @@ export class PurchaseOrderService {
       throw new BadRequestException('An inventory item is required');
     }
     const toDb = await this.itemToDb();
-    const effective = { ...dto, receiptType: RECEIPT_TYPE };
+    const effective: Record<string, any> = { ...dto, receiptType: RECEIPT_TYPE };
+    // Item -> Unit backend enforcement (spec Section 4/10) — brings Purchase Order to parity with
+    // Purchase Receipt's own resolveUnitId (inventory-receipt.service.ts), which already did this;
+    // PO's own createItem/updateItem had no unit resolution at all until now. Reuses the exact same
+    // helper, not a second copy of it.
+    effective.unitId = await resolveLineUnitId(this.masterLookupSvc, effective.inventoryId, effective.unitId);
+    await assertValidItemUnit(this.prisma, effective.inventoryId, effective.unitId);
+    // Missing-Base-Unit blocking (spec Section 9) — an item that has entered the per-item
+    // conversion system (has configured units) but has no row flagged IsMainUnit=1 cannot post
+    // conversion-dependent stock transactions until one is set.
+    await assertHasBaseUnit(this.prisma, effective.inventoryId);
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const colList = Prisma.raw(['"OrderReceiptId"', '"ReceiptType"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
     const values = cols.map((c) => toDb(c, effective[camel(c)]));
@@ -453,13 +495,29 @@ export class PurchaseOrderService {
 
   async updateItem(itemId: number, dto: Record<string, any>, userId: number) {
     const toDb = await this.itemToDb();
-    const cols = ITEM_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
+    const effective = { ...dto };
+    // Same "only touch Unit when Item and/or Unit actually changes" shape as
+    // inventory-receipt.service.ts's own updateItem — an edit to an unrelated field must not force
+    // a normalization query, and changing Item alone still re-resolves Unit against the new item.
+    if (effective.inventoryId !== undefined || effective.unitId !== undefined) {
+      let invId = effective.inventoryId;
+      if (invId === undefined) {
+        const cur = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+          SELECT "InventoryId" as "inventoryId" FROM "IM_OrderReceiptItem" WHERE "RecId" = ${itemId}
+        `);
+        invId = cur[0]?.inventoryId ?? null;
+      }
+      effective.unitId = await resolveLineUnitId(this.masterLookupSvc, invId, effective.unitId);
+      await assertValidItemUnit(this.prisma, invId, effective.unitId);
+      await assertHasBaseUnit(this.prisma, invId);
+    }
+    const cols = ITEM_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     if (!cols.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_OrderReceiptItem" WHERE "RecId" = ${itemId}`);
       if (!rows.length) throw new NotFoundException('Line not found');
       return sanitizeRawRow(rows[0]);
     }
-    const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
+    const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, effective[camel(c)])}`));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE "IM_OrderReceiptItem" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
       WHERE "RecId" = ${itemId} AND "IsDeleted" = 0

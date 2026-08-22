@@ -1426,6 +1426,16 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   // Scoped to the selected item's own configured units (IM_ItemUnitItemSize) —
                   // not every MD_UnitSetItem in the database. Empty until an item is picked.
                   const rowUnitOptions = r.inventoryId != null ? (itemUnitsByInventoryId[String(r.inventoryId)] ?? []) : [];
+                  // Base Unit + Unit Conversion display hint (spec Section 9) — additive only, no
+                  // new component: unitFactor/unitDivisor/isMainUnit now ride along on the same
+                  // per-item unit options this dropdown already fetches (legacy-master-lookup
+                  // .service.ts's listItemUnits). Shown only when the selected unit isn't the
+                  // item's own main/Base Unit — nothing to convert otherwise.
+                  const selectedUnit = rowUnitOptions.find((u: any) => String(u.id) === String(r.unitId));
+                  const baseUnit = rowUnitOptions.find((u: any) => u.isMainUnit);
+                  const conversionHint = selectedUnit && !selectedUnit.isMainUnit && baseUnit && selectedUnit.unitFactor && selectedUnit.unitDivisor
+                    ? `${selectedUnit.unitFactor} ${selectedUnit.code || selectedUnit.name} = ${selectedUnit.unitDivisor} ${baseUnit.code || baseUnit.name}`
+                    : undefined;
                   return (
                     <TableCell key="unit" className={cellCls("unit")}>
                       {isActive("unit") && editing ? (
@@ -1441,7 +1451,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                           </Select>
                         </div>
                       ) : (
-                        <div {...staticProps("unit", { value: r.unit || "—", muted: !r.unit })} />
+                        <div {...staticProps("unit", { value: r.unit || "—", muted: !r.unit })} title={conversionHint || (r.unit || "—")} />
                       )}
                     </TableCell>
                   );

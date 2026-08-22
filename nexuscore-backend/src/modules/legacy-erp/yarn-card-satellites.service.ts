@@ -87,15 +87,37 @@ export class YarnCardSatellitesService {
   async create(tab: string, itemId: number, dto: Record<string, any>, userId: number) {
     const cfg = this.config(tab);
     const toDb = await this.toDb(cfg.table);
-    const cols = cfg.columns.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
+    // Base Unit enforcement (spec Section 2) — the Base Unit's own UnitFactor/UnitDivisor must be
+    // the identity 1/1 (the same convention unit-conversion.util.ts's own comments document: "a
+    // line already in the Base Unit has a matching row with UnitFactor=UnitDivisor=1"). Forced here
+    // rather than trusted from the client, so promoting a row to Base Unit can never leave it
+    // carrying a stale factor from whatever it converted at before — that would silently corrupt
+    // every conversion computed directly in the new Base Unit from then on.
+    const isSettingMainUnit = tab === 'unit' && !!dto.isMainUnit;
+    const effective = isSettingMainUnit ? { ...dto, unitFactor: 1, unitDivisor: 1 } : dto;
+    const cols = cfg.columns.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const colList = Prisma.raw([`"${cfg.fkColumn}"`, ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
-    const values = cols.map((c) => toDb(c, dto[camel(c)]));
+    const values = cols.map((c) => toDb(c, effective[camel(c)]));
     const select = Prisma.raw(['"RecId" as id', ...cfg.columns.map((c) => `"${c}" as "${camel(c)}"`)].join(', '));
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+    const insert = (client: Prisma.TransactionClient | PrismaService) => client.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO ${Prisma.raw(`"${cfg.table}"`)} (${colList})
       VALUES (${itemId}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       RETURNING ${select}
     `);
+
+    // Exactly one IsMainUnit=1 row per item, scoped narrowly to the 'unit' tab only (every other
+    // satellite tab is untouched). Demotes every other unit row for this item atomically, in the
+    // same transaction as the insert, so a concurrent request can never observe two Base Units.
+    if (isSettingMainUnit) {
+      const rows = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          UPDATE ${Prisma.raw(`"${cfg.table}"`)} SET "IsMainUnit" = 0 WHERE "InventoryId" = ${itemId} AND "IsDeleted" = 0
+        `;
+        return insert(tx);
+      });
+      return sanitizeRawRow(rows[0]);
+    }
+    const rows = await insert(this.prisma);
     return sanitizeRawRow(rows[0]);
   }
 
@@ -105,7 +127,10 @@ export class YarnCardSatellitesService {
   async update(tab: string, lineId: number, dto: Record<string, any>, userId: number) {
     const cfg = this.config(tab);
     const toDb = await this.toDb(cfg.table);
-    const cols = cfg.columns.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
+    // Same Base-Unit-must-be-identity enforcement as create() above — see its own comment.
+    const isSettingMainUnit = tab === 'unit' && !!dto.isMainUnit;
+    const effective = isSettingMainUnit ? { ...dto, unitFactor: 1, unitDivisor: 1 } : dto;
+    const cols = cfg.columns.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const select = Prisma.raw(['"RecId" as id', ...cfg.columns.map((c) => `"${c}" as "${camel(c)}"`)].join(', '));
     if (!cols.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -114,12 +139,32 @@ export class YarnCardSatellitesService {
       if (!rows.length) throw new NotFoundException('Row not found');
       return sanitizeRawRow(rows[0]);
     }
-    const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+    const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, effective[camel(c)])}`));
+    const doUpdate = (client: Prisma.TransactionClient | PrismaService) => client.$queryRaw<any[]>(Prisma.sql`
       UPDATE ${Prisma.raw(`"${cfg.table}"`)} SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
       WHERE "RecId" = ${lineId} AND "IsDeleted" = 0
       RETURNING ${select}
     `);
+
+    // Base Unit enforcement (spec Section 2) — same single-Base-Unit guarantee as create() above.
+    // update() only receives the line id, so this row's own item is resolved first, then every
+    // OTHER unit row for that item (excluding this one) is demoted before the update lands.
+    if (isSettingMainUnit) {
+      const rows = await this.prisma.$transaction(async (tx) => {
+        const cur = await tx.$queryRaw<any[]>(Prisma.sql`
+          SELECT "InventoryId" as "inventoryId" FROM ${Prisma.raw(`"${cfg.table}"`)} WHERE "RecId" = ${lineId} AND "IsDeleted" = 0
+        `);
+        if (!cur.length) throw new NotFoundException('Row not found');
+        await tx.$executeRaw`
+          UPDATE ${Prisma.raw(`"${cfg.table}"`)} SET "IsMainUnit" = 0
+          WHERE "InventoryId" = ${cur[0].inventoryId} AND "RecId" != ${lineId} AND "IsDeleted" = 0
+        `;
+        return doUpdate(tx);
+      });
+      if (!rows.length) throw new NotFoundException('Row not found');
+      return sanitizeRawRow(rows[0]);
+    }
+    const rows = await doUpdate(this.prisma);
     if (!rows.length) throw new NotFoundException('Row not found');
     return sanitizeRawRow(rows[0]);
   }

@@ -1391,6 +1391,14 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       // picked, same restriction purchase-order-line-grid.tsx's own Unit cell
                       // already applies.
                       const rowUnitOptions = r.inventoryId != null ? (itemUnitsByInventoryId[String(r.inventoryId)] ?? []) : [];
+                      // Base Unit + Unit Conversion display hint (spec Section 9) — same additive
+                      // tooltip as purchase-order-line-grid.tsx's own Unit cell, reusing the same
+                      // unitFactor/unitDivisor/isMainUnit fields listItemUnits now returns.
+                      const selectedUnit = rowUnitOptions.find((u: any) => String(u.id) === String(r.unitId));
+                      const baseUnit = rowUnitOptions.find((u: any) => u.isMainUnit);
+                      const conversionHint = selectedUnit && !selectedUnit.isMainUnit && baseUnit && selectedUnit.unitFactor && selectedUnit.unitDivisor
+                        ? `${selectedUnit.unitFactor} ${selectedUnit.code || selectedUnit.name} = ${selectedUnit.unitDivisor} ${baseUnit.code || baseUnit.name}`
+                        : undefined;
                       return (
                         <TableCell key={col.key} className={cellCls(r.clientId, "unit", firstBorder)}>
                           {isActive(r.clientId, "unit") && editing ? (
@@ -1402,7 +1410,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                                 <SelectContent>{rowUnitOptions.map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.code || u.name}</SelectItem>)}</SelectContent>
                               </Select>
                             </div>
-                          ) : <div {...staticCellProps(r, "unit", r.unit || "—", "left", !r.unit)} />}
+                          ) : <div {...staticCellProps(r, "unit", r.unit || "—", "left", !r.unit)} title={conversionHint || (r.unit || "—")} />}
                         </TableCell>
                       );
                     }

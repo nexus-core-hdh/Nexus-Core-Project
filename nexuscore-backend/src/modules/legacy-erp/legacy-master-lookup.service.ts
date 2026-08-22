@@ -132,9 +132,15 @@ export class LegacyMasterLookupService {
   // table, no per-item-type branching — one query serves Fabric/Trim/Yarn/Fixed Asset PO lines
   // alike, unlike the flat cross-set `unit` lookup above which returns every MD_UnitSetItem in
   // the database regardless of item.
+  // unitFactor/unitDivisor/isMainUnit are additive (Base Unit + Unit Conversion) — every existing
+  // consumer of this method only ever reads id/code/name, so widening the SELECT can't change
+  // their behavior. Lets the PO/Receipt line grids show a "1 Bag = 25 KG" conversion hint and lets
+  // unit-conversion.util.ts's own resolveLineUnitId/assertValidItemUnit reuse this exact same join
+  // instead of a second copy of it.
   async listItemUnits(inventoryId: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT usi."RecId" as id, usi."UnitCode" as code, usi."UnitName" as name
+      SELECT usi."RecId" as id, usi."UnitCode" as code, usi."UnitName" as name,
+        iuis."UnitFactor" as "unitFactor", iuis."UnitDivisor" as "unitDivisor", iuis."IsMainUnit" as "isMainUnit"
       FROM "IM_ItemUnitItemSize" iuis
       JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
       WHERE iuis."InventoryId" = ${inventoryId} AND iuis."IsDeleted" = 0
