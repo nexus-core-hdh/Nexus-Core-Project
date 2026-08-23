@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
@@ -26,6 +27,10 @@ import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
 import { PurchaseOrderLineGrid, type PurchaseOrderLineGridHandle } from "@/components/legacy-erp/purchase-order-line-grid";
+import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
+import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
+import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 
 // Purchase Order — a full ERP transaction screen, same architecture as Current Account /
 // Warehouse / Yarn Card / Fabric Card / Inventory Card (Workspace tab, Save-required gating
@@ -67,6 +72,7 @@ function IdentitySection({ children }: { children: React.ReactNode }) {
 }
 
 export default function PurchaseOrderPage() {
+  const router = useRouter();
   const searchParams = useWorkspaceSearchParams();
   const initialMode = (searchParams.get("mode") as "view" | "edit" | "create" | null) || "create";
   const initialId = searchParams.get("id");
@@ -288,6 +294,49 @@ export default function PurchaseOrderPage() {
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
 
+  // Universal Action Menu -> Return/Purchase Receipt submenu — Purchase Receipt / Received
+  // Connection Receipt / Purchase Return rows tracing back to this PO (see
+  // purchase-order.service.ts's listRelatedReceipts()). Only meaningful once the PO is saved.
+  const [relatedReceipts, setRelatedReceipts] = useState<RelatedReceiptRef[]>([]);
+  useEffect(() => {
+    if (!poId) { setRelatedReceipts([]); return; }
+    legacyErpApi.purchaseOrders.getRelatedReceipts(poId)
+      .then((r: any) => setRelatedReceipts(Array.isArray(r) ? r : []))
+      .catch(() => setRelatedReceipts([]));
+  }, [poId]);
+  const openRelatedReceipt = (r: RelatedReceiptRef) => {
+    navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?receiptType=${r.receiptType}&id=${r.id}&mode=view`);
+  };
+
+  // Universal Action Menu -> Delete — reuses the exact same API call/DeleteDependencyService
+  // path as purchase-orders-list/page.tsx's own row-menu Delete, just entered from the detail
+  // screen instead of the list.
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const deletePo = async () => {
+    if (!poId) return;
+    try {
+      await legacyErpApi.purchaseOrders.delete(poId);
+      toast.success("Purchase order deleted");
+      setDeleteConfirmOpen(false);
+      navigateOrOpenTab(router, "/dashboard/legacy-erp/purchase-orders-list");
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const universalActions = useUniversalActions({
+    recordExists: !!poId,
+    isDirty, saving,
+    onSave: save,
+    approvalRequired, approvalStatus, approving,
+    onApprove: runApprovePo,
+    onReject: () => { setRejectRemarks(""); setRejectOpen(true); },
+    relatedReceipts,
+    onOpenRelatedReceipt: openRelatedReceipt,
+    onDelete: poId ? () => setDeleteConfirmOpen(true) : undefined,
+  });
+  useUniversalActionShortcuts(universalActions);
+
   const saveRequired = (label: string) => (
     <Empty className="py-10">
       <EmptyHeader>
@@ -299,6 +348,7 @@ export default function PurchaseOrderPage() {
   );
 
   return (
+    <RowContextMenu actions={universalActions}>
     <div className="mx-auto max-w-[1700px] space-y-6 p-6 lg:p-8">
       <LegacyErpBreadcrumb trail={[
         { label: "Legacy ERP" },
@@ -375,6 +425,8 @@ export default function PurchaseOrderPage() {
               </Button>
             </>
           )}
+          <div className="hidden h-6 w-px bg-border sm:block" />
+          <RowActionsMenu actions={universalActions} />
         </div>
       </div>
 
@@ -506,7 +558,21 @@ export default function PurchaseOrderPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Purchase Order</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={deletePo}>Yes</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+    </RowContextMenu>
   );
 }
 

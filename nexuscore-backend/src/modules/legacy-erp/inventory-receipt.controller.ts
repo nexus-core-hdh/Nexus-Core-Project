@@ -65,6 +65,11 @@ export class InventoryReceiptController {
     return this.svc.reject(id, userId, dto.remarks);
   }
 
+  // Universal Action Menu -> Return/Purchase Receipt submenu.
+  @Get(':id/related-receipts') listRelatedReceipts(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.listRelatedReceipts(id);
+  }
+
   // Detail lines (the grid)
   @Get(':id/items') listItems(@Param('id', ParseIntPipe) id: number) {
     return this.svc.listItems(id);

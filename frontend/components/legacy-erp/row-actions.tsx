@@ -4,9 +4,11 @@ import type { LucideIcon } from "lucide-react";
 import { MoreVertical } from "lucide-react";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
+  ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -28,6 +30,10 @@ export interface RowAction {
   /** Renders a separator immediately before this action — same grouping the original inline
    *  menus used (New/View/Update, then Delete/Approval/Reject). */
   separatorBefore?: boolean;
+  /** When set, this action renders as a submenu (e.g. Universal Action Menu's "Return /
+   *  Purchase Receipt" -> dynamically loaded related receipts) instead of a plain item;
+   *  `onSelect` is ignored and each child fires its own `onSelect`. */
+  subActions?: RowAction[];
 }
 
 function visibleActions(actions: RowAction[]) {
@@ -44,7 +50,10 @@ export function RowContextMenu({ actions, children, contentClassName }: { action
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className={cn("w-48", contentClassName)}>
         {items.map((a) => (
-          <RenderMenuItem key={a.key} action={a} Item={ContextMenuItem} Separator={ContextMenuSeparator} />
+          <RenderMenuItem
+            key={a.key} action={a} Item={ContextMenuItem} Separator={ContextMenuSeparator}
+            Sub={ContextMenuSub} SubTrigger={ContextMenuSubTrigger} SubContent={ContextMenuSubContent}
+          />
         ))}
       </ContextMenuContent>
     </ContextMenu>
@@ -71,19 +80,52 @@ export function RowActionsMenu({ actions, className }: { actions: RowAction[]; c
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48" onClick={(e) => e.stopPropagation()}>
         {items.map((a) => (
-          <RenderMenuItem key={a.key} action={a} Item={DropdownMenuItem} Separator={DropdownMenuSeparator} />
+          <RenderMenuItem
+            key={a.key} action={a} Item={DropdownMenuItem} Separator={DropdownMenuSeparator}
+            Sub={DropdownMenuSub} SubTrigger={DropdownMenuSubTrigger} SubContent={DropdownMenuSubContent}
+          />
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
-function RenderMenuItem({ action, Item, Separator }: {
+function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent }: {
   action: RowAction;
   Item: typeof ContextMenuItem | typeof DropdownMenuItem;
   Separator: typeof ContextMenuSeparator | typeof DropdownMenuSeparator;
+  Sub: typeof ContextMenuSub | typeof DropdownMenuSub;
+  SubTrigger: typeof ContextMenuSubTrigger | typeof DropdownMenuSubTrigger;
+  SubContent: typeof ContextMenuSubContent | typeof DropdownMenuSubContent;
 }) {
   const Icon = action.icon;
+  if (action.subActions) {
+    const children = visibleActions(action.subActions);
+    return (
+      <>
+        {action.separatorBefore && <Separator />}
+        {/* @ts-expect-error — Sub/SubTrigger/SubContent are structurally identical between the
+            ContextMenu and DropdownMenu primitive families; the union type just doesn't express it. */}
+        <Sub>
+          <SubTrigger disabled={action.disabled || !children.length}>
+            <Icon className="h-3.5 w-3.5 mr-2" />{action.label}
+          </SubTrigger>
+          <SubContent className="w-56">
+            {children.map((c) => (
+              <Item
+                key={c.key}
+                onSelect={c.onSelect}
+                disabled={c.disabled}
+                className={c.destructive ? "text-destructive focus:text-destructive" : undefined}
+              >
+                <c.icon className="h-3.5 w-3.5 mr-2" />{c.label}
+              </Item>
+            ))}
+          </SubContent>
+        </Sub>
+      </>
+    );
+  }
   return (
     <>
       {action.separatorBefore && <Separator />}

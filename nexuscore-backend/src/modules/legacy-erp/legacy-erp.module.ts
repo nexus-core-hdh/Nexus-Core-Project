@@ -50,6 +50,8 @@ import { ContractService } from './contract.service';
 import { ContractAttachmentsService } from './contract-attachments.service';
 import { ItemStatementController } from './item-statement.controller';
 import { ItemStatementService } from './item-statement.service';
+import { DeleteDependencyService } from './delete-dependency.service';
+import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { ApprovalModule } from '../approval/approval.module';
 
 @Module({
@@ -119,6 +121,8 @@ import { ApprovalModule } from '../approval/approval.module';
     ContractService,
     ContractAttachmentsService,
     ItemStatementService,
+    DeleteDependencyService,
+    ReceiptTraceabilityService,
   ],
 })
 export class LegacyErpModule {}

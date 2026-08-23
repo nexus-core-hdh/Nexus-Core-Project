@@ -6,6 +6,8 @@ import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { ApprovalService } from '../approval/approval.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, toBaseQuantity } from './unit-conversion.util';
+import { DeleteDependencyService } from './delete-dependency.service';
+import { ReceiptTraceabilityService } from './receipt-traceability.service';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -74,6 +76,13 @@ const ITEM_COLUMNS = [
   // written by this app — reused as-is to carry the originating Purchase Order line back onto
   // an imported receipt line. No new column.
   'OrderReceiptItemId',
+  // Universal Action Menu -> Return/Purchase Receipt submenu. Same precedent as
+  // OrderReceiptItemId above: a real, pre-existing IM_ReceiptItem column (already read by
+  // delete-dependency.service.ts's own dependency checks), previously never selected or written
+  // by createItem/updateItem. Reused as-is to carry a Purchase Return (or Received Connection
+  // Receipt) line back to the originating receipt line it's returning against — see
+  // assertReturnQty() below, which is the write-time guard for it. No new column.
+  'PurchaseReceiptItemId',
   // Colour — IM_ReceiptItem had no equivalent to IM_OrderReceiptItem's own ColorCardId
   // (confirmed via information_schema: 175 columns, none of them colour-related). Added as the
   // exact same nullable text FK -> "ColorCard"(id) that was already added to IM_OrderReceiptItem
@@ -105,6 +114,8 @@ export class InventoryReceiptService {
     private readonly prisma: PrismaService,
     private readonly approvalSvc: ApprovalService,
     private readonly masterLookupSvc: LegacyMasterLookupService,
+    private readonly deleteGuard: DeleteDependencyService,
+    private readonly traceability: ReceiptTraceabilityService,
   ) {}
 
   private async headerToDb() {
@@ -288,9 +299,12 @@ export class InventoryReceiptService {
   // Same bug/fix as update() above — remove() also self-checks existence via this.get(id).
   async remove(id: number, userId: number, receiptType: number = RECEIPT_TYPE) {
     await this.get(id, receiptType);
-    await this.prisma.$executeRaw`
-      UPDATE "IM_Receipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
-    `;
+    await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('IM_Receipt', id, tx);
+      await tx.$executeRaw`
+        UPDATE "IM_Receipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+      `;
+    });
     return { message: 'Deleted' };
   }
 
@@ -341,6 +355,15 @@ export class InventoryReceiptService {
 
   async getApprovalStatus(id: number, receiptType: number = RECEIPT_TYPE) {
     return this.approvalSvc.getStatus(screenKeyFor(receiptType), String(id));
+  }
+
+  // Universal Action Menu -> "Return / Purchase Receipt" submenu, from the Receipt/Return/
+  // Received-Connection screen side (mirror of purchase-order.service.ts's own
+  // listRelatedReceipts, same shared ReceiptTraceabilityService — no duplicate SQL). Walks back
+  // to the originating Purchase Order (if any) and returns that PO's whole receipt family minus
+  // this record itself; a receipt never linked to a PO legitimately returns [].
+  async listRelatedReceipts(id: number, receiptType: number = RECEIPT_TYPE) {
+    return this.traceability.listForReceipt(id, receiptType);
   }
 
   // --- Detail lines (the grid) ------------------------------------------------------------
@@ -438,6 +461,43 @@ export class InventoryReceiptService {
     }
   }
 
+  // Purchase Return / Received Connection Receipt quantity guard — same shape as
+  // assertPendingQty() above (SELECT ... FOR UPDATE row lock, Base-Unit normalized, run inside
+  // the caller's own transaction), applied to the mirror-image relationship: instead of capping
+  // a Receipt line against its originating PO line's remaining quantity, this caps a Return line
+  // against its originating Receipt line's remaining (received minus already-returned) quantity.
+  // Available Return Quantity = Received Quantity - Previously Returned Quantity (spec formula).
+  private async assertReturnQty(
+    tx: Prisma.TransactionClient,
+    purchaseReceiptItemId: number,
+    requestedQty: number,
+    requestedInventoryId: any,
+    requestedUnitId: any,
+  ) {
+    const sourceRows = await tx.$queryRaw<any[]>(Prisma.sql`
+      SELECT ri."Quantity" as "receivedQty",
+        ${baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'src')} as "receivedBaseQty"
+      FROM "IM_ReceiptItem" ri
+      ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'src')}
+      WHERE ri."RecId" = ${purchaseReceiptItemId} AND ri."IsDeleted" = 0
+      FOR UPDATE OF ri
+    `);
+    if (!sourceRows.length) throw new BadRequestException('The originating receipt line was not found.');
+    const returnedRows = await tx.$queryRaw<any[]>(Prisma.sql`
+      SELECT COALESCE(SUM(
+        ${baseQuantitySql(Prisma.sql`ret."Quantity"`, Prisma.sql`ret."InventoryId"`, Prisma.sql`ret."UnitId"`, 'ret')}
+      ), 0) as "returnedBaseQty"
+      FROM "IM_ReceiptItem" ret
+      ${baseQuantityJoinSql(Prisma.sql`ret."InventoryId"`, Prisma.sql`ret."UnitId"`, 'ret')}
+      WHERE ret."PurchaseReceiptItemId" = ${purchaseReceiptItemId} AND ret."IsDeleted" = 0
+    `);
+    const requestedBaseQty = await toBaseQuantity(this.prisma, requestedInventoryId, requestedUnitId, requestedQty);
+    const availableBaseQty = Number(sourceRows[0].receivedBaseQty) - Number(returnedRows[0].returnedBaseQty);
+    if (requestedBaseQty > availableBaseQty) {
+      throw new BadRequestException(`Cannot return this quantity — only ${availableBaseQty} still available to return (Base Unit) against this receipt line.`);
+    }
+  }
+
   async createItem(inventoryReceiptId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
     if (!dto.inventoryId) throw new BadRequestException('An inventory item is required');
     const toDb = await this.itemToDb();
@@ -464,6 +524,20 @@ export class InventoryReceiptService {
         await this.assertPendingQty(
           tx,
           Number(effective['orderReceiptItemId']),
+          Number(effective['quantity'] ?? 0),
+          effective.inventoryId,
+          effective.unitId,
+        );
+        return insert(tx);
+      });
+      return sanitizeRawRow(rows[0]);
+    }
+
+    if (effective['purchaseReceiptItemId']) {
+      const rows = await this.prisma.$transaction(async (tx) => {
+        await this.assertReturnQty(
+          tx,
+          Number(effective['purchaseReceiptItemId']),
           Number(effective['quantity'] ?? 0),
           effective.inventoryId,
           effective.unitId,
@@ -526,9 +600,12 @@ export class InventoryReceiptService {
   // Same bug/fix as updateItem() above.
   async removeItem(itemId: number, userId: number, inventoryReceiptId?: number) {
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
-    const result = await this.prisma.$executeRaw(Prisma.sql`
-      UPDATE "IM_ReceiptItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId} ${owner}
-    `);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('IM_ReceiptItem', itemId, tx);
+      return tx.$executeRaw(Prisma.sql`
+        UPDATE "IM_ReceiptItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId} ${owner}
+      `);
+    });
     if (!result) throw new NotFoundException('Line not found');
     return { message: 'Deleted' };
   }

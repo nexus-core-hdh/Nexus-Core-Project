@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
+import { DeleteDependencyService } from './delete-dependency.service';
 
 // Financial Receipt — a genuinely separate legacy entity from IM_Receipt (Inventory Receipt):
 // FI_Receipt/FI_ReceiptItem is the Finance module's cash/bank/GL receipt voucher spine
@@ -34,7 +35,10 @@ const ITEM_SELECT = Prisma.raw(['"RecId" as id', '"CurrentAccountReceiptId" as "
 
 @Injectable()
 export class FiReceiptService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deleteGuard: DeleteDependencyService,
+  ) {}
 
   private async headerToDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, HEADER_TABLE));
@@ -163,9 +167,12 @@ export class FiReceiptService {
 
   async remove(id: number, userId: number) {
     await this.get(id);
-    await this.prisma.$executeRaw`
-      UPDATE "FI_Receipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
-    `;
+    await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('FI_Receipt', id, tx);
+      await tx.$executeRaw`
+        UPDATE "FI_Receipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+      `;
+    });
     return { message: 'Deleted' };
   }
 
@@ -215,9 +222,12 @@ export class FiReceiptService {
 
   async removeItem(itemId: number, userId: number, fiReceiptId?: number) {
     const owner = fiReceiptId !== undefined ? Prisma.sql`AND "CurrentAccountReceiptId" = ${fiReceiptId}` : Prisma.sql``;
-    const result = await this.prisma.$executeRaw(Prisma.sql`
-      UPDATE "FI_ReceiptItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId} ${owner}
-    `);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('FI_ReceiptItem', itemId, tx);
+      return tx.$executeRaw(Prisma.sql`
+        UPDATE "FI_ReceiptItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId} ${owner}
+      `);
+    });
     if (!result) throw new NotFoundException('Line not found');
     return { message: 'Deleted' };
   }

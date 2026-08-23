@@ -5,8 +5,10 @@ import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { ApprovalService } from '../approval/approval.service';
 import { screenKeyFor as receiptScreenKeyFor } from './inventory-receipt.service';
+import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, fromBaseQuantitySql } from './unit-conversion.util';
+import { DeleteDependencyService } from './delete-dependency.service';
 
 // Purchase Order — NOT a new entity. IM_OrderReceipt/IM_OrderReceiptItem are the same
 // generic "goods receipt" spine the legacy system uses for every receipt kind (Purchase
@@ -90,6 +92,8 @@ export class PurchaseOrderService {
     private readonly prisma: PrismaService,
     private readonly approvalSvc: ApprovalService,
     private readonly masterLookupSvc: LegacyMasterLookupService,
+    private readonly deleteGuard: DeleteDependencyService,
+    private readonly traceability: ReceiptTraceabilityService,
   ) {}
 
   private async headerToDb() {
@@ -266,6 +270,13 @@ export class PurchaseOrderService {
     return Array.from(byPo.values());
   }
 
+  // Universal Action Menu -> "Return / Purchase Receipt" submenu. Delegates to the one shared
+  // traceability implementation (ReceiptTraceabilityService) also used from the Receipt/Return/
+  // Received-Connection screens (inventory-receipt.service.ts) — no duplicate SQL here.
+  async listRelatedReceipts(purchaseOrderId: number) {
+    return this.traceability.listForPurchaseOrder(purchaseOrderId);
+  }
+
   async getByReceiptNo(receiptNo: string) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE}
@@ -386,9 +397,12 @@ export class PurchaseOrderService {
 
   async remove(id: number, userId: number) {
     await this.get(id);
-    await this.prisma.$executeRaw`
-      UPDATE "IM_OrderReceipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
-    `;
+    await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('IM_OrderReceipt', id, tx);
+      await tx.$executeRaw`
+        UPDATE "IM_OrderReceipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+      `;
+    });
     return { message: 'Deleted' };
   }
 
@@ -528,9 +542,12 @@ export class PurchaseOrderService {
   }
 
   async removeItem(itemId: number, userId: number) {
-    const result = await this.prisma.$executeRaw`
-      UPDATE "IM_OrderReceiptItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId}
-    `;
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('IM_OrderReceiptItem', itemId, tx);
+      return tx.$executeRaw`
+        UPDATE "IM_OrderReceiptItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId}
+      `;
+    });
     if (!result) throw new NotFoundException('Line not found');
     return { message: 'Deleted' };
   }

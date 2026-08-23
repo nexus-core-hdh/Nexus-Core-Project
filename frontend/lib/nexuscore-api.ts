@@ -386,6 +386,10 @@ export const legacyErpApi = {
     // account with real outstanding quantity, grouped with their pending lines. See
     // purchase-order.service.ts's listPending() for how PendingQty is computed.
     listPending: (currentAccountId: number) => api.get(`/legacy-erp/purchase-orders/pending?currentAccountId=${currentAccountId}`),
+    // Universal Action Menu -> Return/Purchase Receipt submenu — Purchase Receipt (type 2),
+    // Received Connection Receipt (type 11), and Purchase Return (type 122) rows tracing back
+    // to this PO. See purchase-order.service.ts's listRelatedReceipts().
+    getRelatedReceipts: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}/related-receipts`),
     listItemVariants: (id: number, itemId: number) => api.get(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants`),
     createItemVariant: (id: number, itemId: number, d: any) => api.post(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants`, d),
     updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`/legacy-erp/purchase-orders/${id}/items/${itemId}/variants/${variantLineId}`, d),
@@ -429,6 +433,10 @@ export const legacyErpApi = {
     submitForApproval: (id: number) => api.post(`/legacy-erp/inventory-receipts/${id}/submit-for-approval`, {}),
     approve: (id: number, remarks?: string) => api.post(`/legacy-erp/inventory-receipts/${id}/approve`, { remarks }),
     reject: (id: number, remarks: string) => api.post(`/legacy-erp/inventory-receipts/${id}/reject`, { remarks }),
+    // Universal Action Menu -> Return/Purchase Receipt submenu — walks back to the originating
+    // Purchase Order (if any) and returns its whole receipt family minus this record itself.
+    // See inventory-receipt.service.ts's listRelatedReceipts() / ReceiptTraceabilityService.
+    getRelatedReceipts: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}/related-receipts`),
     // Variant breakdown — same shape as legacyErpApi.purchaseOrders' own itemVariantOptions/
     // listItemVariants/createItemVariant/updateItemVariant/removeItemVariant (IM_ItemVariant
     // read-side is identical; the write side targets IM_ReceiptItemVariant instead of
@@ -480,6 +488,17 @@ export const legacyErpApi = {
       uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`${base}/${id}/attachments`, d),
       removeAttachment: (id: number, attId: number) => api.delete(`${base}/${id}/attachments/${attId}`),
       attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}${base}/${id}/attachments/${attId}/content`,
+      // General Settings -> Approval Configuration — same shape as inventoryReceipts' own,
+      // now exposed generically by receipt-type.controller.ts (Purchase Return, Received
+      // Connection Receipt, etc. previously had no Approve/Reject route at all).
+      getApprovalStatus: (id: number) => api.get(`${base}/${id}/approval-status`),
+      submitForApproval: (id: number) => api.post(`${base}/${id}/submit-for-approval`, {}),
+      approve: (id: number, remarks?: string) => api.post(`${base}/${id}/approve`, { remarks }),
+      reject: (id: number, remarks: string) => api.post(`${base}/${id}/reject`, { remarks }),
+      // Universal Action Menu -> Return/Purchase Receipt submenu — same shared traceability
+      // walk as inventoryReceipts' own, now available for Purchase Return, Received Connection
+      // Receipt, and every other generic receipt type.
+      getRelatedReceipts: (id: number) => api.get(`${base}/${id}/related-receipts`),
     };
   },
   // "00-Purchase Contract" / "00-Sale Contract" — same shape as `receipts` above (drop-in for

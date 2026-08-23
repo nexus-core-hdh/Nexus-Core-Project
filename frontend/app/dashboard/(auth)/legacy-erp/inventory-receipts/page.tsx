@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
-import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -16,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
-import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, ClipboardList, XCircle, ShieldAlert } from "lucide-react";
+import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
@@ -28,6 +29,9 @@ import { InventoryReceiptLineGrid, type InventoryReceiptLineGridHandle, type Imp
 import { PendingOrdersDialog } from "./_components/pending-orders-dialog";
 import { CustomizedFieldsTab } from "./_components/customized-fields-tab";
 import { getReceiptTypeConfig } from "@/lib/legacy-erp/receipt-types";
+import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
+import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 
 // Inventory Receipt — a full ERP transaction screen mirroring the established Purchase Order
 // screen architecture (Workspace tab, Save-required gating, toolbar search/new/save), but
@@ -39,9 +43,17 @@ import { getReceiptTypeConfig } from "@/lib/legacy-erp/receipt-types";
 const TABS = ["General", "Detail", "Attachments", "Certificates", "Customized Fields"];
 const CURRENT_ACCOUNTS_LIST_PATH = "/dashboard/legacy-erp/current-accounts-list";
 // General Settings -> Approval Configuration screenKey for this screen — must match
-// inventory-receipt.service.ts's own screenKeyFor(2) exactly (both derive from this screen's
-// real MenuItem.href, the existing screen/module registry).
-const APPROVAL_SCREEN_KEY = "/dashboard/legacy-erp/inventory-receipts-list";
+// inventory-receipt.service.ts's own screenKeyFor(receiptType) exactly (both derive from this
+// screen's real MenuItem.href, the existing screen/module registry). Now generalized: Approve/
+// Disapprove used to be wired for the genuine Purchase Receipt (receiptType===2) only; the
+// generic receipt-type.controller.ts routes added for the Universal Action Menu expose the same
+// InventoryReceiptService methods for every other type (Purchase Return=122, Received
+// Connection Receipt=11, etc.), so this must resolve the same per-type screenKey the backend
+// does instead of the type-2-only constant it used to be.
+const screenKeyFor = (receiptType: number) =>
+  receiptType === 2
+    ? "/dashboard/legacy-erp/inventory-receipts-list"
+    : `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
 
 const emptyForm: Record<string, any> = {
   receiptNo: "", receiptDate: new Date().toISOString().slice(0, 10), shipmentDate: "",
@@ -70,6 +82,7 @@ function IdentitySection({ children }: { children: React.ReactNode }) {
 }
 
 export default function InventoryReceiptPage() {
+  const router = useRouter();
   const searchParams = useWorkspaceSearchParams();
   const initialMode = (searchParams.get("mode") as "view" | "edit" | "create" | null) || "create";
   const initialId = searchParams.get("id");
@@ -105,9 +118,9 @@ export default function InventoryReceiptPage() {
   };
   const importPendingLines = (lines: ImportedPendingLine[]) => lineGridRef.current?.importLines(lines);
 
-  // General Settings -> Approval Configuration. Only wired for the genuine Purchase Receipt
-  // (receiptType===2) — the other 16 Receipt Screen Replication types this same page also
-  // serves aren't integrated with the framework yet, so nothing below runs for them.
+  // General Settings -> Approval Configuration — now generalized to every Receipt Screen
+  // Replication type this page serves (see screenKeyFor() above and receipt-type.controller.ts's
+  // new approval routes), not just the genuine Purchase Receipt.
   const [approvalRequired, setApprovalRequired] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState<{ status: string; remarks?: string | null } | null>(null);
   const [approving, setApproving] = useState(false);
@@ -115,19 +128,18 @@ export default function InventoryReceiptPage() {
   const [rejectRemarks, setRejectRemarks] = useState("");
 
   useEffect(() => {
-    if (receiptType !== 2) return;
+    const key = screenKeyFor(receiptType);
     approvalConfigApi.list()
       .then((r: any) => {
-        const found = Array.isArray(r) ? r.find((c: any) => c.screenKey === APPROVAL_SCREEN_KEY) : null;
+        const found = Array.isArray(r) ? r.find((c: any) => c.screenKey === key) : null;
         setApprovalRequired(!!found?.approvalRequired);
       })
       .catch(() => {});
   }, [receiptType]);
 
   const refreshApprovalStatus = async (id: number) => {
-    if (receiptType !== 2) return;
     try {
-      const s: any = await legacyErpApi.inventoryReceipts.getApprovalStatus(id);
+      const s: any = await client.getApprovalStatus(id);
       setApprovalStatus(s ?? null);
     } catch {
       setApprovalStatus(null);
@@ -143,7 +155,7 @@ export default function InventoryReceiptPage() {
     if (!receiptId) return;
     setApproving(true);
     try {
-      const r: any = await legacyErpApi.inventoryReceipts.approve(receiptId);
+      const r: any = await client.approve(receiptId);
       setForm((p) => ({ ...p, isApproved: r.isApproved }));
       toast.success("Approved");
       await refreshApprovalStatus(receiptId);
@@ -159,7 +171,7 @@ export default function InventoryReceiptPage() {
     if (!rejectRemarks.trim()) return toast.error("A rejection reason is required.");
     setApproving(true);
     try {
-      await legacyErpApi.inventoryReceipts.reject(receiptId, rejectRemarks.trim());
+      await client.reject(receiptId, rejectRemarks.trim());
       toast.success("Rejected");
       setRejectOpen(false);
       setRejectRemarks("");
@@ -282,8 +294,8 @@ export default function InventoryReceiptPage() {
       // General Settings -> Approval Configuration — Create/Modify -> Submit -> Pending
       // Approval. A no-op call chain (nothing below runs) whenever approval isn't required for
       // this screen, so Save's own behavior is otherwise completely unchanged.
-      if (approvalRequired && receiptType === 2 && savedId) {
-        await legacyErpApi.inventoryReceipts.submitForApproval(savedId);
+      if (approvalRequired && savedId) {
+        await client.submitForApproval(savedId);
         await refreshApprovalStatus(savedId);
         toast.message("Approval Required", {
           description: "This transaction cannot be completed until it has been approved by an authorized user.",
@@ -298,6 +310,51 @@ export default function InventoryReceiptPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+
+  // Universal Action Menu -> Return/Purchase Receipt submenu — the same PO->Receipt family this
+  // screen's own `client.getRelatedReceipts` now exposes for every receipt type (see
+  // ReceiptTraceabilityService); [] whenever this record was never linked to a Purchase Order.
+  const [relatedReceipts, setRelatedReceipts] = useState<RelatedReceiptRef[]>([]);
+  useEffect(() => {
+    if (!receiptId) { setRelatedReceipts([]); return; }
+    client.getRelatedReceipts(receiptId)
+      .then((r: any) => setRelatedReceipts(Array.isArray(r) ? r : []))
+      .catch(() => setRelatedReceipts([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiptId, receiptType]);
+  const openRelatedReceipt = (r: RelatedReceiptRef) => {
+    navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?receiptType=${r.receiptType}&id=${r.id}&mode=view`);
+  };
+
+  // Universal Action Menu -> Delete — reuses this screen's own `client` (already resolved to
+  // either legacyErpApi.inventoryReceipts or the generic receipts(receiptType) client), which
+  // already wraps DeleteDependencyService via InventoryReceiptService.remove() for every type.
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const deleteReceipt = async () => {
+    if (!receiptId) return;
+    try {
+      await client.delete(receiptId);
+      toast.success(`${cfg.label} deleted`);
+      setDeleteConfirmOpen(false);
+      navigateOrOpenTab(router, "/dashboard/legacy-erp/inventory-receipts-list");
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const universalActions = useUniversalActions({
+    recordExists: !!receiptId,
+    isDirty, saving,
+    onSave: save,
+    approvalRequired, approvalStatus, approving,
+    onApprove: runApproveReceipt,
+    onReject: () => { setRejectRemarks(""); setRejectOpen(true); },
+    pendingOrders: receiptType === 2 ? { onOpen: openPendingOrders, disabled: !form.currentAccountId } : undefined,
+    relatedReceipts,
+    onOpenRelatedReceipt: openRelatedReceipt,
+    onDelete: receiptId ? () => setDeleteConfirmOpen(true) : undefined,
+  });
+  useUniversalActionShortcuts(universalActions);
 
   const saveRequired = (label: string) => (
     <Empty className="py-10">
@@ -319,6 +376,7 @@ export default function InventoryReceiptPage() {
   const titleText = receiptId ? `${cfg.label} [${receiptType}-${cfg.label}] [${statusLabel}] - ${form.receiptNo}` : `New ${cfg.label}`;
 
   return (
+    <RowContextMenu actions={universalActions}>
     <div className="mx-auto max-w-[1700px] space-y-4 p-4 lg:p-6">
       <LegacyErpBreadcrumb trail={[
         { label: "Legacy ERP" },
@@ -399,6 +457,8 @@ export default function InventoryReceiptPage() {
               </Button>
             </>
           )}
+          <div className="hidden h-6 w-px bg-border sm:block" />
+          <RowActionsMenu actions={universalActions} />
         </div>
       </div>
 
@@ -466,33 +526,18 @@ export default function InventoryReceiptPage() {
                 </IdentitySection>
 
                 <FormSection title="Current Account & Warehouse">
-                  {receiptType === 2 ? (
-                    <RowContextMenu actions={[
-                      { key: "pending-orders", label: "Pending Orders", icon: ClipboardList, onSelect: openPendingOrders, disabled: !form.currentAccountId } as RowAction,
-                    ]}>
-                      <div>
-                        <MasterAutocompleteField
-                          label="Current Account"
-                          masterKey="currentAccount"
-                          displayValue={form.currentAccountLabel ?? ""}
-                          fetchOptions={(term) => legacyErpApi.accounts.list(term) as Promise<any[]>}
-                          lookupPath={CURRENT_ACCOUNTS_LIST_PATH}
-                          onSelect={(o) => setForm((p) => ({ ...p, currentAccountId: String(o.id), currentAccountLabel: `${o.code} — ${o.name}` }))}
-                          onClear={() => setForm((p) => ({ ...p, currentAccountId: "", currentAccountLabel: "" }))}
-                        />
-                      </div>
-                    </RowContextMenu>
-                  ) : (
-                    <MasterAutocompleteField
-                      label="Current Account"
-                      masterKey="currentAccount"
-                      displayValue={form.currentAccountLabel ?? ""}
-                      fetchOptions={(term) => legacyErpApi.accounts.list(term) as Promise<any[]>}
-                      lookupPath={CURRENT_ACCOUNTS_LIST_PATH}
-                      onSelect={(o) => setForm((p) => ({ ...p, currentAccountId: String(o.id), currentAccountLabel: `${o.code} — ${o.name}` }))}
-                      onClear={() => setForm((p) => ({ ...p, currentAccountId: "", currentAccountLabel: "" }))}
-                    />
-                  )}
+                  {/* Pending Orders now lives in the Universal Action Menu (right-click anywhere
+                      on this screen, the header's Quick Actions menu, or Ctrl+Alt+P) instead of
+                      a field-scoped context menu here — one menu, not two competing surfaces. */}
+                  <MasterAutocompleteField
+                    label="Current Account"
+                    masterKey="currentAccount"
+                    displayValue={form.currentAccountLabel ?? ""}
+                    fetchOptions={(term) => legacyErpApi.accounts.list(term) as Promise<any[]>}
+                    lookupPath={CURRENT_ACCOUNTS_LIST_PATH}
+                    onSelect={(o) => setForm((p) => ({ ...p, currentAccountId: String(o.id), currentAccountLabel: `${o.code} — ${o.name}` }))}
+                    onClear={() => setForm((p) => ({ ...p, currentAccountId: "", currentAccountLabel: "" }))}
+                  />
                   <MasterAutocompleteField
                     label="Warehouse"
                     masterKey="warehouse"
@@ -586,6 +631,20 @@ export default function InventoryReceiptPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {cfg.label}</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={deleteReceipt}>Yes</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+    </RowContextMenu>
   );
 }

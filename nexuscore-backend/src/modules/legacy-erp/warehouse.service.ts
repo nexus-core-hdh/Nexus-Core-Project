@@ -5,6 +5,7 @@ import { CreateWarehouseDto, UpdateWarehouseDto } from './dto/warehouse.dto';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { sanitizeRawRow } from './raw-row.util';
 import { nextLegacySeqCode, previewLegacySeqCode } from './legacy-code-sequence.util';
+import { DeleteDependencyService } from './delete-dependency.service';
 
 // Code (IM_Warehouse.WarehouseCode) is server-generated via the shared LegacyCodeSequence
 // table — "WH-001", "WH-002", ... Client-sent warehouseCode is always ignored (still accepted
@@ -38,7 +39,10 @@ const ROW_SELECT = `
 
 @Injectable()
 export class WarehouseService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deleteGuard: DeleteDependencyService,
+  ) {}
 
   // Same shared coercer used by AccountService — IM_Warehouse uses the identical
   // migrated Udt* domain types (confirmed via pg_catalog), so it needs the same handling.
@@ -126,9 +130,12 @@ export class WarehouseService {
 
   async remove(id: number, userId: number) {
     await this.get(id);
-    await this.prisma.$executeRaw`
-      UPDATE "IM_Warehouse" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
-    `;
+    await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('IM_Warehouse', id, tx);
+      await tx.$executeRaw`
+        UPDATE "IM_Warehouse" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+      `;
+    });
     return { message: 'Deleted' };
   }
 }

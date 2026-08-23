@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
+import { DeleteDependencyService } from './delete-dependency.service';
 
 // Yarn Card is NOT a new master entity — it's the existing, already-migrated IM_Item
 // table (the legacy Item/Product master used by every "card" screen in this ERP family:
@@ -48,7 +49,10 @@ const HEADER_SELECT = Prisma.raw(['"RecId" as id', ...HEADER_COLUMNS.map((c) => 
 
 @Injectable()
 export class YarnCardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deleteGuard: DeleteDependencyService,
+  ) {}
 
   private async toDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, TABLE));
@@ -195,9 +199,12 @@ export class YarnCardService {
 
   async remove(id: number, userId: number) {
     await this.get(id);
-    await this.prisma.$executeRaw`
-      UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
-    `;
+    await this.prisma.$transaction(async (tx) => {
+      await this.deleteGuard.assertDeletable('IM_Item', id, tx);
+      await tx.$executeRaw`
+        UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+      `;
+    });
     return { message: 'Deleted' };
   }
 }

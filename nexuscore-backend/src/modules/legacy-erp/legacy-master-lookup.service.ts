@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { DeleteDependencyService, isProtectedEntityType } from './delete-dependency.service';
 
 interface TableLookupConfig {
   table: string;
@@ -116,7 +117,10 @@ export type MasterLookupKey = keyof typeof TABLES;
 
 @Injectable()
 export class LegacyMasterLookupService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deleteGuard: DeleteDependencyService,
+  ) {}
 
   private config(key: string): TableLookupConfig {
     const cfg = TABLES[key];
@@ -276,12 +280,23 @@ export class LegacyMasterLookupService {
     return sanitizeRawRow(rows[0]);
   }
 
+  // Config-driven, so this can reach ANY table in TABLES above once it's made manageable —
+  // including one DeleteDependencyService already protects (e.g. IM_Warehouse, currently inert
+  // here since `warehouse` has no activeColumn/label/codeColumn set, see `manageable()`). Rather
+  // than special-casing "warehouse", every call checks the table name against the same protected
+  // list DeleteDependencyService itself defines, so this generic path can never become a bypass
+  // for whichever protected table gets a management screen next.
   async remove(key: string, id: number, userId: number) {
     const cfg = this.manageable(key);
     const table = Prisma.raw(`"${cfg.table}"`);
-    const result = await this.prisma.$executeRaw`
-      UPDATE ${table} SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id} AND "IsDeleted" = 0
-    `;
+    const result = await this.prisma.$transaction(async (tx) => {
+      if (isProtectedEntityType(cfg.table)) {
+        await this.deleteGuard.assertDeletable(cfg.table, id, tx);
+      }
+      return tx.$executeRaw`
+        UPDATE ${table} SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id} AND "IsDeleted" = 0
+      `;
+    });
     if (!result) throw new NotFoundException('Record not found');
     return { message: 'Deleted' };
   }

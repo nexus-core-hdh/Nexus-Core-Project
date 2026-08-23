@@ -40,6 +40,11 @@ export class PurchaseOrderController {
     return this.svc.listPending(currentAccountId);
   }
 
+  // Universal Action Menu -> Return/Purchase Receipt submenu.
+  @Get(':id/related-receipts') listRelatedReceipts(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.listRelatedReceipts(id);
+  }
+
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
     return this.svc.get(id);
   }

@@ -4,6 +4,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { InventoryReceiptService } from './inventory-receipt.service';
 import { InventoryReceiptAttachmentsService } from './inventory-receipt-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { getReceiptTypeConfig } from './receipt-types.config';
 
 // The generic "other 11 receipt types" route — mirrors InventoryReceiptController route-for-
@@ -65,6 +66,54 @@ export class ReceiptTypeController {
   @Delete(':id') async remove(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
     const cfg = this.resolve(receiptType);
     return this.svc.remove(id, Number(userId) || 1, cfg.receiptType);
+  }
+
+  // Approval — mirrors InventoryReceiptController's own 4 routes exactly, delegating to the
+  // same already-receiptType-parameterized InventoryReceiptService methods. Purchase Receipt
+  // (type 2) has its own copy of these on /inventory-receipts; every other type (Purchase
+  // Return=122, Outside Process Receive=11, etc.) only gets Approve/Reject through this route.
+  @Get(':id/approval-status') getApprovalStatus(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.getApprovalStatus(id, cfg.receiptType);
+  }
+
+  @Post(':id/submit-for-approval') submitForApproval(
+    @Param('receiptType') receiptType: string,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser('id') userId: string,
+  ) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.submitForApproval(id, userId, cfg.receiptType);
+  }
+
+  @Permissions({ module: 'approval', action: 'approve' })
+  @Post(':id/approve')
+  approve(
+    @Param('receiptType') receiptType: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { remarks?: string },
+    @CurrentUser('id') userId: string,
+  ) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.approve(id, userId, dto?.remarks, cfg.receiptType);
+  }
+
+  @Permissions({ module: 'approval', action: 'reject' })
+  @Post(':id/reject')
+  reject(
+    @Param('receiptType') receiptType: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { remarks: string },
+    @CurrentUser('id') userId: string,
+  ) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.reject(id, userId, dto.remarks, cfg.receiptType);
+  }
+
+  // Universal Action Menu -> Return/Purchase Receipt submenu.
+  @Get(':id/related-receipts') listRelatedReceipts(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.listRelatedReceipts(id, cfg.receiptType);
   }
 
   // Detail lines (the grid)
