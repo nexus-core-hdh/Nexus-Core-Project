@@ -34,3 +34,17 @@ export const RECEIPT_TYPES: ReceiptTypeConfig[] = [
 
 export const getReceiptTypeConfig = (receiptType: number): ReceiptTypeConfig =>
   RECEIPT_TYPES.find((t) => t.receiptType === receiptType) ?? RECEIPT_TYPES[0];
+
+// Mirrors nexuscore-backend/.../receipt-types.config.ts's own RELATED_IMPORT_SOURCE_TYPES —
+// Purchase Return's "Import Related Receipt" workflow only ever sources from these two receipt
+// types (Purchase Receipt and Outside Process Receive Receipt); Purchase Return itself is the
+// only valid TARGET, not a source.
+export const RELATED_IMPORT_SOURCE_TYPES = [2, 11] as const;
+
+// The "Subcontract Receipts" nav entry's own curated subset of RECEIPT_TYPES — the four "Outside
+// Process" types, i.e. the receiving/return side of the Subcontract Order workflow (see
+// order-types.config.ts's receivingReceiptType=11 for Subcontract Order itself) plus their two
+// sent/outflow counterparts. Purely a *membership* list, same convention as the 18-leaf
+// "Inventory Receipts" submenu in seed.ts (one static list of which types belong under one nav
+// entry) — every label/prefix/route still comes from RECEIPT_TYPES above, nothing duplicated.
+export const SUBCONTRACT_RECEIPT_TYPES = [11, 12, 134, 133] as const;

@@ -282,9 +282,23 @@ function recalc(row: LineRow): LineRow {
 
 const isBlankLine = (row: LineRow) => !row.inventoryId && !row.serviceCardId && !row.code.trim();
 
+// The subset of legacyErpApi.purchaseOrders this grid needs — legacyErpApi.orders(receiptType)
+// (Order Screen Replication's generic client, e.g. for Subcontract Order) satisfies this shape
+// as-is, same precedent as InventoryReceiptLineGrid's own InventoryReceiptItemsApi prop.
+export interface PurchaseOrderItemsApi {
+  listItems: (id: number) => Promise<any>;
+  createItem: (id: number, d: any) => Promise<any>;
+  updateItem: (id: number, itemId: number, d: any) => Promise<any>;
+  removeItem: (id: number, itemId: number) => Promise<any>;
+  update: (id: number, d: any) => Promise<any>;
+}
+
 interface Props {
   orderReceiptId: number | null;
   readOnly?: boolean;
+  /** Which order type's API this instance reads/writes through — defaults to Purchase Order's
+   *  own client, unchanged for every existing caller that doesn't pass this. */
+  api?: PurchaseOrderItemsApi;
 }
 
 // Imperative handle so the parent transaction screen can trigger the "commit draft lines"
@@ -296,7 +310,7 @@ export interface PurchaseOrderLineGridHandle {
 }
 
 export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Props>(function PurchaseOrderLineGrid(
-  { orderReceiptId, readOnly = false },
+  { orderReceiptId, readOnly = false, api = legacyErpApi.purchaseOrders },
   ref,
 ) {
   const [loading, setLoading] = useState(false);
@@ -480,7 +494,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     }
     setLoading(true);
     try {
-      const r: any = await legacyErpApi.purchaseOrders.listItems(id);
+      const r: any = await api.listItems(id);
       const list = (Array.isArray(r) ? r : []).map(fromApiRow);
       const withCodesNames = await hydrateCodesNames(list); // resolves Inventory + Fixed Asset (both IM_Item)
       const withServices = await hydrateServices(withCodesNames);
@@ -547,19 +561,19 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     setSavingIds((s) => new Set(s).add(clientId));
     try {
       if (row.__rowId == null) {
-        const saved: any = await legacyErpApi.purchaseOrders.createItem(orderReceiptId, buildDto(row));
+        const saved: any = await api.createItem(orderReceiptId, buildDto(row));
         // No auto-appended trailing row here either — a line becoming saved is not a request
         // for another one; the next row only ever appears when Add Row is clicked.
         setRows((prev) => prev.map((r) => (r.clientId === clientId && r.__rowId == null ? { ...r, __rowId: saved.id } : r)));
       } else {
-        await legacyErpApi.purchaseOrders.updateItem(orderReceiptId, row.__rowId, buildDto(row));
+        await api.updateItem(orderReceiptId, row.__rowId, buildDto(row));
       }
     } catch (e: any) {
       toast.error(e.message || "Failed to save line");
     } finally {
       setSavingIds((s) => { const next = new Set(s); next.delete(clientId); return next; });
     }
-  }, [orderReceiptId, savingIds, buildDto]);
+  }, [orderReceiptId, savingIds, buildDto, api]);
 
   // Standard ERP transaction workflow: called by the parent right after it saves the header
   // and receives the new PurchaseOrderId. Bulk-creates every draft row typed while
@@ -569,7 +583,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     const draftRows = rows.filter((r) => !isBlankLine(r) && r.__rowId == null);
     for (const row of draftRows) {
       try {
-        await legacyErpApi.purchaseOrders.createItem(newOrderReceiptId, buildDto(row));
+        await api.createItem(newOrderReceiptId, buildDto(row));
       } catch (e: any) {
         toast.error(e.message || "Failed to save a line item");
       }
@@ -587,7 +601,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     if (!row) return;
     if (row.__rowId != null && orderReceiptId) {
       try {
-        await legacyErpApi.purchaseOrders.removeItem(orderReceiptId, row.__rowId);
+        await api.removeItem(orderReceiptId, row.__rowId);
       } catch (e: any) {
         toast.error(e.message);
         return;
@@ -1008,10 +1022,10 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     if (!orderReceiptId) return;
     if (totalsSyncTimer.current) clearTimeout(totalsSyncTimer.current);
     totalsSyncTimer.current = setTimeout(() => {
-      legacyErpApi.purchaseOrders.update(orderReceiptId, { subTotal, vatAmount, grandTotal: totalAmount }).catch(() => {});
+      api.update(orderReceiptId, { subTotal, vatAmount, grandTotal: totalAmount }).catch(() => {});
     }, 600);
     return () => { if (totalsSyncTimer.current) clearTimeout(totalsSyncTimer.current); };
-  }, [orderReceiptId, subTotal, vatAmount, totalAmount]);
+  }, [orderReceiptId, subTotal, vatAmount, totalAmount, api]);
 
   // Stock on Hand — tracks whichever row is currently the active cell (the grid's own
   // "selected row" concept), showing that row's item stock when it's an Inventory or Fixed

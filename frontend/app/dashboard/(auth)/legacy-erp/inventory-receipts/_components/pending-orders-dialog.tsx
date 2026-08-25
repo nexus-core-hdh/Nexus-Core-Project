@@ -55,9 +55,21 @@ interface Props {
   currentAccountId: number | null;
   alreadyImportedIds: Set<number>;
   onConfirm: (lines: ImportedPendingLine[]) => void;
+  /** legacyErpApi.purchaseOrders.listPending (default) — or, for another receiving screen
+   *  sourcing from a different order type (e.g. Outside Process Receive Receipt sourcing from
+   *  Subcontract Order), legacyErpApi.orders(receiptType).listPending(id, receivingReceiptType).
+   *  Injected so this dialog isn't hardcoded to Purchase Order alone. */
+  fetchPending?: (currentAccountId: number) => Promise<any>;
+  /** Display label for the source order type — defaults to "Purchase Order", unchanged for
+   *  every existing caller that doesn't pass this. */
+  sourceLabel?: string;
 }
 
-export function PendingOrdersDialog({ open, onOpenChange, currentAccountId, alreadyImportedIds, onConfirm }: Props) {
+export function PendingOrdersDialog({
+  open, onOpenChange, currentAccountId, alreadyImportedIds, onConfirm,
+  fetchPending = (id) => legacyErpApi.purchaseOrders.listPending(id),
+  sourceLabel = "Purchase Order",
+}: Props) {
   const [loading, setLoading] = useState(false);
   const [pos, setPos] = useState<PendingPo[]>([]);
   // Line-level selection — orderReceiptItemId, not orderReceiptId. See file header comment.
@@ -89,11 +101,11 @@ export function PendingOrdersDialog({ open, onOpenChange, currentAccountId, alre
     if (!open || !currentAccountId) return;
     setSelected(new Set());
     setLoading(true);
-    legacyErpApi.purchaseOrders.listPending(currentAccountId)
+    fetchPending(currentAccountId)
       .then((r: any) => setPos(Array.isArray(r) ? r : []))
       .catch((e: any) => { toast.error(e.message || "Failed to load pending orders"); setPos([]); })
       .finally(() => setLoading(false));
-  }, [open, currentAccountId]);
+  }, [open, currentAccountId, fetchPending]);
 
   // Lines already sitting in the current (unsaved) draft can't be excluded server-side yet —
   // filtered out here so reopening this dialog never re-offers them. A PO left with zero
@@ -150,7 +162,7 @@ export function PendingOrdersDialog({ open, onOpenChange, currentAccountId, alre
       <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-0 p-0">
         <DialogHeader className="shrink-0 border-b border-border px-5 py-4">
           <DialogTitle>Pending Orders</DialogTitle>
-          <DialogDescription>Select a whole Purchase Order, or individual lines across one or more Purchase Orders, to import into this receipt.</DialogDescription>
+          <DialogDescription>Select a whole {sourceLabel}, or individual lines across one or more {sourceLabel}s, to import into this receipt.</DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto px-5 py-3">
@@ -163,7 +175,7 @@ export function PendingOrdersDialog({ open, onOpenChange, currentAccountId, alre
               <EmptyHeader>
                 <EmptyMedia variant="icon"><PackageSearch /></EmptyMedia>
                 <EmptyTitle>No pending orders</EmptyTitle>
-                <EmptyDescription>This Current Account has no Purchase Orders with outstanding quantity.</EmptyDescription>
+                <EmptyDescription>This Current Account has no {sourceLabel}s with outstanding quantity.</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
@@ -172,7 +184,7 @@ export function PendingOrdersDialog({ open, onOpenChange, currentAccountId, alre
                 <TableHeader>
                   <TableRow className="bg-muted/40 hover:bg-muted/40">
                     <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Purchase Order</TableHead>
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{sourceLabel}</TableHead>
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Item</TableHead>
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Colour</TableHead>

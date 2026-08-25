@@ -29,6 +29,7 @@ import { InventoryCardService } from './inventory-card.service';
 import { PurchaseOrderController } from './purchase-order.controller';
 import { PurchaseOrderService } from './purchase-order.service';
 import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.service';
+import { OrderTypeController } from './order-type.controller';
 import { WarehouseParameterController } from './warehouse-parameter.controller';
 import { WarehouseParameterService } from './warehouse-parameter.service';
 import { InventoryReceiptController } from './inventory-receipt.controller';
@@ -82,6 +83,7 @@ import { ApprovalModule } from '../approval/approval.module';
     TrimInventoryCardController,
     InventoryCardController,
     PurchaseOrderController,
+    OrderTypeController,
     WarehouseParameterController,
     InventoryReceiptController,
     SizeSetController,

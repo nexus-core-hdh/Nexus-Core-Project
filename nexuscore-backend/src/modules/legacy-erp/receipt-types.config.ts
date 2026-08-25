@@ -44,3 +44,15 @@ export const RECEIPT_TYPES: ReceiptTypeConfig[] = [
 
 export const getReceiptTypeConfig = (receiptType: number): ReceiptTypeConfig | undefined =>
   RECEIPT_TYPES.find((t) => t.receiptType === receiptType);
+
+// Purchase Return's (ReceiptType=122) "Import Related Receipt" workflow — the only two receipt
+// types eligible as an IMPORT SOURCE for a new Purchase Return line, via the existing
+// IM_ReceiptItem.PurchaseReceiptItemId self-reference (see inventory-receipt.service.ts's
+// listRelatedImportable()/assertReturnQty()/assertRelatedImportSource()). Confirmed business
+// numbering for this feature — Receipt Type 2 ("Purchase Receipt") and Receipt Type 11 ("Outside
+// Process Receive Receipt") as SOURCES only; Purchase Return (122) is the only TARGET screen —
+// see assertRelatedImportSource's own comment. Not derived from RECEIPT_TYPES itself since
+// there's no generic "valid import source" flag on that array — this is a separate, additive
+// piece of configuration, and
+// labels are still always resolved via getReceiptTypeConfig(), never hardcoded as strings.
+export const RELATED_IMPORT_SOURCE_TYPES = [2, 11] as const;

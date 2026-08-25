@@ -5,6 +5,7 @@ import { sanitizeRawRow } from './raw-row.util';
 import { screenKeyFor } from './inventory-receipt.service';
 import { getReceiptTypeConfig } from './receipt-types.config';
 import { InventoryCardService } from './inventory-card.service';
+import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
 
 // Item Statement / Transaction History — a read-only view over the exact same IM_Item /
 // IM_Receipt / IM_ReceiptItem rows every *-card.service.ts and inventory-receipt.service.ts
@@ -86,27 +87,19 @@ export class ItemStatementService {
     const item = sanitizeRawRow(rows[0]);
     if (!ACCESS_CODE_LABEL[item.accessCode]) throw new NotFoundException('Inventory item not found');
 
-    // Unit resolution — same per-AccessCode shape as inventory-card.service.ts's own
-    // yarnSlice/fabricAndTrimSlice (Yarn: direct IM_Item.UnitId -> MD_UnitSet; Fabric/Trim/Fixed
-    // Asset: IM_ItemUnitItemSize -> MD_UnitSetItem, preferring the row flagged IsMainUnit).
-    let unit = '';
-    if (item.accessCode === 'YARN') {
-      const u = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-        SELECT us."SetName" as "unitName" FROM "IM_Item" i
-        LEFT JOIN "MD_UnitSet" us ON us."RecId" = i."UnitId"
-        WHERE i."RecId" = ${itemId}
-      `);
-      unit = u[0]?.unitName ?? '';
-    } else {
-      const u = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-        SELECT usi."UnitName" as "unitName"
-        FROM "IM_ItemUnitItemSize" iuis
-        JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
-        WHERE iuis."InventoryId" = ${itemId} AND iuis."IsDeleted" = 0
-        ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC LIMIT 1
-      `);
-      unit = u[0]?.unitName ?? '';
-    }
+    // Unit resolution — the item's Base Unit, same as inventory-card.service.ts's own unified
+    // lookup (IM_ItemUnitItemSize -> MD_UnitSetItem, preferring the row flagged IsMainUnit).
+    // Applies uniformly across Yarn/Fabric/Trim/Fixed Asset — Yarn previously resolved this via
+    // IM_Item.UnitId -> MD_UnitSet, a different/legacy field that isn't the configured Base Unit
+    // (same bug already fixed in inventory-card.service.ts's yarnSlice).
+    const u = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT usi."UnitName" as "unitName"
+      FROM "IM_ItemUnitItemSize" iuis
+      JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+      WHERE iuis."InventoryId" = ${itemId} AND iuis."IsDeleted" = 0
+      ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC LIMIT 1
+    `);
+    const unit = u[0]?.unitName ?? '';
 
     return { ...item, unit, inventoryType: ACCESS_CODE_LABEL[item.accessCode] };
   }
@@ -128,6 +121,14 @@ export class ItemStatementService {
     // balance ties out to `currentStockOnHand` above. The other 16 types carry no such gate:
     // they're excluded from the balance regardless of approval state, so gating them would be
     // meaningless (and inventing an approval rule for types that were never wired to one).
+    // Base Unit + Unit Conversion (same formula as Stock on Hand — see inventory-card.service
+    // .ts's stockSumSql — reused verbatim via unit-conversion.util.ts, not a second conversion
+    // formula): each line's own Quantity/Unit stay the raw values used for row display below
+    // ("quantity"/"unit", untouched), but "baseQuantity" additionally converts that same line
+    // into the item's Base Unit, purely for aggregating Total In/Total Out/running balance —
+    // summing raw quantities across different transaction units would be meaningless (19 BAG +
+    // 100 KG is not 119 of anything).
+    const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         r."RecId" as "receiptId",
@@ -136,10 +137,12 @@ export class ItemStatementService {
         r."ReceiptDate" as "receiptDate",
         ri."RecId" as "lineId",
         ri."Quantity" as "quantity",
+        ${baseQty} as "baseQuantity",
         COALESCE(usi."UnitName", '') as "unit"
       FROM "IM_ReceiptItem" ri
       JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
       LEFT JOIN "MD_UnitSetItem" usi ON usi."RecId" = ri."UnitId"
+      ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
       WHERE ri."InventoryId" = ${itemId} AND ri."IsDeleted" = 0
         AND (
           r."ReceiptType" NOT IN (2, 122)
@@ -156,6 +159,10 @@ export class ItemStatementService {
       ORDER BY r."ReceiptDate" ASC NULLS LAST, r."RecId" ASC, ri."RecId" ASC
     `);
 
+    // runningBalance/totalIn/totalOut are accumulated in Base Unit (from "baseQuantity" above) —
+    // full precision, no rounding until display, same convention toBaseQuantity/convertToBaseUnit
+    // already use. "quantity"/"quantityIn"/"quantityOut" below stay the line's own raw, original-
+    // unit values for the transaction grid — never overwritten with the converted amount.
     let runningBalance = 0;
     let totalIn = 0;
     let totalOut = 0;
@@ -165,9 +172,12 @@ export class ItemStatementService {
       const quantity = Number(row.quantity) || 0;
       const quantityIn = direction === 'IN' ? quantity : 0;
       const quantityOut = direction === 'OUT' ? quantity : 0;
-      if (direction) runningBalance += quantityIn - quantityOut;
-      totalIn += quantityIn;
-      totalOut += quantityOut;
+      const baseQuantity = Number(row.baseQuantity) || 0;
+      const baseQuantityIn = direction === 'IN' ? baseQuantity : 0;
+      const baseQuantityOut = direction === 'OUT' ? baseQuantity : 0;
+      if (direction) runningBalance += baseQuantityIn - baseQuantityOut;
+      totalIn += baseQuantityIn;
+      totalOut += baseQuantityOut;
       const config = getReceiptTypeConfig(row.receiptType);
       return {
         date: row.receiptDate,
@@ -184,6 +194,8 @@ export class ItemStatementService {
         // is kept distinct from generic 'UNKNOWN' purely for clearer labeling in the UI.
         movementCategory,
         includedInStockCalculation: direction !== null,
+        // Base Unit running balance (not the row's own raw quantity/unit above) — a cumulative
+        // total across mixed transaction units can only be meaningful in one common unit.
         runningBalance,
       };
     });
@@ -209,8 +221,11 @@ export class ItemStatementService {
       // currentStockOnHand is the module's one stock engine; closingBalanceFromTransactions is
       // this statement's own chronological replay of the same rows, exposed separately so any
       // future divergence (e.g. a stock adjustment made outside this statement's date filter)
-      // is visible rather than hidden.
+      // is visible rather than hidden. Both are already in Base Unit (getStockOnHand's own
+      // stockSumSql and this method's runningBalance above use the identical conversion), so
+      // stockDifference is a same-unit subtraction, never a raw cross-unit comparison.
       stockReconciled: currentStockOnHand === runningBalance,
+      stockDifference: currentStockOnHand - runningBalance,
     };
   }
 }

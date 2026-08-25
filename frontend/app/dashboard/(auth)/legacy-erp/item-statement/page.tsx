@@ -255,13 +255,16 @@ export default function ItemStatementPage() {
 
             {!loading && transactions.length > 0 && data?.totals && (
               <div className="flex flex-wrap items-center justify-end gap-6 border-t bg-muted/20 px-4 py-3 text-sm">
-                <span className="text-muted-foreground">Total In: <span className="font-semibold text-foreground">{data.totals.totalIn}</span></span>
-                <span className="text-muted-foreground">Total Out: <span className="font-semibold text-foreground">{data.totals.totalOut}</span></span>
-                <span className="text-muted-foreground">Closing Balance: <span className="font-semibold text-foreground">{data.totals.closingBalanceFromTransactions}</span></span>
+                <span className="text-muted-foreground">Total In: <span className="font-semibold text-foreground">{data.totals.totalIn} {data.item.unit}</span></span>
+                <span className="text-muted-foreground">Total Out: <span className="font-semibold text-foreground">{data.totals.totalOut} {data.item.unit}</span></span>
+                <span className="text-muted-foreground">Closing Balance: <span className="font-semibold text-foreground">{data.totals.closingBalanceFromTransactions} {data.item.unit}</span></span>
                 {!hasActiveFilters && (
-                  <Badge variant={data.stockReconciled ? "default" : "destructive"} className="text-[11px] font-normal">
-                    {data.stockReconciled ? "Reconciled with Stock on Hand" : "Differs from Stock on Hand"}
-                  </Badge>
+                  <>
+                    <span className="text-muted-foreground">Difference from Stock on Hand: <span className="font-semibold text-foreground">{data.stockDifference} {data.item.unit}</span></span>
+                    <Badge variant={data.stockReconciled ? "default" : "destructive"} className="text-[11px] font-normal">
+                      {data.stockReconciled ? "Reconciled with Stock on Hand" : "Differs from Stock on Hand"}
+                    </Badge>
+                  </>
                 )}
               </div>
             )}

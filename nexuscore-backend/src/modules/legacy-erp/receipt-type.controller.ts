@@ -43,6 +43,18 @@ export class ReceiptTypeController {
     return { receiptNo: await this.svc.nextReceiptNo(cfg.receiptType, cfg.numberPrefix) };
   }
 
+  // Universal Action Menu -> "Import Related Receipt" — Purchase Return (122) only. Declared
+  // before the single-segment ':id' route below (same convention as by-receipt-no/next-receipt-no
+  // above) so a request to /related-lines is never swallowed by :id's ParseIntPipe. Guarded here
+  // (not just by the frontend hiding the action elsewhere) so the endpoint itself rejects any
+  // other receipt type — see inventory-receipt.service.ts's assertRelatedImportSource for the
+  // matching write-time guard on createItem/updateItem.
+  @Get('related-lines') listRelatedImportable(@Param('receiptType') receiptType: string, @Query('currentAccountId', ParseIntPipe) currentAccountId: number) {
+    const cfg = this.resolve(receiptType);
+    if (cfg.receiptType !== 122) throw new BadRequestException('Import Related Receipt is only available for Purchase Return.');
+    return this.svc.listRelatedImportable(currentAccountId);
+  }
+
   @Get(':id') get(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number) {
     const cfg = this.resolve(receiptType);
     return this.svc.get(id, cfg.receiptType);
@@ -143,7 +155,7 @@ export class ReceiptTypeController {
   ) {
     const cfg = this.resolve(receiptType);
     await this.svc.get(id, cfg.receiptType);
-    return this.svc.updateItem(itemId, dto, Number(userId) || 1, id);
+    return this.svc.updateItem(itemId, dto, Number(userId) || 1, id, cfg.receiptType);
   }
 
   @Delete(':id/items/:itemId') async removeItem(

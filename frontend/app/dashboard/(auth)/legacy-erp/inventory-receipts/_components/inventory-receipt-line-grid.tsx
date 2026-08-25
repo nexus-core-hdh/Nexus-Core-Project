@@ -387,6 +387,18 @@ interface LineRow {
   // "live-only, never persisted" treatment as stockOnHand/lastPurchasePrice above.
   orderReceiptItemId: number | null;
   poReceiptNo: string;
+  // Related Receipt import — the originating receipt line (Receipt Type 2 or 11 — see
+  // receipt-types.config.ts's RELATED_IMPORT_SOURCE_TYPES) this line was imported from
+  // (IM_ReceiptItem.PurchaseReceiptItemId, the same self-reference column assertReturnQty()
+  // already enforces for Purchase Return — see inventory-receipt.service.ts). Mutually exclusive
+  // with orderReceiptItemId in practice (a line is either Pending-Orders-imported or
+  // Related-Receipt-imported, never both), but kept as its own field rather than overloading
+  // orderReceiptItemId since they're genuinely different source relationships/columns.
+  // sourceReceiptNo/sourceReceiptType are display-only (resolved server-side on load, same
+  // "live-only, never persisted" treatment as poReceiptNo above).
+  purchaseReceiptItemId: number | null;
+  sourceReceiptNo: string;
+  sourceReceiptType: number | null;
   // Colour — IM_ReceiptItem.ColorCardId (ColorCard.id, text), the exact same field/master
   // Purchase Order's own line grid already uses for its "Colour" column. Populated today only
   // via Pending Orders import (carried straight across from the source PO line); persisted
@@ -412,7 +424,9 @@ const emptyLine = (): LineRow => ({
   stockOnHand: null, lastPurchasePrice: null, explanation: "",
   specialCode: "", quantity: "", unitId: null, unit: "", price: "", forexId: null, forexCode: "",
   grossQuantity: "", vatIncluded: 0, vatRate: "", itemTotal: null, netItemTotal: null,
-  orderReceiptItemId: null, poReceiptNo: "", colorCardId: null, color: "", pendingVariants: [],
+  orderReceiptItemId: null, poReceiptNo: "",
+  purchaseReceiptItemId: null, sourceReceiptNo: "", sourceReceiptType: null,
+  colorCardId: null, color: "", pendingVariants: [],
   extra: {},
 });
 
@@ -455,6 +469,17 @@ export interface ImportedPendingLine {
   variants: { inventoryVariantId: number; quantity: number; netUnitPrice: number | null; orderReceiptItemVariantId: number }[];
 }
 
+// Related Receipt import (Current-Account-aware) — same shape as ImportedPendingLine, sourced
+// from a Receipt Type 2/11 line instead of a Purchase Order line. No variants: no equivalent
+// IM_ReceiptItemVariant->IM_ReceiptItemVariant traceability column exists (only Order->Receipt
+// variant linking is wired — see inventory-receipt.service.ts's ITEM_VARIANT_COLUMNS).
+export interface ImportedRelatedLine {
+  inventoryId: number; code: string; name: string; quantity: number;
+  unitId: number | null; unit: string; unitPrice: number | null;
+  purchaseReceiptItemId: number; sourceReceiptNo: string;
+  colorCardId: string | null;
+}
+
 export interface InventoryReceiptLineGridHandle {
   commitDrafts: (newInventoryReceiptId: number) => Promise<void>;
   /** Pending Orders import — appends the given lines (replacing the trailing blank placeholder).
@@ -465,6 +490,19 @@ export interface InventoryReceiptLineGridHandle {
   /** PO line ids already present on this grid (persisted or still-draft) — lets the Pending
    *  Orders dialog exclude lines already imported, even before the receipt is saved. */
   getImportedOrderReceiptItemIds: () => number[];
+  /** Related Receipt import — same append/persist behavior as importLines above, for lines
+   *  sourced from a Receipt Type 2/11 line instead of a Purchase Order line. */
+  importRelatedLines: (lines: ImportedRelatedLine[]) => void;
+  /** purchaseReceiptItemIds already present on this grid — lets the Related Receipt dialog
+   *  exclude already-imported source lines, same role as getImportedOrderReceiptItemIds. */
+  getImportedPurchaseReceiptItemIds: () => number[];
+  /** Current Account change handling — invalidates every Related-Receipt-imported line (they
+   *  were sourced under the OLD Current Account and are no longer guaranteed eligible under the
+   *  new one). Unsaved draft lines are removed outright (nothing lost — never persisted); an
+   *  already-persisted line has its stale purchaseReceiptItemId link cleared instead of the line
+   *  itself being deleted, so the user's entered item/quantity isn't silently destroyed — it
+   *  just becomes an ordinary manually-entered line. Returns counts for the caller's toast. */
+  clearRelatedImportedLines: () => Promise<{ removedDrafts: number; detachedLines: number }>;
 }
 
 export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandle, Props>(function InventoryReceiptLineGrid(
@@ -614,6 +652,9 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     netItemTotal: r.netItemTotal ?? null,
     orderReceiptItemId: r.orderReceiptItemId ?? null,
     poReceiptNo: r.orderReceiptNo ?? "",
+    purchaseReceiptItemId: r.purchaseReceiptItemId ?? null,
+    sourceReceiptNo: r.sourceReceiptNo ?? "",
+    sourceReceiptType: r.sourceReceiptType ?? null,
     colorCardId: r.colorCardId ?? null,
     pendingVariants: [],
     extra: r,
@@ -667,6 +708,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // IM_ReceiptItem.OrderReceiptItemId; undefined (not sent) for every manually-added line,
     // exactly as before.
     orderReceiptItemId: row.orderReceiptItemId ?? undefined,
+    // Related Receipt import — carries the originating Receipt Type 2/11 line reference through
+    // to IM_ReceiptItem.PurchaseReceiptItemId; undefined (not sent) for every other line, exactly
+    // like orderReceiptItemId above. The backend re-validates this server-side on create (Current
+    // Account match + remaining quantity — see inventory-receipt.service.ts's createItem/
+    // assertRelatedImportSource/assertReturnQty), so this is never trusted as the final word.
+    purchaseReceiptItemId: row.purchaseReceiptItemId ?? undefined,
     // Colour — IM_ReceiptItem.ColorCardId, carried across from the source PO line at import
     // time (see importLines below); undefined for every manually-added line.
     colorCardId: row.colorCardId ?? undefined,
@@ -777,7 +824,77 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
   const getImportedOrderReceiptItemIds = () => rows.filter((r) => r.orderReceiptItemId != null).map((r) => r.orderReceiptItemId as number);
 
-  useImperativeHandle(ref, () => ({ commitDrafts, importLines, getImportedOrderReceiptItemIds }), [rows]);
+  // Related Receipt import — same append/persist shape as importLines above (Pending Orders),
+  // sourced from a Receipt Type 2/11 line via purchaseReceiptItemId instead of orderReceiptItemId.
+  const importRelatedLines = (lines: ImportedRelatedLine[]) => {
+    if (!lines.length) return;
+    const newRows = lines.map((l) => {
+      const unitMatch = l.unitId != null ? unitOptions.find((u) => String(u.id) === String(l.unitId)) : undefined;
+      return recalc({
+        ...emptyLine(),
+        inventoryId: l.inventoryId, code: l.code, name: l.name,
+        quantity: String(l.quantity), unitId: l.unitId, unit: l.unit || unitMatch?.code || unitMatch?.name || "",
+        price: l.unitPrice != null ? String(l.unitPrice) : "",
+        purchaseReceiptItemId: l.purchaseReceiptItemId, sourceReceiptNo: l.sourceReceiptNo,
+        colorCardId: l.colorCardId,
+      });
+    });
+    setRows((prev) => [...prev.filter((r) => !isBlankLine(r)), ...newRows, emptyLine()]);
+    if (inventoryReceiptId) {
+      newRows.forEach((row) => persistRow(row.clientId, row));
+    }
+    // Same item-configured-Unit normalization importLines applies above.
+    newRows.forEach((row) => {
+      if (row.inventoryId == null) return;
+      fetchItemUnits(row.inventoryId).then((list) => {
+        if (!list.length) return;
+        const stillValid = row.unitId != null && list.some((u) => Number(u.id) === Number(row.unitId));
+        if (stillValid) return;
+        const main = list[0];
+        updateRow(row.clientId, { unitId: Number(main.id), unit: main.code || main.name || "" }, !!inventoryReceiptId);
+      });
+    });
+  };
+
+  const getImportedPurchaseReceiptItemIds = () => rows.filter((r) => r.purchaseReceiptItemId != null).map((r) => r.purchaseReceiptItemId as number);
+
+  // Current Account change handling (spec: "Clear/invalidate previously selected related receipt
+  // lines that belong to the old Current Account... Do not allow stale or cross-account source
+  // selections to remain silently active"). Draft rows are simply dropped — nothing persisted to
+  // lose. A persisted row keeps its item/quantity but has its stale source link cleared via
+  // updateItem (ITEM_COLUMNS-filter convention: explicit null IS sent and written, unlike
+  // undefined which omits the column — see inventory-receipt.service.ts's updateItem), which
+  // also makes the invalidation visible (poReceiptNo/sourceReceiptNo columns go blank) rather
+  // than silently leaving a now-irrelevant reference active.
+  const clearRelatedImportedLines = async (): Promise<{ removedDrafts: number; detachedLines: number }> => {
+    const toDrop = rows.filter((r) => r.purchaseReceiptItemId != null && r.__rowId == null);
+    const toDetach = rows.filter((r) => r.purchaseReceiptItemId != null && r.__rowId != null);
+    if (!toDrop.length && !toDetach.length) return { removedDrafts: 0, detachedLines: 0 };
+
+    if (inventoryReceiptId) {
+      for (const row of toDetach) {
+        try {
+          await api.updateItem(inventoryReceiptId, row.__rowId as number, { purchaseReceiptItemId: null });
+        } catch (e: any) {
+          toast.error(e.message || "Failed to clear a related-receipt line");
+        }
+      }
+    }
+    const dropIds = new Set(toDrop.map((r) => r.clientId));
+    const detachIds = new Set(toDetach.map((r) => r.clientId));
+    setRows((prev) => {
+      const next = prev
+        .filter((r) => !dropIds.has(r.clientId))
+        .map((r) => (detachIds.has(r.clientId) ? { ...r, purchaseReceiptItemId: null, sourceReceiptNo: "" } : r));
+      return next.length ? next : [emptyLine()];
+    });
+    return { removedDrafts: toDrop.length, detachedLines: toDetach.length };
+  };
+
+  useImperativeHandle(ref, () => ({
+    commitDrafts, importLines, getImportedOrderReceiptItemIds,
+    importRelatedLines, getImportedPurchaseReceiptItemIds, clearRelatedImportedLines,
+  }), [rows, inventoryReceiptId, api]);
 
   const addRow = () => setRows((prev) => [...prev, emptyLine()]);
 

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useWorkspaceStore, type WorkspaceTab } from "@/lib/store/workspace-store";
 import { useScreenIndexStore } from "@/lib/store/screen-index-store";
+import { resolveWorkspaceTabTitle } from "@/lib/workspace/resolve-tab-title";
 
 // Hides the scroller's native scrollbar across engines. `scrollbar-width` (a
 // real CSS property, applied inline so it never depends on Tailwind's
@@ -68,7 +69,9 @@ export function WorkspaceTabBar() {
 
   // Title/icon are never duplicated in the workspace registry — they're looked
   // up live from the same menu data the sidebar renders, keyed by href (a tab's
-  // key is always its module's path).
+  // key is always its module's path). Screens that aren't themselves menu items
+  // (detail/create/edit forms reached via query params) fall through to
+  // resolveWorkspaceTabTitle's menu-derived + humanized fallbacks below.
   const entryByHref = useMemo(() => new Map(rawEntries.map((e) => [e.href, e])), [rawEntries]);
   const pinnedKeys = useMemo(() => new Set(myMenu.map((m) => m.key)), [myMenu]);
 
@@ -178,8 +181,7 @@ export function WorkspaceTabBar() {
           className={cn(SCROLLER_CLASS, "flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scroll-smooth px-2")}
         >
           {tabs.map((tab) => {
-            const entry = entryByHref.get(tab.key);
-            const Icon = entry?.icon;
+            const { title, icon: Icon } = resolveWorkspaceTabTitle(tab, entryByHref);
             const isActive = tab.key === activeKey;
             const pinned = pinnedKeys.has(tab.key);
             return (
@@ -200,7 +202,7 @@ export function WorkspaceTabBar() {
                 )}
               >
                 {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
-                <span title={entry?.title ?? tab.href} className="min-w-0 flex-1 truncate">{entry?.title ?? tab.href}</span>
+                <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
                 <button
                   type="button"
                   title={pinned ? "Unpin from My Menu" : "Pin to My Menu"}
@@ -254,13 +256,12 @@ export function WorkspaceTabBar() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="max-h-[60vh] w-64 overflow-y-auto">
               {tabs.map((tab) => {
-                const entry = entryByHref.get(tab.key);
-                const Icon = entry?.icon;
+                const { title, icon: Icon } = resolveWorkspaceTabTitle(tab, entryByHref);
                 const isActive = tab.key === activeKey;
                 return (
                   <DropdownMenuItem key={tab.key} onSelect={() => goTo(tab)} className="gap-2">
                     {Icon ? <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <span className="w-3.5 shrink-0" />}
-                    <span title={entry?.title ?? tab.href} className="min-w-0 flex-1 truncate">{entry?.title ?? tab.href}</span>
+                    <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
                     {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
                   </DropdownMenuItem>
                 );

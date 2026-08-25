@@ -408,6 +408,56 @@ export const legacyErpApi = {
     approve: (id: number, remarks?: string) => api.post(`/legacy-erp/purchase-orders/${id}/approve`, { remarks }),
     reject: (id: number, remarks: string) => api.post(`/legacy-erp/purchase-orders/${id}/reject`, { remarks }),
   },
+  // Order Screen Replication — same shape as `purchaseOrders` above (drop-in for
+  // PurchaseOrderLineGrid's `api` prop), hitting order-type.controller.ts's generic
+  // `/legacy-erp/orders/:receiptType/...` route instead. Purchase Order (type 1) stays on
+  // `purchaseOrders` above — this is for Subcontract Order (type 3) and any future order type.
+  orders: (receiptType: number) => {
+    const base = `/legacy-erp/orders/${receiptType}`;
+    return {
+      list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected") => {
+        const qs = new URLSearchParams();
+        if (search) qs.set("search", search);
+        if (approvalStatus) qs.set("approvalStatus", approvalStatus);
+        const query = qs.toString();
+        return api.get(`${base}${query ? `?${query}` : ''}`);
+      },
+      get: (id: number) => api.get(`${base}/${id}`),
+      getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
+      previewNextReceiptNo: () => api.get(`${base}/next-receipt-no`),
+      create: (d: any) => api.post(base, d),
+      update: (id: number, d: any) => api.put(`${base}/${id}`, d),
+      delete: (id: number) => api.delete(`${base}/${id}`),
+      listItems: (id: number) => api.get(`${base}/${id}/items`),
+      createItem: (id: number, d: any) => api.post(`${base}/${id}/items`, d),
+      updateItem: (id: number, itemId: number, d: any) => api.put(`${base}/${id}/items/${itemId}`, d),
+      removeItem: (id: number, itemId: number) => api.delete(`${base}/${id}/items/${itemId}`),
+      itemVariantOptions: (inventoryId: number) => api.get(`${base}/item-variant-options/${inventoryId}`),
+      // Receiving screen -> Current Account -> Pending Orders — this order type's own outstanding
+      // lines for the account, grouped with their pending quantities. `receivingReceiptType` is
+      // required so the backend's approval gate checks the right receiving screen's screenKey
+      // (e.g. Outside Process Receive Receipt=11 for Subcontract Order) — see
+      // purchase-order.service.ts's listPending().
+      listPending: (currentAccountId: number, receivingReceiptType: number) =>
+        api.get(`${base}/pending?currentAccountId=${currentAccountId}&receivingReceiptType=${receivingReceiptType}`),
+      getRelatedReceipts: (id: number) => api.get(`${base}/${id}/related-receipts`),
+      listItemVariants: (id: number, itemId: number) => api.get(`${base}/${id}/items/${itemId}/variants`),
+      createItemVariant: (id: number, itemId: number, d: any) => api.post(`${base}/${id}/items/${itemId}/variants`, d),
+      updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`${base}/${id}/items/${itemId}/variants/${variantLineId}`, d),
+      removeItemVariant: (id: number, itemId: number, variantLineId: number) => api.delete(`${base}/${id}/items/${itemId}/variants/${variantLineId}`),
+      listExplanations: (id: number) => api.get(`${base}/${id}/explanations`),
+      createExplanation: (id: number, d: { explanationText: string; explanationDate?: string }) => api.post(`${base}/${id}/explanations`, d),
+      removeExplanation: (id: number, explanationId: number) => api.delete(`${base}/${id}/explanations/${explanationId}`),
+      listAttachments: (id: number, kind: "document" | "picture") => api.get(`${base}/${id}/attachments?kind=${kind}`),
+      uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`${base}/${id}/attachments`, d),
+      removeAttachment: (id: number, attId: number) => api.delete(`${base}/${id}/attachments/${attId}`),
+      attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}${base}/${id}/attachments/${attId}/content`,
+      getApprovalStatus: (id: number) => api.get(`${base}/${id}/approval-status`),
+      submitForApproval: (id: number) => api.post(`${base}/${id}/submit-for-approval`, {}),
+      approve: (id: number, remarks?: string) => api.post(`${base}/${id}/approve`, { remarks }),
+      reject: (id: number, remarks: string) => api.post(`${base}/${id}/reject`, { remarks }),
+    };
+  },
   // IM_Receipt/IM_ReceiptItem — a separate "physical goods receipt" spine from Purchase Order's
   // IM_OrderReceipt (see inventory-receipt.service.ts's own comment). Same shape as
   // purchaseOrders above minus the variant/explanation endpoints (not part of this screen).
@@ -437,6 +487,8 @@ export const legacyErpApi = {
     // Purchase Order (if any) and returns its whole receipt family minus this record itself.
     // See inventory-receipt.service.ts's listRelatedReceipts() / ReceiptTraceabilityService.
     getRelatedReceipts: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}/related-receipts`),
+    // "Import Related Receipt" lives on Purchase Return (ReceiptType=122), not here — see
+    // legacyErpApi.receipts(receiptType)'s own listRelatedImportable below.
     // Variant breakdown — same shape as legacyErpApi.purchaseOrders' own itemVariantOptions/
     // listItemVariants/createItemVariant/updateItemVariant/removeItemVariant (IM_ItemVariant
     // read-side is identical; the write side targets IM_ReceiptItemVariant instead of
@@ -499,6 +551,11 @@ export const legacyErpApi = {
       // walk as inventoryReceipts' own, now available for Purchase Return, Received Connection
       // Receipt, and every other generic receipt type.
       getRelatedReceipts: (id: number) => api.get(`${base}/${id}/related-receipts`),
+      // Universal Action Menu -> "Import Related Receipt" — Purchase Return (122) only; the
+      // backend rejects this call for any other receiptType (see receipt-type.controller.ts's
+      // own guard). Current-Account-aware source picker over Receipt Type 2/11 lines — see
+      // inventory-receipt.service.ts's listRelatedImportable().
+      listRelatedImportable: (currentAccountId: number) => api.get(`${base}/related-lines?currentAccountId=${currentAccountId}`),
     };
   },
   // "00-Purchase Contract" / "00-Sale Contract" — same shape as `receipts` above (drop-in for

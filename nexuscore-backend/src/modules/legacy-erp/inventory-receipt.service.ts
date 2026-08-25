@@ -5,9 +5,11 @@ import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { ApprovalService } from '../approval/approval.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
-import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, toBaseQuantity } from './unit-conversion.util';
+import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, toBaseQuantity, fromBaseQuantitySql } from './unit-conversion.util';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
+import { RELATED_IMPORT_SOURCE_TYPES, getReceiptTypeConfig } from './receipt-types.config';
+import { getOrderTypeConfig } from './order-types.config';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -53,7 +55,10 @@ export const HEADER_COLUMNS = [
 // only ever sends the original 9 keys writes exactly what it always did. No new table, no new
 // column — every name below is a pre-existing column on the real table, added here purely to
 // surface it for read-only display in the Column Manager (see inventory-receipt-line-grid.tsx).
-const ITEM_COLUMNS = [
+// Also exported for worklist-fields.service.ts's "purchase-receipt-item" Customize Worklist
+// source (see listRelatedImportable() below, the one place that source's fields are actually
+// resolved against already-loaded data).
+export const ITEM_COLUMNS = [
   'ItemOrderNo', 'ItemType', 'InventoryId', 'UnitId', 'Quantity',
   'UnitPrice', 'ForexId', 'Explanation', 'SpecialCode',
   'ManufacturingOrderNo', 'PartyNo', 'LotQuantity',
@@ -366,6 +371,126 @@ export class InventoryReceiptService {
     return this.traceability.listForReceipt(id, receiptType);
   }
 
+  // Purchase Return -> Current Account -> Universal Action Menu -> "Import Related Receipt".
+  // Current-Account-aware source picker: every non-fully-consumed line from an existing receipt
+  // of a required source type (RELATED_IMPORT_SOURCE_TYPES — Receipt Type 2 "Purchase Receipt"
+  // and Receipt Type 11 "Outside Process Receive Receipt") under the given Current Account,
+  // eligible to be linked onto a NEW Purchase Return line via the existing IM_ReceiptItem.
+  // PurchaseReceiptItemId self-reference — the exact same column/relationship assertReturnQty()
+  // already enforces. AvailableQty here uses the identical formula (ReceivedQty - SUM(already-
+  // connected lines' Qty), Base-Unit normalized) purely as a read-side aggregate;
+  // createItem()'s/updateItem()'s existing purchaseReceiptItemId branches re-run the single-line
+  // version of this same check server-side at actual import/save time, so nothing here is
+  // trusted as the final word — this method only decides what's OFFERED. Exposed only via the
+  // generic receipt-type route (receipt-type.controller.ts), guarded to Purchase Return (122)
+  // only — see assertRelatedImportSource's own comment for why Purchase Return is the one and
+  // only valid TARGET for this workflow, even though this query itself doesn't need to know that.
+  // Approval gate mirrors listPending()/stockSumSql()'s own NOT EXISTS pattern, keyed per-row by
+  // the SOURCE line's own receipt type (2 and 11 have different screenKeys) via a CASE, since
+  // source lines here can come from either type — a source receipt still pending_approval or
+  // rejected isn't offered (nothing "received" yet to import from).
+  async listRelatedImportable(currentAccountId: number) {
+    const srcInvId = Prisma.sql`ri."InventoryId"`;
+    const srcUnitId = Prisma.sql`ri."UnitId"`;
+    const srcReceivedBaseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, srcInvId, srcUnitId, 'src');
+    const srcUnitJoin = baseQuantityJoinSql(srcInvId, srcUnitId, 'src');
+    const consumedBaseQty = baseQuantitySql(Prisma.sql`c."Quantity"`, Prisma.sql`c."InventoryId"`, Prisma.sql`c."UnitId"`, 'c');
+    const consumedUnitJoin = baseQuantityJoinSql(Prisma.sql`c."InventoryId"`, Prisma.sql`c."UnitId"`, 'c');
+    const purchaseReceiptKey = screenKeyFor(2);
+    const outsideProcessReceiveKey = screenKeyFor(11);
+
+    // Customize Worklist — "only render customized fields whose values can actually be resolved
+    // from the dialog's existing loaded data" (no per-row/N+1 fetch for a selected extra field).
+    // Every column worklist-fields.service.ts's "purchase-receipt"/"purchase-receipt-item"
+    // sources can offer is selected here, in this SAME query, reusing HEADER_COLUMNS/ITEM_COLUMNS
+    // wholesale — the handful already selected by name above (ReceiptNo/ReceiptType/ReceiptDate
+    // on the header; InventoryId/UnitId/Quantity/UnitPrice/Explanation/ColorCardId on the item)
+    // are excluded here only to avoid a duplicate SQL alias for the identical column.
+    const CORE_HEADER_COLS = new Set<string>(['ReceiptNo', 'ReceiptType', 'ReceiptDate']);
+    // BUG FIX: 'PurchaseReceiptItemId' must also be excluded here — it's a real ITEM_COLUMNS
+    // entry (the self-reference column, mostly null on these SOURCE lines), but this query
+    // already aliases ri."RecId" as "purchaseReceiptItemId" (the line's own identity — what the
+    // frontend keys/imports by). Two SELECT columns sharing one alias means Postgres/Prisma just
+    // returns both under that single JS property, with the LATER one silently overwriting the
+    // earlier — extraItemSelect being appended after the dedicated alias meant every row's real
+    // id was clobbered by its (usually null, occasionally coincidentally-colliding) self-
+    // reference value, producing the "duplicate key" React warning from two lines both landing
+    // on `line-null` (or, worse, two different lines colliding on the same non-null id).
+    const CORE_ITEM_COLS = new Set<string>(['InventoryId', 'UnitId', 'Quantity', 'UnitPrice', 'Explanation', 'ColorCardId', 'PurchaseReceiptItemId']);
+    const extraHeaderCols = HEADER_COLUMNS.filter((c) => !CORE_HEADER_COLS.has(c));
+    const extraItemCols = ITEM_COLUMNS.filter((c) => !CORE_ITEM_COLS.has(c));
+    const extraHeaderSelect = Prisma.raw(extraHeaderCols.map((c) => `rec."${c}" as "${camel(c)}"`).join(', '));
+    const extraItemSelect = Prisma.raw(extraItemCols.map((c) => `ri."${c}" as "${camel(c)}"`).join(', '));
+
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        rec."RecId" as "sourceReceiptId", rec."ReceiptNo" as "sourceReceiptNo",
+        rec."ReceiptType" as "sourceReceiptType", rec."ReceiptDate" as "sourceReceiptDate",
+        ri."RecId" as "purchaseReceiptItemId", ri."InventoryId" as "inventoryId", ri."Explanation" as "explanation",
+        ri."Quantity" as "receivedQty", ri."UnitId" as "unitId", ri."UnitPrice" as "unitPrice", ri."ColorCardId" as "colorCardId",
+        i."InventoryCode" as "code", i."InventoryName" as "name",
+        base_unit.id as "baseUnitId", base_unit.code as "baseUnitCode",
+        ${srcReceivedBaseQty} as "receivedBaseQty",
+        (${srcReceivedBaseQty} - COALESCE(consumed."baseQty", 0)) as "availableBaseQty",
+        ${fromBaseQuantitySql(Prisma.sql`(${srcReceivedBaseQty} - COALESCE(consumed."baseQty", 0))`, 'src')} as "availableQty",
+        ${extraHeaderSelect}, ${extraItemSelect}
+      FROM "IM_ReceiptItem" ri
+      JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+      LEFT JOIN "IM_Item" i ON i."RecId" = ri."InventoryId"
+      ${srcUnitJoin}
+      LEFT JOIN LATERAL (
+        SELECT usi."RecId" as id, usi."UnitCode" as code
+        FROM "IM_ItemUnitItemSize" iuis
+        JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+        WHERE iuis."InventoryId" = ri."InventoryId" AND iuis."IsDeleted" = 0 AND iuis."IsMainUnit" = 1
+        LIMIT 1
+      ) base_unit ON true
+      LEFT JOIN LATERAL (
+        SELECT SUM(${consumedBaseQty}) as "baseQty"
+        FROM "IM_ReceiptItem" c
+        ${consumedUnitJoin}
+        WHERE c."PurchaseReceiptItemId" = ri."RecId" AND c."IsDeleted" = 0
+      ) consumed ON true
+      WHERE ri."IsDeleted" = 0
+        AND rec."ReceiptType" IN (${Prisma.join(RELATED_IMPORT_SOURCE_TYPES)})
+        AND rec."CurrentAccountId" = ${currentAccountId}
+        AND (${srcReceivedBaseQty} - COALESCE(consumed."baseQty", 0)) > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM "ApprovalRequest" ar
+          WHERE ar."screenKey" = CASE rec."ReceiptType" WHEN 2 THEN ${purchaseReceiptKey} WHEN 11 THEN ${outsideProcessReceiveKey} END
+            AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
+        )
+      ORDER BY rec."ReceiptDate" DESC, rec."RecId" DESC, ri."ItemOrderNo", ri."RecId"
+    `);
+    const clean = sanitizeRawRow(rows);
+
+    const byReceipt = new Map<number, { id: number; receiptNo: string; receiptDate: any; receiptType: number; label: string; lines: any[] } & Record<string, any>>();
+    for (const r of clean) {
+      if (!byReceipt.has(r.sourceReceiptId)) {
+        const headerExtra: Record<string, any> = {};
+        for (const c of extraHeaderCols) headerExtra[camel(c)] = r[camel(c)];
+        byReceipt.set(r.sourceReceiptId, {
+          id: r.sourceReceiptId, receiptNo: r.sourceReceiptNo, receiptDate: r.sourceReceiptDate,
+          receiptType: r.sourceReceiptType,
+          label: r.sourceReceiptType === 2 ? 'Purchase Receipt' : (getReceiptTypeConfig(r.sourceReceiptType)?.label ?? `Receipt Type ${r.sourceReceiptType}`),
+          lines: [],
+          ...headerExtra,
+        });
+      }
+      const itemExtra: Record<string, any> = {};
+      for (const c of extraItemCols) itemExtra[camel(c)] = r[camel(c)];
+      byReceipt.get(r.sourceReceiptId)!.lines.push({
+        purchaseReceiptItemId: r.purchaseReceiptItemId, inventoryId: r.inventoryId, code: r.code, name: r.name,
+        explanation: r.explanation, unitId: r.unitId, unitPrice: r.unitPrice, colorCardId: r.colorCardId,
+        receivedQty: r.receivedQty, availableQty: r.availableQty,
+        ...itemExtra,
+        baseUnitId: r.baseUnitId, baseUnitCode: r.baseUnitCode,
+        receivedBaseQty: r.receivedBaseQty, availableBaseQty: r.availableBaseQty,
+      });
+    }
+    return Array.from(byReceipt.values());
+  }
+
   // --- Detail lines (the grid) ------------------------------------------------------------
 
   async listItems(inventoryReceiptId: number) {
@@ -390,6 +515,26 @@ export class InventoryReceiptService {
       const byId = new Map(poRows.map((r: any) => [Number(r.orderReceiptItemId), r.orderReceiptNo]));
       for (const r of clean) {
         if (r.orderReceiptItemId != null) r.orderReceiptNo = byId.get(Number(r.orderReceiptItemId)) ?? null;
+      }
+    }
+    // Related Receipt import — same "separate small follow-up query" shape as the orderReceiptNo
+    // lookup above, resolving each purchaseReceiptItemId-linked line's source receipt (ReceiptNo
+    // + ReceiptType, so the frontend can show a real label via getReceiptTypeConfig) for display.
+    const relatedSourceIds = clean.map((r: any) => r.purchaseReceiptItemId).filter((v: any) => v != null);
+    if (relatedSourceIds.length) {
+      const sourceRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT src."RecId" as "purchaseReceiptItemId", rec."ReceiptNo" as "sourceReceiptNo", rec."ReceiptType" as "sourceReceiptType"
+        FROM "IM_ReceiptItem" src
+        JOIN "IM_Receipt" rec ON rec."RecId" = src."InventoryReceiptId"
+        WHERE src."RecId" IN (${Prisma.join(relatedSourceIds)})
+      `);
+      const byId = new Map(sourceRows.map((r: any) => [Number(r.purchaseReceiptItemId), r]));
+      for (const r of clean) {
+        if (r.purchaseReceiptItemId != null) {
+          const src = byId.get(Number(r.purchaseReceiptItemId));
+          r.sourceReceiptNo = src?.sourceReceiptNo ?? null;
+          r.sourceReceiptType = src?.sourceReceiptType ?? null;
+        }
       }
     }
     // Variant breakdown read-back — same "separate small follow-up query" shape as the
@@ -430,12 +575,19 @@ export class InventoryReceiptService {
   // formula in unit-conversion.util.ts, not a second copy of purchase-order.service.ts's own
   // listPending logic. `requestedInventoryId`/`requestedUnitId` are the new receipt line's own
   // item/unit (needed to convert `requestedQty` into Base Unit the same way).
+  // `excludeItemId` — same purpose as assertReturnQty's own (see that method's comment): when
+  // re-validating a line that ALREADY holds this same orderReceiptItemId (updateItem editing an
+  // existing imported line), that line's own current quantity is itself part of the "already
+  // received" SUM below; excluding its own RecId is what lets an unchanged (or reduced) quantity
+  // keep passing, correctly capping only genuine increases. Omitted by createItem's own call
+  // site, where the row being inserted has no RecId yet.
   private async assertPendingQty(
     tx: Prisma.TransactionClient,
     orderReceiptItemId: number,
     requestedQty: number,
     requestedInventoryId: any,
     requestedUnitId: any,
+    excludeItemId?: number,
   ) {
     const poLineRows = await tx.$queryRaw<any[]>(Prisma.sql`
       SELECT poi."Quantity" as "orderQty",
@@ -445,19 +597,57 @@ export class InventoryReceiptService {
       WHERE poi."RecId" = ${orderReceiptItemId} AND poi."IsDeleted" = 0
       FOR UPDATE OF poi
     `);
-    if (!poLineRows.length) throw new BadRequestException('The originating Purchase Order line was not found.');
+    if (!poLineRows.length) throw new BadRequestException('The originating order line was not found.');
+    const excludeSql = excludeItemId !== undefined ? Prisma.sql`AND ri."RecId" != ${excludeItemId}` : Prisma.sql``;
     const receivedRows = await tx.$queryRaw<any[]>(Prisma.sql`
       SELECT COALESCE(SUM(
         ${baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
       ), 0) as "receivedBaseQty"
       FROM "IM_ReceiptItem" ri
       ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
-      WHERE ri."OrderReceiptItemId" = ${orderReceiptItemId} AND ri."IsDeleted" = 0
+      WHERE ri."OrderReceiptItemId" = ${orderReceiptItemId} AND ri."IsDeleted" = 0 ${excludeSql}
     `);
     const requestedBaseQty = await toBaseQuantity(this.prisma, requestedInventoryId, requestedUnitId, requestedQty);
     const pendingBaseQty = Number(poLineRows[0].orderBaseQty) - Number(receivedRows[0].receivedBaseQty);
     if (requestedBaseQty > pendingBaseQty) {
-      throw new BadRequestException(`Cannot receive this quantity — only ${pendingBaseQty} still pending (Base Unit) on this Purchase Order line.`);
+      throw new BadRequestException(`Cannot receive this quantity — only ${pendingBaseQty} still pending (Base Unit) on this order line.`);
+    }
+  }
+
+  // Workflow isolation (spec: "Purchase Receipt has no business role in the Subcontract Order
+  // workflow and must not be used as ... a receiving target"). assertPendingQty above only ever
+  // checked the QUANTITY still pending — nothing stopped a Purchase Receipt (or any other type)
+  // from calling createItem with an orderReceiptItemId belonging to a DIFFERENT order type's line
+  // (e.g. a Subcontract Order's), since that check is (correctly) type-agnostic by itself. This
+  // is the missing write-time pairing guard: order-types.config.ts's own receivingReceiptType is
+  // the single authoritative mapping (Purchase Order=1 -> Purchase Receipt=2, Subcontract
+  // Order=3 -> Outside Process Receive Receipt=11) — the same source purchase-order.service.ts's
+  // listPending() now reads for its own approval-gate/display-side filtering, so both the write
+  // path (here) and the read path can never drift apart into two different pairings. Also closes
+  // the Current-Account isolation gap this same "orderReceiptItemId" path had (mirrors
+  // assertRelatedImportSource's identical Current-Account check for the sibling
+  // "purchaseReceiptItemId" self-reference below) — a hand-crafted request naming another
+  // account's order line is rejected regardless of what the UI ever showed.
+  private async assertPendingSource(tx: Prisma.TransactionClient, inventoryReceiptId: number, orderReceiptItemId: number, receiptType: number) {
+    const rows = await tx.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        (SELECT "CurrentAccountId" FROM "IM_Receipt" WHERE "RecId" = ${inventoryReceiptId}) as "targetAccountId",
+        source_po."CurrentAccountId" as "sourceAccountId",
+        source_po."ReceiptType" as "sourceOrderType"
+      FROM "IM_OrderReceiptItem" source_oi
+      JOIN "IM_OrderReceipt" source_po ON source_po."RecId" = source_oi."OrderReceiptId"
+      WHERE source_oi."RecId" = ${orderReceiptItemId} AND source_oi."IsDeleted" = 0
+    `);
+    if (!rows.length) throw new BadRequestException('The originating order line was not found.');
+    const { targetAccountId, sourceAccountId, sourceOrderType } = rows[0];
+    if (targetAccountId == null || sourceAccountId == null || Number(targetAccountId) !== Number(sourceAccountId)) {
+      throw new BadRequestException('The originating order line belongs to a different Current Account and cannot be received.');
+    }
+    const expectedReceivingType = getOrderTypeConfig(Number(sourceOrderType))?.receivingReceiptType;
+    if (expectedReceivingType != null && Number(receiptType) !== expectedReceivingType) {
+      const orderLabel = getOrderTypeConfig(Number(sourceOrderType))?.label ?? `Order Type ${sourceOrderType}`;
+      const receivingLabel = getReceiptTypeConfig(expectedReceivingType)?.label ?? `Receipt Type ${expectedReceivingType}`;
+      throw new BadRequestException(`${orderLabel} lines can only be received via ${receivingLabel}.`);
     }
   }
 
@@ -467,12 +657,20 @@ export class InventoryReceiptService {
   // a Receipt line against its originating PO line's remaining quantity, this caps a Return line
   // against its originating Receipt line's remaining (received minus already-returned) quantity.
   // Available Return Quantity = Received Quantity - Previously Returned Quantity (spec formula).
+  // `excludeItemId` — when re-validating a line that ALREADY holds this same purchaseReceiptItemId
+  // (i.e. updateItem editing an existing imported line), that line's own current quantity is
+  // itself part of the "already consumed" SUM below; excluding its own RecId from that SUM is
+  // what lets an unchanged (or reduced) quantity keep passing, and correctly caps only genuine
+  // increases against what's ACTUALLY still available to everyone else. Omitted (undefined) by
+  // createItem's own call site, where the row being inserted has no RecId yet — behavior there
+  // is completely unchanged.
   private async assertReturnQty(
     tx: Prisma.TransactionClient,
     purchaseReceiptItemId: number,
     requestedQty: number,
     requestedInventoryId: any,
     requestedUnitId: any,
+    excludeItemId?: number,
   ) {
     const sourceRows = await tx.$queryRaw<any[]>(Prisma.sql`
       SELECT ri."Quantity" as "receivedQty",
@@ -483,18 +681,63 @@ export class InventoryReceiptService {
       FOR UPDATE OF ri
     `);
     if (!sourceRows.length) throw new BadRequestException('The originating receipt line was not found.');
+    const excludeSql = excludeItemId !== undefined ? Prisma.sql`AND ret."RecId" != ${excludeItemId}` : Prisma.sql``;
     const returnedRows = await tx.$queryRaw<any[]>(Prisma.sql`
       SELECT COALESCE(SUM(
         ${baseQuantitySql(Prisma.sql`ret."Quantity"`, Prisma.sql`ret."InventoryId"`, Prisma.sql`ret."UnitId"`, 'ret')}
       ), 0) as "returnedBaseQty"
       FROM "IM_ReceiptItem" ret
       ${baseQuantityJoinSql(Prisma.sql`ret."InventoryId"`, Prisma.sql`ret."UnitId"`, 'ret')}
-      WHERE ret."PurchaseReceiptItemId" = ${purchaseReceiptItemId} AND ret."IsDeleted" = 0
+      WHERE ret."PurchaseReceiptItemId" = ${purchaseReceiptItemId} AND ret."IsDeleted" = 0 ${excludeSql}
     `);
     const requestedBaseQty = await toBaseQuantity(this.prisma, requestedInventoryId, requestedUnitId, requestedQty);
     const availableBaseQty = Number(sourceRows[0].receivedBaseQty) - Number(returnedRows[0].returnedBaseQty);
     if (requestedBaseQty > availableBaseQty) {
       throw new BadRequestException(`Cannot return this quantity — only ${availableBaseQty} still available to return (Base Unit) against this receipt line.`);
+    }
+  }
+
+  // Current Account isolation (spec: "backend must enforce Current Account isolation so
+  // receipts from another Current Account cannot be imported even if the API is called
+  // manually") — a purchaseReceiptItemId link is only ever valid when its source line's own
+  // receipt shares the SAME Current Account as the receipt being written into. listRelatedImportable()
+  // already only OFFERS same-account lines, but that's a display-side filter only; this is the
+  // actual write-time enforcement, so a hand-crafted request naming another account's line is
+  // rejected here regardless of what the UI ever showed. For Purchase Return itself (target
+  // header's own ReceiptType===122 — the only screen with a frontend for this feature), also
+  // confines the source to RELATED_IMPORT_SOURCE_TYPES (Receipt Type 2/11 — Purchase Receipt and
+  // Outside Process Receive Receipt), matching what listRelatedImportable() offers; every other
+  // receipt type reusing this same purchaseReceiptItemId column (including Purchase Receipt
+  // itself, type 2 — it is a valid SOURCE for this workflow but was never meant to be its
+  // target) keeps today's fully-generic behavior for source type, since no other screen has a
+  // picker for this column. The target's ReceiptType is read fresh from "IM_Receipt" here (not
+  // taken as a caller-supplied parameter) so both createItem and updateItem share this one check
+  // unchanged — the header row is always the single source of truth for "what kind of receipt
+  // this is" (same convention inventory-card.service.ts's own stockSumSql established), never a
+  // line's own denormalized copy, which is the one column documented elsewhere in this file as
+  // sometimes stale.
+  private async assertRelatedImportSource(
+    tx: Prisma.TransactionClient,
+    inventoryReceiptId: number,
+    purchaseReceiptItemId: number,
+  ) {
+    const rows = await tx.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        (SELECT "CurrentAccountId" FROM "IM_Receipt" WHERE "RecId" = ${inventoryReceiptId}) as "targetAccountId",
+        (SELECT "ReceiptType" FROM "IM_Receipt" WHERE "RecId" = ${inventoryReceiptId}) as "targetReceiptType",
+        source_rec."CurrentAccountId" as "sourceAccountId",
+        source_rec."ReceiptType" as "sourceReceiptType"
+      FROM "IM_ReceiptItem" source_ri
+      JOIN "IM_Receipt" source_rec ON source_rec."RecId" = source_ri."InventoryReceiptId"
+      WHERE source_ri."RecId" = ${purchaseReceiptItemId} AND source_ri."IsDeleted" = 0
+    `);
+    if (!rows.length) throw new BadRequestException('The originating receipt line was not found.');
+    const { targetAccountId, targetReceiptType, sourceAccountId, sourceReceiptType } = rows[0];
+    if (targetAccountId == null || sourceAccountId == null || Number(targetAccountId) !== Number(sourceAccountId)) {
+      throw new BadRequestException('The originating receipt line belongs to a different Current Account and cannot be imported.');
+    }
+    if (Number(targetReceiptType) === 122 && !(RELATED_IMPORT_SOURCE_TYPES as readonly number[]).includes(Number(sourceReceiptType))) {
+      throw new BadRequestException('The originating receipt is not an eligible source type for Purchase Return import.');
     }
   }
 
@@ -521,6 +764,7 @@ export class InventoryReceiptService {
 
     if (effective['orderReceiptItemId']) {
       const rows = await this.prisma.$transaction(async (tx) => {
+        await this.assertPendingSource(tx, inventoryReceiptId, Number(effective['orderReceiptItemId']), receiptType);
         await this.assertPendingQty(
           tx,
           Number(effective['orderReceiptItemId']),
@@ -535,6 +779,7 @@ export class InventoryReceiptService {
 
     if (effective['purchaseReceiptItemId']) {
       const rows = await this.prisma.$transaction(async (tx) => {
+        await this.assertRelatedImportSource(tx, inventoryReceiptId, Number(effective['purchaseReceiptItemId']));
         await this.assertReturnQty(
           tx,
           Number(effective['purchaseReceiptItemId']),
@@ -560,7 +805,7 @@ export class InventoryReceiptService {
   // `inventoryReceiptId` is optional so any caller that omits it keeps today's exact behavior;
   // both controllers (Purchase Receipt's dedicated route and the generic 16-type route) now pass
   // it, so the check is active everywhere in practice.
-  async updateItem(itemId: number, dto: Record<string, any>, userId: number, inventoryReceiptId?: number) {
+  async updateItem(itemId: number, dto: Record<string, any>, userId: number, inventoryReceiptId?: number, receiptType: number = RECEIPT_TYPE) {
     const toDb = await this.itemToDb();
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
     const effective = { ...dto };
@@ -581,6 +826,47 @@ export class InventoryReceiptService {
       await assertValidItemUnit(this.prisma, invId, effective.unitId);
       await assertHasBaseUnit(this.prisma, invId);
     }
+
+    // Re-validation gap fix — covers BOTH traceability self-references a line can carry:
+    // purchaseReceiptItemId (Related Receipt import — Purchase Return sourcing from Purchase
+    // Receipt/Outside Process Receive Receipt) and orderReceiptItemId (Pending Orders import —
+    // any order type's own correct receiving screen, per order-types.config.ts's
+    // receivingReceiptType/assertPendingSource). createItem's own branches for both already
+    // guard this at import time; without this, a user could import an eligible quantity and then
+    // raise it past the source's remaining amount, past another Current Account's line, or (for
+    // orderReceiptItemId) past what the order type's OWN receiving screen is even authorized to
+    // consume — purely through updateItem, since neither check re-ran on a later edit before now.
+    // Only reads the extra row (and only re-validates) when this edit could actually change what's
+    // being consumed — quantity, unit, item, or either link — so an edit to an unrelated field
+    // (Explanation, SpecialCode, ...) costs nothing extra and normal, never-imported lines never
+    // reach this branch at all (spec Section 6: unaffected). A line is only ever linked to ONE of
+    // these two sources in practice (Pending Orders vs Related Receipt import are mutually
+    // exclusive import paths), so re-validating whichever is actually set is enough.
+    const touchesLinkedFields =
+      effective.purchaseReceiptItemId !== undefined ||
+      effective.orderReceiptItemId !== undefined ||
+      effective.quantity !== undefined ||
+      effective.unitId !== undefined ||
+      effective.inventoryId !== undefined;
+    let effectivePurchaseReceiptItemId: any = effective.purchaseReceiptItemId;
+    let effectiveOrderReceiptItemId: any = effective.orderReceiptItemId;
+    let currentRow: { purchaseReceiptItemId: number | null; orderReceiptItemId: number | null; quantity: any; inventoryId: any; unitId: any } | undefined;
+    if (touchesLinkedFields) {
+      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT "PurchaseReceiptItemId" as "purchaseReceiptItemId", "OrderReceiptItemId" as "orderReceiptItemId",
+          "Quantity" as "quantity", "InventoryId" as "inventoryId", "UnitId" as "unitId"
+        FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId} AND "IsDeleted" = 0 ${owner}
+      `);
+      if (!rows.length) throw new NotFoundException('Line not found');
+      currentRow = rows[0];
+      // A dto that doesn't mention a given link field at all (the overwhelming majority of real
+      // edits — quantity/unit/item changes on an already-imported line) keeps whatever link the
+      // row already has; only an explicit value in the dto (including explicit null, e.g.
+      // clearRelatedImportedLines's detach call) changes it.
+      if (effectivePurchaseReceiptItemId === undefined) effectivePurchaseReceiptItemId = currentRow!.purchaseReceiptItemId;
+      if (effectiveOrderReceiptItemId === undefined) effectiveOrderReceiptItemId = currentRow!.orderReceiptItemId;
+    }
+
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     if (!cols.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId} ${owner}`);
@@ -588,11 +874,48 @@ export class InventoryReceiptService {
       return sanitizeRawRow(rows[0]);
     }
     const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, effective[camel(c)])}`));
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+    const doUpdate = (client: Prisma.TransactionClient | PrismaService) => client.$queryRaw<any[]>(Prisma.sql`
       UPDATE "IM_ReceiptItem" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
       WHERE "RecId" = ${itemId} AND "IsDeleted" = 0 ${owner}
       RETURNING ${ITEM_SELECT}
     `);
+
+    // effectivePurchaseReceiptItemId/effectiveOrderReceiptItemId are only ever null/undefined here
+    // when the line either never had that link, or this edit explicitly clears it (dto:
+    // { purchaseReceiptItemId: null } / { orderReceiptItemId: null }) — removing a link needs no
+    // quantity re-validation, same as a normal line. A line only ever carries one of these two
+    // links in practice, so at most one branch below actually runs.
+    if (effectivePurchaseReceiptItemId != null) {
+      const requestedQty = Number(effective.quantity !== undefined ? effective.quantity : currentRow!.quantity ?? 0);
+      const requestedInventoryId = effective.inventoryId !== undefined ? effective.inventoryId : currentRow!.inventoryId;
+      const requestedUnitId = effective.unitId !== undefined ? effective.unitId : currentRow!.unitId;
+      const rows = await this.prisma.$transaction(async (tx) => {
+        if (inventoryReceiptId !== undefined) {
+          await this.assertRelatedImportSource(tx, inventoryReceiptId, Number(effectivePurchaseReceiptItemId));
+        }
+        await this.assertReturnQty(tx, Number(effectivePurchaseReceiptItemId), requestedQty, requestedInventoryId, requestedUnitId, itemId);
+        return doUpdate(tx);
+      });
+      if (!rows.length) throw new NotFoundException('Line not found');
+      return sanitizeRawRow(rows[0]);
+    }
+
+    if (effectiveOrderReceiptItemId != null) {
+      const requestedQty = Number(effective.quantity !== undefined ? effective.quantity : currentRow!.quantity ?? 0);
+      const requestedInventoryId = effective.inventoryId !== undefined ? effective.inventoryId : currentRow!.inventoryId;
+      const requestedUnitId = effective.unitId !== undefined ? effective.unitId : currentRow!.unitId;
+      const rows = await this.prisma.$transaction(async (tx) => {
+        if (inventoryReceiptId !== undefined) {
+          await this.assertPendingSource(tx, inventoryReceiptId, Number(effectiveOrderReceiptItemId), receiptType);
+        }
+        await this.assertPendingQty(tx, Number(effectiveOrderReceiptItemId), requestedQty, requestedInventoryId, requestedUnitId, itemId);
+        return doUpdate(tx);
+      });
+      if (!rows.length) throw new NotFoundException('Line not found');
+      return sanitizeRawRow(rows[0]);
+    }
+
+    const rows = await doUpdate(this.prisma);
     if (!rows.length) throw new NotFoundException('Line not found');
     return sanitizeRawRow(rows[0]);
   }

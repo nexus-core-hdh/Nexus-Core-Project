@@ -7,11 +7,17 @@ export interface WorkspaceTab {
   key: string;
   href: string;
   dirty: boolean;
+  /** Optional explicit display title, set by the screen that owns this tab
+   *  (e.g. once a record's number/name is known) — takes priority over any
+   *  menu/route-derived title. See lib/workspace/resolve-tab-title.ts and
+   *  hooks/use-workspace-tab-title.ts. Undefined means "resolve it". */
+  title?: string;
 }
 
 interface OpenTabInput {
   key: string;
   href: string;
+  title?: string;
 }
 
 /** A screen saved into My Menu. A tab is "pinned" iff its key appears here — there is no separate per-tab flag, so pin state can never drift out of sync with My Menu. */
@@ -43,6 +49,7 @@ interface WorkspaceState extends WorkspacePersisted {
   reorderMyMenu: (key: string, direction: "up" | "down") => void;
   setDirty: (key: string, dirty: boolean) => void;
   registerSaveHandler: (key: string, handler: SaveHandler | null) => void;
+  setTabTitle: (key: string, title: string | undefined) => void;
 }
 
 // Debounced so rapid tab switching / pinning doesn't fire a PATCH per click — the
@@ -119,7 +126,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const existing = get().tabs.find((t) => t.key === tab.key);
         if (existing) {
           set({
-            tabs: get().tabs.map((t) => (t.key === tab.key ? { ...t, href: tab.href } : t)),
+            // A reopen without an explicit title keeps whatever title the tab
+            // already had (e.g. one set by useWorkspaceTabTitle) rather than
+            // wiping it back to "resolve automatically".
+            tabs: get().tabs.map((t) =>
+              t.key === tab.key ? { ...t, href: tab.href, title: tab.title ?? t.title } : t
+            ),
             activeKey: tab.key,
           });
           return;
@@ -178,6 +190,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       registerSaveHandler: (key, handler) =>
         set((state) => ({ saveHandlers: { ...state.saveHandlers, [key]: handler ?? undefined } })),
+
+      setTabTitle: (key, title) =>
+        set((state) => {
+          const current = state.tabs.find((t) => t.key === key);
+          if (!current || current.title === title) return state;
+          return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, title } : t)) };
+        }),
     }),
     {
       name: "nexuscore-workspace-tabs",

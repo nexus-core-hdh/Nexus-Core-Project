@@ -87,6 +87,7 @@ import {
   Ribbon,
   Sliders,
   Truck,
+  Factory,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -267,6 +268,7 @@ const iconMap: Record<string, LucideIcon> = {
   Boxes: Boxes,
   Ribbon: Ribbon,
   Sliders: Sliders,
+  Factory: Factory,
 };
 
 // Helper function to get icon component from string name

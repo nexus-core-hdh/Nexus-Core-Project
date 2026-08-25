@@ -12,14 +12,13 @@ import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
 // already query individually, not a new table or materialized view: nothing here can drift
 // out of sync with those services, because it reads the exact same rows they do.
 //
-// Unit resolution differs per card, matching how each one's own screen already stores it —
-// this is deliberately NOT unified, since unifying it would mean changing Fabric/Yarn Card's
-// existing behavior, which is explicitly off-limits:
-//  - Fabric & Trim: no direct Unit column — resolved from their own "unit" satellite tab
-//    (IM_ItemUnitItemSize -> MD_UnitSetItem), preferring whichever row is flagged the item's
-//    Main Unit, falling back to the first one.
-//  - Yarn: IM_Item.UnitId is a direct FK straight to MD_UnitSet (its own screen's "Unit"
-//    field resolves the same way — see yarn-cards/page.tsx).
+// Unit resolution is unified across all three cards: the item's Base Unit, resolved the same
+// way for Fabric, Yarn and Trim — from the shared "unit" satellite tab (IM_ItemUnitItemSize
+// -> MD_UnitSetItem, the same table yarn-card-satellites.service.ts's own 'unit' tab writes),
+// preferring whichever row is flagged the item's Main Unit (IsMainUnit), falling back to the
+// first one. This is the same Base Unit concept the "Base Unit + Unit Conversion" feature
+// (unit-conversion.util.ts) uses everywhere else — Yarn previously showed IM_Item.UnitId's
+// MD_UnitSet name instead, a different/legacy field that isn't the configured Base Unit.
 //
 // InsertedBy resolves against the real Users/Auth table ("User", the same one every other
 // part of NexusCore signs in against) via IM_Item.InsertedByUserId — a separate, additive
@@ -149,13 +148,20 @@ export class InventoryCardService {
         i."InventoryCode" AS "inventoryCode",
         i."InventoryName" AS "inventoryName",
         'Yarn' AS "inventoryType",
-        COALESCE(us."SetName", '') AS "unit",
+        COALESCE(unit_lookup."unitName", '') AS "unit",
         COALESCE(stock."qty", 0) AS "stockOnHand",
         last_price."price" AS "lastPurchasePrice",
         i."InsertedAt" AS "insertedAt",
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
-      LEFT JOIN "MD_UnitSet" us ON us."RecId" = i."UnitId"
+      LEFT JOIN LATERAL (
+        SELECT usi."UnitName" AS "unitName"
+        FROM "IM_ItemUnitItemSize" iuis
+        JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+        WHERE iuis."InventoryId" = i."RecId" AND iuis."IsDeleted" = 0
+        ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC
+        LIMIT 1
+      ) unit_lookup ON true
       ${this.stockLateral()}
       ${this.lastPurchasePriceLateral()}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"

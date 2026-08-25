@@ -5,7 +5,7 @@
 // optional `primary` scoping) and each screen persists under its own UserSettings.tablePreferences
 // key, so worklists never leak across screens even though the source union is shared.
 export type WorklistSource =
-  | "purchase-receipt" | "yarn-card" | "fabric-card" | "current-account" | "warehouse" | "financial-receipt"
+  | "purchase-receipt" | "purchase-receipt-item" | "yarn-card" | "fabric-card" | "current-account" | "warehouse" | "financial-receipt"
   | "trim-card" | "trim-inventory-card" | "purchase-order" | "contract" | "size-set" | "unit-set" | "inventory-card";
 
 export interface WorklistField {

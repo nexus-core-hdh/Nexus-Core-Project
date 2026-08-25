@@ -21,9 +21,15 @@ export class ApprovalConfigurationService {
   async list() {
     const [screens, configs] = await Promise.all([
       this.prisma.menuItem.findMany({
-        // The General Settings screen itself isn't a transactional screen — excluded so it
-        // never appears as a configurable target of its own configuration grid.
-        where: { group: 'Legacy ERP', href: { not: '/dashboard/legacy-erp/general-settings' } },
+        // Top-level Legacy ERP screens, PLUS their children (e.g. the 18 Inventory Receipts
+        // types, each its own ?receiptType=N screen) — children carry group:null/parentId set
+        // per the seeder convention, so they need their own OR branch here. href '#' is a
+        // folder/submenu placeholder, not a real screen (e.g. "Inventory Receipts" itself) —
+        // excluded alongside General Settings, which isn't a transactional screen either.
+        where: {
+          OR: [{ group: 'Legacy ERP' }, { parent: { group: 'Legacy ERP' } }],
+          href: { notIn: ['#', '/dashboard/legacy-erp/general-settings'] },
+        },
         select: { title: true, href: true },
         orderBy: { title: 'asc' },
       }),

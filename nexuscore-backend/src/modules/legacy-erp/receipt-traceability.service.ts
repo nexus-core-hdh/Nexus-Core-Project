@@ -4,16 +4,22 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getReceiptTypeConfig } from './receipt-types.config';
 
-// Universal Action Menu -> "Return / Purchase Receipt" submenu. The one shared implementation
-// of the Purchase Order -> Purchase Receipt -> Received Connection Receipt -> Purchase Return
-// traceability chain, reused by both PurchaseOrderService and InventoryReceiptService so neither
-// duplicates the other's SQL. A standalone, dependency-free service (only PrismaService) so both
-// callers can inject it without a circular dependency between them.
+// Universal Action Menu -> "Return / Related Receipt" submenu. The one shared implementation of
+// the Order -> Receipt -> Received Connection -> Return traceability chain, reused by both
+// PurchaseOrderService (Purchase Order type 1, Subcontract Order type 3 — see order-types.config
+// .ts — and any future order type sharing IM_OrderReceipt) and InventoryReceiptService so neither
+// duplicates the other's SQL, and no order type duplicates this walk for itself. A standalone,
+// dependency-free service (only PrismaService) so both callers can inject it without a circular
+// dependency between them.
 //
 // The chain is walked purely off the real, pre-existing "IM_ReceiptItem"."PurchaseReceiptItemId"
 // self-reference column (see inventory-receipt.service.ts's own comment on it) and the existing
-// "OrderReceiptItemId" column that already links a Purchase Receipt line back to its Purchase
-// Order line. No new column, no new table.
+// "OrderReceiptItemId" column that already links a receipt line back to its order line — both are
+// followed strictly by id (the given order's own OrderReceiptId, and whatever real chain of
+// receipt-to-receipt RecIds hangs off it), never by receipt type, so a given order's family only
+// ever contains receipts that genuinely reference ITS OWN lines — e.g. a Subcontract Order's
+// family can only ever contain the Outside Process Receive/Return receipts actually created
+// against it, never an unrelated Purchase Receipt, regardless of which order type asks.
 export interface RelatedReceiptRow {
   id: number;
   receiptNo: string;
@@ -26,14 +32,19 @@ export interface RelatedReceiptRow {
 export class ReceiptTraceabilityService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Always the authoritative receipt-types.config.ts label for the row's own real ReceiptType —
+  // no per-type special-casing here (a prior revision hardcoded `receiptType === 2 ? 'Purchase
+  // Receipt' : ...`, which happened to match RECEIPT_TYPES' own entry for 2 but was a second,
+  // driftable copy of it; removed so this can never say "Purchase Receipt" for anything that
+  // isn't genuinely receiptType 2).
   private labelFor(receiptType: number): string {
-    return receiptType === 2 ? 'Purchase Receipt' : (getReceiptTypeConfig(receiptType)?.label ?? `Receipt Type ${receiptType}`);
+    return getReceiptTypeConfig(receiptType)?.label ?? `Receipt Type ${receiptType}`;
   }
 
-  // Core: every receipt (type 2 Purchase Receipt, 11 Received Connection, 122 Purchase Return,
-  // etc.) tracing back to any of the given Purchase Order ids, via PO line -> Purchase Receipt
-  // line (OrderReceiptItemId) -> any number of further PurchaseReceiptItemId hops (Received
-  // Connection, Return, ...).
+  // Core: every receipt (Purchase Receipt, Outside Process Receive/Return, Purchase Return,
+  // etc. — whichever ones genuinely trace back) tracing back to any of the given order ids, via
+  // order line -> receipt line (OrderReceiptItemId) -> any number of further
+  // PurchaseReceiptItemId hops (received-connection, return, ...).
   private async familyByPurchaseOrderIds(poIds: number[]): Promise<RelatedReceiptRow[]> {
     if (!poIds.length) return [];
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -62,14 +73,15 @@ export class ReceiptTraceabilityService {
     return sanitizeRawRow(rows).map((r: any) => ({ ...r, label: this.labelFor(r.receiptType) }));
   }
 
-  // Entry point from the Purchase Order screen — every receipt tracing back to this one PO.
+  // Entry point from an order screen (Purchase Order type 1, Subcontract Order type 3, ...) —
+  // every receipt tracing back to this one order, by its own id only.
   async listForPurchaseOrder(purchaseOrderId: number): Promise<RelatedReceiptRow[]> {
     return this.familyByPurchaseOrderIds([purchaseOrderId]);
   }
 
   // Entry point from a Receipt/Return/Received-Connection screen (any ReceiptType) — walks back
-  // up however many PurchaseReceiptItemId hops exist to find the root Purchase Receipt(s), then
-  // resolves the originating Purchase Order(s) from there, then returns that PO's full family
+  // up however many PurchaseReceiptItemId hops exist to find the root receipt(s), then
+  // resolves the originating order(s) from there, then returns that order's full family
   // minus the record currently being viewed. A receipt never linked to a Purchase Order (created
   // standalone, not via Pending Orders import) legitimately has no family — returns [].
   async listForReceipt(receiptId: number, receiptType: number): Promise<RelatedReceiptRow[]> {

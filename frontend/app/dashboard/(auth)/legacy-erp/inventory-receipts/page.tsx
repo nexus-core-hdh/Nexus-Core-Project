@@ -25,13 +25,15 @@ import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText, FieldLabel } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
-import { InventoryReceiptLineGrid, type InventoryReceiptLineGridHandle, type ImportedPendingLine } from "./_components/inventory-receipt-line-grid";
+import { InventoryReceiptLineGrid, type InventoryReceiptLineGridHandle, type ImportedPendingLine, type ImportedRelatedLine } from "./_components/inventory-receipt-line-grid";
 import { PendingOrdersDialog } from "./_components/pending-orders-dialog";
+import { RelatedReceiptImportDialog } from "./_components/related-receipt-import-dialog";
 import { CustomizedFieldsTab } from "./_components/customized-fields-tab";
 import { getReceiptTypeConfig } from "@/lib/legacy-erp/receipt-types";
 import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
 import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
+import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
 
 // Inventory Receipt — a full ERP transaction screen mirroring the established Purchase Order
 // screen architecture (Workspace tab, Save-required gating, toolbar search/new/save), but
@@ -107,9 +109,11 @@ export default function InventoryReceiptPage() {
   // every other "Receipt Screen Replication" type, so each type's New-record draft stays isolated.
   const { clearDraft } = useDraftForm({ storageKey: `inventoryReceiptDraft_${receiptType}`, enabled: receiptId == null, form, setForm });
   const lineGridRef = useRef<InventoryReceiptLineGridHandle>(null);
-  // Pending Orders (Current Account -> right-click) — Purchase Order only relates to the
-  // genuine Purchase Receipt (ReceiptType=2), not the other 16 Receipt Screen Replication types
-  // this same page also serves.
+  // Pending Orders (Current Account -> right-click) — Purchase Order (type 1) sources Purchase
+  // Receipt (type 2); Subcontract Order (type 3 — see order-types.config.ts) sources Outside
+  // Process Receive Receipt (type 11), the same pairing assertRelatedImportSource's own comment
+  // documents for the Related Receipt workflow. Neither applies to the other 15 Receipt Screen
+  // Replication types this same page also serves.
   const [pendingOrdersOpen, setPendingOrdersOpen] = useState(false);
   const [alreadyImportedIds, setAlreadyImportedIds] = useState<Set<number>>(new Set());
   const openPendingOrders = () => {
@@ -117,6 +121,45 @@ export default function InventoryReceiptPage() {
     setPendingOrdersOpen(true);
   };
   const importPendingLines = (lines: ImportedPendingLine[]) => lineGridRef.current?.importLines(lines);
+
+  // Import Related Receipt (Current-Account-aware) — Purchase Return (ReceiptType=122) only.
+  // Sources are Receipt Type 2 (Purchase Receipt) and Receipt Type 11 (Outside Process Receive
+  // Receipt); Purchase Return is the only TARGET screen for this workflow — see
+  // inventory-receipt.service.ts's assertRelatedImportSource for the matching backend guard.
+  // Deliberately always-enabled (see use-universal-actions.ts's own comment): opening with no
+  // Current Account selected shows the required message instead of opening the dialog, rather
+  // than being unclickable.
+  const [relatedImportOpen, setRelatedImportOpen] = useState(false);
+  const [alreadyImportedRelatedIds, setAlreadyImportedRelatedIds] = useState<Set<number>>(new Set());
+  const openRelatedImport = () => {
+    if (!form.currentAccountId) {
+      toast.error("Select a Current Account first to view related receipts.");
+      return;
+    }
+    setAlreadyImportedRelatedIds(new Set(lineGridRef.current?.getImportedPurchaseReceiptItemIds() ?? []));
+    setRelatedImportOpen(true);
+  };
+  const importRelatedLines = (lines: ImportedRelatedLine[]) => lineGridRef.current?.importRelatedLines(lines);
+
+  // Current Account change handling (spec: "Clear/invalidate previously selected related
+  // receipt lines that belong to the old Current Account... Do not allow stale or cross-account
+  // source selections to remain silently active"). Fires only from the field's own onSelect/
+  // onClear (genuine user interaction), never from programmatic form hydration on load. Closes
+  // the dialog (its own next open re-fetches for whichever account is now selected — see its
+  // `[open, currentAccountId]` effect) and invalidates any already-imported related lines via
+  // the grid handle (see clearRelatedImportedLines's own doc comment for the drop-vs-detach
+  // distinction). Scoped to receiptType===122 like the rest of this feature.
+  const onCurrentAccountChanged = () => {
+    if (receiptType !== 122) return;
+    setRelatedImportOpen(false);
+    lineGridRef.current?.clearRelatedImportedLines().then(({ removedDrafts, detachedLines }) => {
+      if (removedDrafts || detachedLines) {
+        toast.message("Current Account changed", {
+          description: "Related-receipt-imported lines from the previous Current Account were cleared.",
+        });
+      }
+    });
+  };
 
   // General Settings -> Approval Configuration — now generalized to every Receipt Screen
   // Replication type this page serves (see screenKeyFor() above and receipt-type.controller.ts's
@@ -349,9 +392,15 @@ export default function InventoryReceiptPage() {
     approvalRequired, approvalStatus, approving,
     onApprove: runApproveReceipt,
     onReject: () => { setRejectRemarks(""); setRejectOpen(true); },
-    pendingOrders: receiptType === 2 ? { onOpen: openPendingOrders, disabled: !form.currentAccountId } : undefined,
+    pendingOrders: (receiptType === 2 || receiptType === 11) ? { onOpen: openPendingOrders, disabled: !form.currentAccountId } : undefined,
+    relatedReceiptImport: receiptType === 122 ? { onOpen: openRelatedImport } : undefined,
     relatedReceipts,
     onOpenRelatedReceipt: openRelatedReceipt,
+    // Overrides useUniversalActions' own "Return / Purchase Receipt" default (only accurate when
+    // this screen genuinely IS Purchase Receipt) with this screen's own real type label — e.g.
+    // "Return / Outside Process Receive Receipt" when receiptType===11, so a Subcontract Order's
+    // receiving screen never shows Purchase Receipt wording it has no business role in.
+    relatedReceiptsLabel: `Return / ${cfg.label}`,
     onDelete: receiptId ? () => setDeleteConfirmOpen(true) : undefined,
   });
   useUniversalActionShortcuts(universalActions);
@@ -374,6 +423,9 @@ export default function InventoryReceiptPage() {
   // endpoint.
   const statusLabel = form.isApproved ? "Approved" : "Unapproved";
   const titleText = receiptId ? `${cfg.label} [${receiptType}-${cfg.label}] [${statusLabel}] - ${form.receiptNo}` : `New ${cfg.label}`;
+  // Puts this same titleText onto the actual Workspace tab (it already existed for the in-page
+  // header above) — a no-op outside the workspace tab stack, see use-workspace-tab-title.ts.
+  useWorkspaceTabTitle(titleText);
 
   return (
     <RowContextMenu actions={universalActions}>
@@ -535,8 +587,8 @@ export default function InventoryReceiptPage() {
                     displayValue={form.currentAccountLabel ?? ""}
                     fetchOptions={(term) => legacyErpApi.accounts.list(term) as Promise<any[]>}
                     lookupPath={CURRENT_ACCOUNTS_LIST_PATH}
-                    onSelect={(o) => setForm((p) => ({ ...p, currentAccountId: String(o.id), currentAccountLabel: `${o.code} — ${o.name}` }))}
-                    onClear={() => setForm((p) => ({ ...p, currentAccountId: "", currentAccountLabel: "" }))}
+                    onSelect={(o) => { setForm((p) => ({ ...p, currentAccountId: String(o.id), currentAccountLabel: `${o.code} — ${o.name}` })); onCurrentAccountChanged(); }}
+                    onClear={() => { setForm((p) => ({ ...p, currentAccountId: "", currentAccountLabel: "" })); onCurrentAccountChanged(); }}
                   />
                   <MasterAutocompleteField
                     label="Warehouse"
@@ -600,13 +652,30 @@ export default function InventoryReceiptPage() {
         </div>
       </Tabs>
 
-      {receiptType === 2 && (
+      {(receiptType === 2 || receiptType === 11) && (
         <PendingOrdersDialog
           open={pendingOrdersOpen}
           onOpenChange={setPendingOrdersOpen}
           currentAccountId={form.currentAccountId ? Number(form.currentAccountId) : null}
           alreadyImportedIds={alreadyImportedIds}
           onConfirm={importPendingLines}
+          fetchPending={
+            receiptType === 11
+              ? (id) => legacyErpApi.orders(3).listPending(id, 11)
+              : undefined
+          }
+          sourceLabel={receiptType === 11 ? "Subcontract Order" : undefined}
+        />
+      )}
+
+      {receiptType === 122 && (
+        <RelatedReceiptImportDialog
+          open={relatedImportOpen}
+          onOpenChange={setRelatedImportOpen}
+          currentAccountId={form.currentAccountId ? Number(form.currentAccountId) : null}
+          alreadyImportedIds={alreadyImportedRelatedIds}
+          onConfirm={importRelatedLines}
+          fetchEligible={(id) => legacyErpApi.receipts(122).listRelatedImportable(id)}
         />
       )}
 

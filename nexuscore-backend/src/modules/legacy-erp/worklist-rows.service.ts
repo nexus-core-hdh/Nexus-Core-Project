@@ -56,6 +56,12 @@ const LIST_SCREEN_TABLES: Record<string, UnifiedGridConfig> = {
     table: 'IM_OrderReceipt', label: 'Purchase Orders List', extraWhere: Prisma.sql`AND "ReceiptType" = 1`,
     searchColumns: ['ReceiptNo', 'DocumentNo'], orderBy: 'ReceiptNo', orderDir: 'DESC',
   },
+  // Order Screen Replication's second entry — same IM_OrderReceipt table as Purchase Order
+  // immediately above, just filtered to ReceiptType=3 (see order-types.config.ts).
+  'subcontract-order-list': {
+    table: 'IM_OrderReceipt', label: 'Subcontract Orders List', extraWhere: Prisma.sql`AND "ReceiptType" = 3`,
+    searchColumns: ['ReceiptNo', 'DocumentNo'], orderBy: 'ReceiptNo', orderDir: 'DESC',
+  },
   'size-set-list': {
     table: 'MA_SizeSet', label: 'Sizes List',
     searchColumns: ['Code', 'Name'], orderBy: 'Code', orderDir: 'ASC',
@@ -118,6 +124,13 @@ interface RequestedField {
 type ReceiptScope = 'any' | number;
 const SOURCE_TABLE: Record<WorklistSourceKey, { table: string; filter?: Prisma.Sql; receiptScope?: ReceiptScope }> = {
   'purchase-receipt': { table: 'IM_Receipt', receiptScope: 'any' },
+  // Related Receipt Import's line-level source (see worklist-fields.service.ts). Only ever
+  // resolved client-side against that dialog's own already-loaded rows today — this entry exists
+  // purely to satisfy this Record's completeness, same "ready if a relationship is added later"
+  // reasoning as trim-card/contract/etc. below: no RELATIONSHIPS entry references it, so a
+  // Receipt & Master Data worklist that picks one of its fields renders it blank (same documented
+  // rule as any other unrelated (primary, source) pair) rather than resolving incorrectly.
+  'purchase-receipt-item': { table: 'IM_ReceiptItem' },
   'yarn-card': { table: 'IM_Item', filter: Prisma.sql`"AccessCode" = 'YARN'` },
   'fabric-card': { table: 'IM_Item', filter: Prisma.sql`"AccessCode" = 'FABRIC'` },
   'current-account': { table: 'FI_Account' },
@@ -182,6 +195,9 @@ const PRIMARY_SELF_SOURCE: Partial<Record<string, WorklistSourceKey>> = {
   'warehouse-list': 'warehouse',
   'trim-card-list': 'trim-card',
   'purchase-order-list': 'purchase-order',
+  // Same self-source reasoning — 'purchase-order' fields (identical HEADER_COLUMNS, same
+  // IM_OrderReceipt table) already exist on Subcontract Order's own row too.
+  'subcontract-order-list': 'purchase-order',
   'size-set-list': 'size-set',
   'unit-set-list': 'unit-set',
   'purchase-contract-list': 'contract',

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { HEADER_COLUMNS as PURCHASE_RECEIPT_COLUMNS } from './inventory-receipt.service';
+import { HEADER_COLUMNS as PURCHASE_RECEIPT_COLUMNS, ITEM_COLUMNS as PURCHASE_RECEIPT_ITEM_COLUMNS } from './inventory-receipt.service';
 import { HEADER_COLUMNS as YARN_CARD_COLUMNS } from './yarn-card.service';
 import { HEADER_COLUMNS as FABRIC_CARD_COLUMNS } from './fabric-card.service';
 import { HEADER_COLUMNS as CURRENT_ACCOUNT_COLUMNS } from './account.service';
@@ -14,7 +14,7 @@ import { HEADER_COLUMNS as UNIT_SET_COLUMNS } from './unit-set.service';
 import { INVENTORY_CARD_COLUMNS } from './inventory-card.service';
 
 export type WorklistSourceKey =
-  | 'purchase-receipt' | 'yarn-card' | 'fabric-card' | 'current-account' | 'warehouse' | 'financial-receipt'
+  | 'purchase-receipt' | 'purchase-receipt-item' | 'yarn-card' | 'fabric-card' | 'current-account' | 'warehouse' | 'financial-receipt'
   | 'trim-card' | 'trim-inventory-card' | 'purchase-order' | 'contract' | 'size-set' | 'unit-set' | 'inventory-card';
 
 export interface WorklistSourceFields {
@@ -31,6 +31,12 @@ export interface WorklistSourceFields {
 // what a given field key means. No new table, no new column, no duplicated data source.
 const SOURCES: WorklistSourceFields[] = [
   { source: 'purchase-receipt', label: 'Purchase Receipt List', fields: PURCHASE_RECEIPT_COLUMNS },
+  // Related Receipt Import (Purchase Return -> Current Account -> Import Related Receipt) is the
+  // one screen that needs line-level Purchase Receipt fields, not just the header ones the
+  // "purchase-receipt" source above already covers for Receipt & Master Data's own flat grid.
+  // Reuses inventory-receipt.service.ts's own ITEM_COLUMNS wholesale — same convention as every
+  // other entry here — rather than a hand-picked subset.
+  { source: 'purchase-receipt-item', label: 'Purchase Receipt Item List', fields: PURCHASE_RECEIPT_ITEM_COLUMNS },
   { source: 'yarn-card', label: 'Yarn Card List', fields: YARN_CARD_COLUMNS },
   { source: 'fabric-card', label: 'Fabric Card List', fields: FABRIC_CARD_COLUMNS },
   { source: 'current-account', label: 'Current Account List', fields: CURRENT_ACCOUNT_COLUMNS },
@@ -59,11 +65,20 @@ const ALLOWED_SOURCES_BY_PRIMARY: Partial<Record<string, WorklistSourceKey[]>> =
   'warehouse-list': ['warehouse'],
   'trim-card-list': ['trim-card'],
   'purchase-order-list': ['purchase-order'],
+  // Subcontract Order shares Purchase Order's exact same IM_OrderReceipt HEADER_COLUMNS (same
+  // table, same columns) — reuses the 'purchase-order' source as-is rather than a new one.
+  'subcontract-order-list': ['purchase-order'],
   'size-set-list': ['size-set'],
   'unit-set-list': ['unit-set'],
   'purchase-contract-list': ['contract'],
   'sale-contract-list': ['contract'],
   'inventory-card-list': ['inventory-card'],
+  // Purchase Return's "Import Related Receipt" dialog — not itself a *-list screen (it's a
+  // selection dialog, not a page with a table-key), so it gets its own explicit primary key
+  // rather than reusing "purchase-receipt-list" (which doesn't exist — Purchase Receipt has no
+  // Customize Worklist of its own today). Both header and item fields are relevant here, unlike
+  // every other entry above which only ever needs one source.
+  'related-receipt-import': ['purchase-receipt', 'purchase-receipt-item'],
 };
 
 @Injectable()
