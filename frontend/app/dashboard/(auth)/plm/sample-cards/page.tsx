@@ -1,145 +1,217 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { plmApi } from "@/lib/nexuscore-api";
-import { getCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
-import { Plus, Search, ExternalLink } from "lucide-react";
+import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, Shirt, SearchX, ChevronRight } from "lucide-react";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 
-const STATUSES = ['draft', 'submitted', 'in-review', 'fit-trial', 'revision', 'approved', 'rejected', 'cancelled'];
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-slate-100 text-slate-700', submitted: 'bg-blue-100 text-blue-700',
-  approved: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700',
-  'fit-trial': 'bg-purple-100 text-purple-700', revision: 'bg-amber-100 text-amber-700',
-};
+// Sample Cards — the legacy-ERP-style master list for the same StyleCard records the existing
+// plm/style-cards screen manages (see plm-cards.service.ts's listStyleCards()/deleteStyleCard()),
+// just with the Code/Name/In-Use master-card list conventions (search box, sortable columns,
+// RowContextMenu) the target screen wants — same data, same backend, different UI shell. The
+// existing plm/style-cards list screen is untouched.
+type SortKey = "styleNumber" | "title" | "season";
 
-const empty = { styleCardId: '', sampleTypeId: '', title: '', colorway: '', dueDate: '', notes: '' };
-
-export default function SampleCardsPage() {
-  const [data, setData] = useState<any[]>([]);
-  const [meta, setMeta] = useState({ total: 0, page: 1, pages: 1 });
+export default function SampleCardMasterListPage() {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<any>(empty);
-  const [saving, setSaving] = useState(false);
-  const [styleCards, setStyleCards] = useState<any[]>([]);
-  const [sampleTypes, setSampleTypes] = useState<any[]>([]);
+  const [searched, setSearched] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; code: string } | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("styleNumber");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  const load = useCallback(async (page = 1) => {
+  const load = async (term?: string) => {
     setLoading(true);
     try {
-      const q: any = { page: String(page), limit: '20' };
-      if (search) q.search = search;
-      if (status) q.status = status;
-      const r: any = await plmApi.sampleCards.list(q);
-      setData(r?.data ?? []);
-      setMeta(r?.meta ?? { total: 0, page: 1, pages: 1 });
-    } finally { setLoading(false); }
-  }, [search, status]);
-
-  useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    Promise.all([plmApi.styleCards.list({ limit: '200' }), plmApi.sampleTypes.list()]).then(([sc, st]: any) => {
-      setStyleCards(sc?.data ?? []);
-      setSampleTypes(Array.isArray(st) ? st : []);
-    });
-  }, []);
-
-  const save = async () => {
-    if (!form.styleCardId || !form.sampleTypeId || !form.title) return toast.error("Style card, sample type, and title required");
-    setSaving(true);
-    try {
-      const user = getCurrentUser();
-      await plmApi.sampleCards.create({ ...form, createdBy: user?.id });
-      toast.success("Sample card created");
-      setOpen(false); load();
-    } catch (e: any) { toast.error(e.message); } finally { setSaving(false); }
+      const r: any = await plmApi.styleCards.list({ limit: "200", ...(term ? { search: term } : {}) });
+      const list = Array.isArray(r) ? r : (r?.data ?? []);
+      setRows(list);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to load sample cards");
+      setRows([]);
+    } finally {
+      setLoading(false);
+      setSearched(!!term);
+    }
   };
 
+  useEffect(() => { load(); }, []);
+
+  const doSearch = () => load(search.trim() || undefined);
+  const refresh = () => { setSearch(""); load(); };
+
+  const view = (id: string) => navigateOrOpenTab(router, `/dashboard/plm/sample-cards/${id}?mode=view`);
+  const update = (id: string) => navigateOrOpenTab(router, `/dashboard/plm/sample-cards/${id}?mode=edit`);
+  const createNew = () => navigateOrOpenTab(router, `/dashboard/plm/sample-cards/new`);
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await plmApi.styleCards.delete(deleteTarget.id);
+      toast.success("Sample card deleted");
+      setDeleteTarget(null);
+      load(search.trim() || undefined);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const sortedRows = useMemo(() => {
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortKey, sortDir]);
+
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-xl font-semibold">Sample Cards</h1><p className="text-xs text-muted-foreground">{meta.total} samples total</p></div>
-        <Button size="sm" onClick={() => { setForm(empty); setOpen(true); }}><Plus className="h-4 w-4 mr-1" />New Sample</Button>
+    <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span>PLM</span>
+        <ChevronRight className="h-3 w-3" />
+        <span className="font-medium text-foreground">Sample Cards</span>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        <div className="relative"><Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input placeholder="Search samples..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 w-56 h-9" /></div>
-        <Select value={status || '__all__'} onValueChange={(v) => setStatus(v === '__all__' ? '' : v)}><SelectTrigger className="w-40 h-9"><SelectValue placeholder="All statuses" /></SelectTrigger><SelectContent><SelectItem value="__all__">All Statuses</SelectItem>{STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
-      </div>
-
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader><TableRow><TableHead>Sample #</TableHead><TableHead>Style</TableHead><TableHead>Type</TableHead><TableHead>Title</TableHead><TableHead>Due Date</TableHead><TableHead>Status</TableHead><TableHead></TableHead></TableRow></TableHeader>
-          <TableBody>
-            {loading ? Array.from({ length: 8 }).map((_, i) => (
-              <TableRow key={i}>{Array.from({ length: 7 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-            )) : data.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No sample cards yet</TableCell></TableRow>
-            ) : data.map((row) => (
-              <TableRow key={row.id} className="hover:bg-muted/30">
-                <TableCell className="font-mono text-xs">{row.sampleNumber}</TableCell>
-                <TableCell>{row.styleCard?.title || row.styleCardId}</TableCell>
-                <TableCell>{row.sampleType?.name || '—'}</TableCell>
-                <TableCell>{row.title || row.colorway || '—'}</TableCell>
-                <TableCell>{row.dueDate ? new Date(row.dueDate).toLocaleDateString() : '—'}</TableCell>
-                <TableCell><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[row.status] || 'bg-gray-100 text-gray-700'}`}>{row.status}</span></TableCell>
-                <TableCell><Link href={`/dashboard/plm/sample-cards/${row.id}`}><ExternalLink className="h-4 w-4 text-muted-foreground" /></Link></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-
-      {meta.pages > 1 && (
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Page {meta.page} of {meta.pages}</span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="sm" disabled={meta.page <= 1} onClick={() => load(meta.page - 1)}>Prev</Button>
-            <Button variant="outline" size="sm" disabled={meta.page >= meta.pages} onClick={() => load(meta.page + 1)}>Next</Button>
+      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
+            <Shirt className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Sample Cards</h1>
+            <div className="mt-0.5 flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">Garment sampling master records</p>
+              {!loading && (
+                <Badge variant="secondary" className="h-5 text-[11px] font-normal">
+                  {rows.length} {rows.length === 1 ? "record" : "records"}
+                </Badge>
+              )}
+            </div>
           </div>
         </div>
-      )}
+      </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>New Sample Card</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div><Label>Style Card *</Label>
-              <Select value={form.styleCardId} onValueChange={(v) => setForm((p: any) => ({ ...p, styleCardId: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select style" /></SelectTrigger>
-                <SelectContent>{styleCards.map((s) => <SelectItem key={s.id} value={s.id}>{s.styleNumber} — {s.title}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div><Label>Sample Type *</Label>
-              <Select value={form.sampleTypeId} onValueChange={(v) => setForm((p: any) => ({ ...p, sampleTypeId: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-                <SelectContent>{sampleTypes.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div><Label>Title</Label><Input value={form.title} onChange={(e) => setForm((p: any) => ({ ...p, title: e.target.value }))} placeholder="Sample reference title" /></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>Colorway</Label><Input value={form.colorway} onChange={(e) => setForm((p: any) => ({ ...p, colorway: e.target.value }))} /></div>
-              <div><Label>Due Date</Label><Input type="date" value={form.dueDate} onChange={(e) => setForm((p: any) => ({ ...p, dueDate: e.target.value }))} /></div>
-            </div>
-            <div><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm((p: any) => ({ ...p, notes: e.target.value }))} rows={2} /></div>
-          </div>
-          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} disabled={saving}>Create</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <InputGroup className="h-9 w-72 shrink-0">
+            <InputGroupAddon>
+              <Search className="h-3.5 w-3.5 text-muted-foreground" />
+            </InputGroupAddon>
+            <InputGroupInput
+              placeholder="Search by Code or Name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && doSearch()}
+              className="text-sm"
+            />
+          </InputGroup>
+          <Button variant="outline" size="sm" onClick={refresh} title="Refresh">
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <Button size="sm" onClick={createNew}>
+          <Plus className="h-3.5 w-3.5 mr-2" />Create New
+        </Button>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border shadow-sm">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+                <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("styleNumber")}>Code</TableHead>
+                <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("title")}>Name</TableHead>
+                <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("season")}>Season</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">In Use</TableHead>
+                <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                ))
+              ) : rows.length === 0 ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="py-12">
+                    <Empty>
+                      <EmptyHeader>
+                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Shirt />}</EmptyMedia>
+                        <EmptyTitle>{searched ? "Record not found" : "No sample cards yet"}</EmptyTitle>
+                        <EmptyDescription>
+                          {searched ? "You can create a new Sample Card." : 'Click "Create New" to add your first Sample Card.'}
+                        </EmptyDescription>
+                      </EmptyHeader>
+                      <EmptyContent>
+                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+                      </EmptyContent>
+                    </Empty>
+                  </TableCell>
+                </TableRow>
+              ) : sortedRows.map((row) => {
+                const rowActions: RowAction[] = [
+                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.styleNumber }), destructive: true, separatorBefore: true },
+                ];
+                return (
+                <RowContextMenu key={row.id} actions={rowActions}>
+                <TableRow className="group cursor-pointer hover:bg-muted/40" onDoubleClick={() => view(row.id)}>
+                  <TableCell className="py-3">
+                    <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.styleNumber}</span>
+                  </TableCell>
+                  <TableCell className="py-3">{row.title}</TableCell>
+                  <TableCell className="py-3">{row.season || <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className="py-3">
+                    <Badge variant={row.inUse === false ? "secondary" : "default"} className="h-5 text-[11px] font-normal">
+                      {row.inUse === false ? "No" : "Yes"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="py-3 text-right">
+                    <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+                  </TableCell>
+                </TableRow>
+                </RowContextMenu>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Sample Card</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={confirmDelete}>Yes</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

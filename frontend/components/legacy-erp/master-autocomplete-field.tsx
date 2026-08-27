@@ -32,6 +32,16 @@ interface Props {
   /** Override for which Workspace screen F2/the search icon opens — see useMasterLookupField's
    *  `path` param. Defaults to the generic Master Lookup screen. */
   lookupPath?: string;
+  /** Skips the block-level <FieldLabel> and shrinks sizing to fit a dense table cell (e.g. a
+   *  BOM grid row) instead of a form field. Purely visual — every other behavior is unchanged. */
+  compact?: boolean;
+  /** When set, unmatched typed text is still committed via this callback on blur/Enter/Tab
+   *  instead of being silently discarded — for fields whose backing column is free text with
+   *  picker assist (e.g. BOM Fabric/Trim, which must still accept a fabric not yet catalogued),
+   *  as opposed to strictly master-bound fields (Brand, Current Account, ...) where an
+   *  unmatched value must never silently "stick". Defaults to today's discard-on-no-match
+   *  behavior when omitted. */
+  onFreeTextCommit?: (text: string) => void;
 }
 
 /**
@@ -48,7 +58,7 @@ interface Props {
  *    reusable "open + receive a selection back" behavior shared by every such field. Only
  *    the id/code are stored in form state; the field itself only ever displays the Name.
  */
-export function MasterAutocompleteField({ label, masterKey, displayValue, onSelect, onClear, span = "normal", fetchOptions, lookupPath }: Props) {
+export function MasterAutocompleteField({ label, masterKey, displayValue, onSelect, onClear, span = "normal", fetchOptions, lookupPath, compact, onFreeTextCommit }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -125,11 +135,13 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
       // typed the full name of a record that isn't first alphabetically.
       const picked = tryExactMatch() ?? options[highlight];
       if (picked) choose(picked);
+      else if (onFreeTextCommit && query.trim()) onFreeTextCommit(query.trim());
     } else if (e.key === "Tab") {
       // Not preventDefault()'d — Tab should still move focus to the next field afterward,
       // this just makes sure a pending selection commits first, exactly like Enter.
       const picked = tryExactMatch() ?? options[highlight];
       if (picked) choose(picked);
+      else if (onFreeTextCommit && query.trim()) onFreeTextCommit(query.trim());
       setOpen(false);
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -149,15 +161,16 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
     }
     const picked = tryExactMatch();
     if (picked) choose(picked);
+    else if (onFreeTextCommit) onFreeTextCommit(query.trim());
     blurTimer.current = setTimeout(() => setOpen(false), 150);
   };
 
   const showNoMatch = open && searched && query.trim().length > 0 && options.length === 0;
 
   return (
-    <div className={cn("relative space-y-2", spanClass(span))}>
-      <FieldLabel>{label}</FieldLabel>
-      <InputGroup className="h-9">
+    <div className={cn("relative", compact ? "" : "space-y-2", compact ? "" : spanClass(span))}>
+      {!compact && <FieldLabel>{label}</FieldLabel>}
+      <InputGroup className={compact ? "h-8" : "h-9"}>
         <InputGroupInput
           ref={inputRef}
           value={query ?? ""}

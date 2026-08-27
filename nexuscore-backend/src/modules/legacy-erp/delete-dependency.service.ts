@@ -27,7 +27,8 @@ export type DeleteEntityType =
   | 'IM_Receipt'
   | 'IM_ReceiptItem'
   | 'FI_Receipt'
-  | 'FI_ReceiptItem';
+  | 'FI_ReceiptItem'
+  | 'StyleCard';
 
 export interface DeleteDependencyCheck {
   label: string;
@@ -36,7 +37,7 @@ export interface DeleteDependencyCheck {
 
 export interface DeleteDependencyResult {
   entityType: DeleteEntityType;
-  entityId: number;
+  entityId: number | string;
   blocked: boolean;
   dependencies: DeleteDependencyCheck[];
 }
@@ -45,7 +46,7 @@ type QueryClient = Pick<PrismaService, '$queryRaw'>;
 
 interface CheckSpec {
   label: string;
-  existsSql: (id: number) => Prisma.Sql;
+  existsSql: (id: number | string) => Prisma.Sql;
 }
 
 const ENTITY_LABELS: Record<DeleteEntityType, string> = {
@@ -57,6 +58,7 @@ const ENTITY_LABELS: Record<DeleteEntityType, string> = {
   IM_ReceiptItem: 'Receipt line',
   FI_Receipt: 'Receipt/Payment Voucher',
   FI_ReceiptItem: 'Voucher line',
+  StyleCard: 'Sample/Style Card',
 };
 
 // Every check is a single `EXISTS (...)` correlated to the record being deleted — combined below
@@ -193,6 +195,24 @@ const CHECKS: Record<DeleteEntityType, CheckSpec[]> = {
       existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "IM_OrderReceipt" WHERE "CurrentAccountReceiptId" = ${id} AND "IsDeleted" = 0)`,
     },
   ],
+  // StyleCard is the Prisma/UUID-backed record behind the PLM Sample/Style Card Master screen
+  // (plm-cards.service.ts). Unlike the legacy tables above, PlmOrder/CriticalPath hold this as a
+  // REQUIRED FK (default Prisma referential action: Restrict — a raw delete would already throw
+  // a bare P2003), while SampleCard/ProductCard/CostingSheet/StudyTemplateCard/PlmTask hold it as
+  // an OPTIONAL FK (default action: SetNull — a raw delete would silently sever those records'
+  // link back to this style, not delete them). Blocking on either kind here gives one clean,
+  // consistent ConflictException instead of a raw DB error for the first case and silent data
+  // loss for the second. Verified against schema.prisma directly (no live-DB introspection
+  // needed — these are the current, unmigrated Prisma models, not legacy raw-SQL tables).
+  StyleCard: [
+    { label: 'Sample Card', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "SampleCard" WHERE "styleCardId" = ${id})` },
+    { label: 'Product Card', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "ProductCard" WHERE "styleCardId" = ${id})` },
+    { label: 'PLM Order', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "PlmOrder" WHERE "styleCardId" = ${id})` },
+    { label: 'PLM Task', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "PlmTask" WHERE "styleCardId" = ${id})` },
+    { label: 'Critical Path', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "CriticalPath" WHERE "styleCardId" = ${id})` },
+    { label: 'Costing Sheet', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "CostingSheet" WHERE "styleCardId" = ${id})` },
+    { label: 'Study Template', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "StudyTemplateCard" WHERE "styleCardId" = ${id})` },
+  ],
 };
 
 // Lets a generic, config-driven delete path (legacy-master-lookup.service.ts's remove()) find out
@@ -210,7 +230,7 @@ export class DeleteDependencyService {
   // `tx` lets a caller run the check inside the same $transaction as its own UPDATE ... IsDeleted
   // = 1 write (same optional-tx pattern as approval.service.ts) so nothing can insert a new
   // dependency between the check and the delete.
-  async checkDependencies(entityType: DeleteEntityType, id: number, tx?: Prisma.TransactionClient): Promise<DeleteDependencyResult> {
+  async checkDependencies(entityType: DeleteEntityType, id: number | string, tx?: Prisma.TransactionClient): Promise<DeleteDependencyResult> {
     const checks = CHECKS[entityType];
     const client: QueryClient = tx ?? this.prisma;
     if (!checks.length) {
@@ -227,7 +247,7 @@ export class DeleteDependencyService {
   // Throws ConflictException (matches the app-wide convention — see roles.service.ts's
   // "Cannot delete system role" — reshaped by GlobalExceptionFilter into a clean 409 response,
   // never a raw SQL/Prisma error) when any dependency exists. No-op otherwise.
-  async assertDeletable(entityType: DeleteEntityType, id: number, tx?: Prisma.TransactionClient): Promise<void> {
+  async assertDeletable(entityType: DeleteEntityType, id: number | string, tx?: Prisma.TransactionClient): Promise<void> {
     const result = await this.checkDependencies(entityType, id, tx);
     if (!result.blocked) return;
     const blockingLabels = result.dependencies.filter((d) => d.blocked).map((d) => d.label);

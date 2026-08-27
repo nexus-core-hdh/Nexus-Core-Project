@@ -299,6 +299,36 @@ async function main() {
   }
   console.log(`✓ Seeded ${measurementDefs.length} measurement definitions`);
 
+  // ── PLM Season/Gender Cards ─────────────────────────────────────────────────
+  // code === name === the exact strings general-tab.tsx's old SEASONS/GENDERS constants used to
+  // write into StyleCard.season/.gender, so every existing StyleCard row keeps resolving without
+  // a data migration once those fields become master-bound pickers.
+  const seasons = ['SS25', 'AW25', 'SS26', 'AW26', 'Resort', 'Pre-Fall'];
+  for (const s of seasons) {
+    await prisma.seasonCard.upsert({ where: { code: s }, create: { code: s, name: s, branchId: branch.id }, update: {} });
+  }
+  console.log(`✓ Seeded ${seasons.length} season cards`);
+
+  const genders = ['men', 'women', 'unisex', 'kids', 'infant'];
+  for (const g of genders) {
+    await prisma.genderCard.upsert({ where: { code: g }, create: { code: g, name: g, branchId: branch.id }, update: {} });
+  }
+  console.log(`✓ Seeded ${genders.length} gender cards`);
+
+  // ── PLM Size Cards ───────────────────────────────────────────────────────────
+  const sizes = [
+    { code: 'XS', name: 'Extra Small', sequence: 1 },
+    { code: 'S', name: 'Small', sequence: 2 },
+    { code: 'M', name: 'Medium', sequence: 3 },
+    { code: 'L', name: 'Large', sequence: 4 },
+    { code: 'XL', name: 'Extra Large', sequence: 5 },
+    { code: 'XXL', name: '2X Large', sequence: 6 },
+  ];
+  for (const s of sizes) {
+    await prisma.sizeCard.upsert({ where: { code: s.code }, create: { ...s, branchId: branch.id }, update: {} });
+  }
+  console.log(`✓ Seeded ${sizes.length} size cards`);
+
   // ── Document Type Cards ───────────────────────────────────────────────────────
   const docTypeCardDefs = [
     // Design

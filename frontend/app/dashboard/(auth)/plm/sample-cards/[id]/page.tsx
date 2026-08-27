@@ -1,156 +1,361 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { plmApi } from "@/lib/nexuscore-api";
-import { getCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { Search, Save, FilePlus2, Shirt, Lock, Sparkles, Pencil, Ruler } from "lucide-react";
+import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
+import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
+import { FormGrid } from "@/components/forms/form-grid";
+import { FormSwitchField as FieldCheck, FieldLabel, spanClass } from "@/components/forms/form-field";
+import { cn } from "@/lib/utils";
+import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 
-const STATUSES = ['draft', 'submitted', 'in-review', 'fit-trial', 'revision', 'approved', 'rejected', 'cancelled'];
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'bg-slate-100 text-slate-700', submitted: 'bg-blue-100 text-blue-700',
-  approved: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700',
-  'fit-trial': 'bg-purple-100 text-purple-700', revision: 'bg-amber-100 text-amber-700',
-};
+import { GeneralTab } from "./_components/general-tab";
+import { SelectSizesDialog } from "../../_components/select-sizes-dialog";
+import { MeasurementChartTab } from "../../style-cards/[id]/_components/measurement-chart-tab";
+import { BomTab } from "../../style-cards/[id]/_components/bom-tab";
+import { WashCareTab } from "../../style-cards/[id]/_components/wash-care-tab";
+import { StudyTab } from "../../style-cards/[id]/_components/study-tab";
+import { ExpensesTab } from "../../style-cards/[id]/_components/expenses-tab";
+import { OrderInfoTab } from "../../style-cards/[id]/_components/order-info-tab";
+import { CostTab } from "../../style-cards/[id]/_components/cost-tab";
+import { CustomizedFieldsTab } from "../../style-cards/[id]/_components/customized-fields-tab";
 
-const StatusIcon = ({ s }: { s: string }) => {
-  if (s === 'approved') return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-  if (s === 'rejected') return <XCircle className="h-4 w-4 text-red-500" />;
-  return <Clock className="h-4 w-4 text-muted-foreground" />;
-};
+// Sample Cards detail screen — legacy-ERP-style header/shell (Code+lookup/Name/In Use, same
+// FormGrid/FieldCheck/ScrollableTabsList/useDraftForm/useWorkspaceDirty conventions as
+// legacy-erp/yarn-cards/page.tsx) wrapped around the SAME StyleCard record + tab components the
+// existing plm/style-cards screen already uses (imported directly, not copied) — see the plan's
+// Context section for why StyleCard is the reused backing data. "Start Sampling Flow" reuses the
+// existing plm/sample-cards create workflow unchanged (see the dialog below).
+const TABS = [
+  "General", "Measurement Chart", "BOM", "Wash & Care", "Study",
+  "Expenses", "Order Info", "Cost", "Customized Fields",
+];
 
-export default function SampleCardDetailPage() {
-  const { id } = useParams() as { id: string };
+export default function SampleCardMasterDetailPage() {
+  const params = useParams() as { id: string };
   const router = useRouter();
+  const searchParams = useWorkspaceSearchParams();
+  const isNew = params.id === "new";
+  const initialMode = (searchParams.get("mode") as "view" | "edit" | null) || (isNew ? "create" : "edit");
+
+  const emptyHeader = { title: "", inUse: true, styleNumber: "" };
+  const [recordId, setRecordId] = useState<string | null>(isNew ? null : params.id);
   const [card, setCard] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [statusDialog, setStatusDialog] = useState(false);
-  const [newStatus, setNewStatus] = useState('');
-  const [statusNote, setStatusNote] = useState('');
+  const [header, setHeader] = useState<Record<string, any>>(emptyHeader);
+  const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState<"view" | "edit" | "create">(initialMode);
+  const readOnly = mode === "view";
+  const [activeTab, setActiveTab] = useState("General");
+  const [nameError, setNameError] = useState("");
 
-  const load = async () => {
-    setLoading(true);
-    try { const r = await plmApi.sampleCards.get(id); setCard(r); } finally { setLoading(false); }
+  const [flowOpen, setFlowOpen] = useState(false);
+  const [flowSampleTypeId, setFlowSampleTypeId] = useState("");
+  const [flowTitle, setFlowTitle] = useState("");
+  const [flowSaving, setFlowSaving] = useState(false);
+  const [sampleTypes, setSampleTypes] = useState<any[]>([]);
+  const [sizesDialogOpen, setSizesDialogOpen] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const lastSavedRef = useRef<Record<string, any>>(emptyHeader);
+  const { clearDraft } = useDraftForm({ storageKey: "sampleCardMasterDraft", enabled: isNew && !recordId, form: header, setForm: setHeader });
+
+  const loadPreviewCode = async () => {
+    try {
+      const r: any = await plmApi.styleCards.previewNextCode();
+      setHeader((p) => ({ ...p, styleNumber: r.code }));
+      lastSavedRef.current = { ...lastSavedRef.current, styleNumber: r.code };
+    } catch {
+      // Non-critical — Save still generates the real code server-side even if this preview fails.
+    }
   };
-  useEffect(() => { load(); }, [id]);
 
-  const changeStatus = async () => {
-    if (!newStatus) return;
+  const load = async (id: string) => {
+    setLoading(true);
+    try {
+      const r: any = await plmApi.styleCards.get(id);
+      setCard(r);
+      const h = { title: r.title || "", inUse: r.inUse !== false, styleNumber: r.styleNumber || "" };
+      setHeader(h);
+      lastSavedRef.current = h;
+      setRecordId(r.id);
+    } catch (e: any) {
+      toast.error(e.message || "Could not load sample card");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isNew) { loadPreviewCode(); return; }
+    load(params.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const set = (k: string, v: any) => setHeader((p) => ({ ...p, [k]: v }));
+
+  const newRecord = () => {
+    router.push("/dashboard/plm/sample-cards/new");
+  };
+
+  const save = async () => {
+    setNameError("");
+    if (!header.title.trim()) {
+      setNameError("Name is required");
+      return toast.error("Name is required");
+    }
     setSaving(true);
     try {
-      const user = getCurrentUser();
-      await plmApi.sampleCards.changeStatus(id, { status: newStatus, note: statusNote, changedBy: user?.id });
-      toast.success("Status updated");
-      setStatusDialog(false); load();
-    } catch (e: any) { toast.error(e.message); } finally { setSaving(false); }
+      if (recordId) {
+        const r: any = await plmApi.styleCards.update(recordId, { title: header.title, inUse: header.inUse });
+        setCard(r);
+        const h = { title: r.title, inUse: r.inUse !== false, styleNumber: r.styleNumber };
+        setHeader(h);
+        lastSavedRef.current = h;
+        toast.success("Updated");
+      } else {
+        const r: any = await plmApi.styleCards.create({ title: header.title, inUse: header.inUse });
+        setCard(r);
+        const h = { title: r.title, inUse: r.inUse !== false, styleNumber: r.styleNumber };
+        setHeader(h);
+        lastSavedRef.current = h;
+        setRecordId(r.id);
+        setMode("edit");
+        clearDraft();
+        toast.success("Created");
+        router.replace(`/dashboard/plm/sample-cards/${r.id}`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (loading) return <div className="p-6 space-y-4"><Skeleton className="h-8 w-64" /><Skeleton className="h-64 w-full" /></div>;
-  if (!card) return <div className="p-6 text-muted-foreground">Sample card not found.</div>;
+  const isDirty = !readOnly && JSON.stringify(header) !== JSON.stringify(lastSavedRef.current);
+  useWorkspaceDirty(isDirty, async () => { await save(); });
+
+  const reloadCard = () => { if (recordId) load(recordId); };
+
+  const openStartFlow = async () => {
+    if (!recordId) return;
+    setFlowTitle(header.title || "");
+    setFlowSampleTypeId("");
+    setFlowOpen(true);
+    if (!sampleTypes.length) {
+      try {
+        const r: any = await plmApi.sampleTypes.list();
+        setSampleTypes(Array.isArray(r) ? r : r?.data || []);
+      } catch {
+        setSampleTypes([]);
+      }
+    }
+  };
+
+  // Reuses the exact existing createSampleCard() service method (same one the removed
+  // plm/sample-cards list page's own "New Sample Card" dialog used to call) — this button is
+  // only a new, pre-scoped entry point into that unchanged workflow, styleCardId preset to the
+  // record already open here. The old plm/sample-cards detail screen this used to navigate to
+  // has been removed, so on success we just close the dialog and reload this card (its
+  // sampleCards relation picks up the new row) instead of routing to a now-deleted page.
+  const submitStartFlow = async () => {
+    if (!recordId || !flowSampleTypeId || !flowTitle.trim()) return toast.error("Sample type and title are required");
+    setFlowSaving(true);
+    try {
+      await plmApi.sampleCards.create({ styleCardId: recordId, sampleTypeId: flowSampleTypeId, title: flowTitle.trim() });
+      toast.success("Sampling flow started");
+      setFlowOpen(false);
+      reloadCard();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to start sampling flow");
+    } finally {
+      setFlowSaving(false);
+    }
+  };
+
+  // Screen-level right-click menu (see components/legacy-erp/row-actions.tsx's RowContextMenu —
+  // reused here despite its "Row" name, since it just wraps whatever children it's given).
+  // "Edit Name" — Code is immutable everywhere in this codebase (server- and client-enforced,
+  // e.g. the header's own Code field above is always disabled/readOnly), so per the confirmed
+  // scope this action only ever touches Name: it exits View Only if needed, then focuses the
+  // Name input, since Name is already inline-editable whenever the screen isn't read-only.
+  const pageActions: RowAction[] = [
+    { key: "save", label: "Save", icon: Save, onSelect: () => { save(); }, disabled: readOnly || saving },
+    {
+      key: "edit-name", label: "Edit Name", icon: Pencil,
+      onSelect: () => { if (readOnly) setMode("edit"); requestAnimationFrame(() => nameInputRef.current?.focus()); },
+      disabled: !recordId,
+    },
+    { key: "select-sizes", label: "Select Sizes", icon: Ruler, onSelect: () => setSizesDialogOpen(true), disabled: !recordId },
+  ];
+
+  const saveRequired = (label: string) => (
+    <Empty className="py-10">
+      <EmptyHeader>
+        <EmptyMedia variant="icon"><Lock /></EmptyMedia>
+        <EmptyTitle>Save required</EmptyTitle>
+        <EmptyDescription>Save the sample card first to manage {label.toLowerCase()}.</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+
+  if (loading) {
+    return <div className="mx-auto max-w-[1600px] p-6 lg:p-8 text-sm text-muted-foreground">Loading...</div>;
+  }
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}><ArrowLeft className="h-4 w-4" /></Button>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">{card.sampleNumber}</h1>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[card.status] || 'bg-gray-100 text-gray-700'}`}>{card.status}</span>
+    <RowContextMenu actions={pageActions}>
+    <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">
+      <LegacyErpBreadcrumb trail={[
+        { label: "PLM" },
+        { label: "Sample Cards", href: "/dashboard/plm/sample-cards" },
+        ...(recordId ? [{ label: header.styleNumber }] : []),
+      ]} />
+
+      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
+            <Shirt className="h-5 w-5 text-primary" />
           </div>
-          <p className="text-xs text-muted-foreground">{card.styleCard?.title} · {card.sampleType?.name} · {card.colorway || card.title || ''}</p>
+          <div className="min-w-0">
+            <h1 className="truncate text-[22px] font-semibold leading-tight tracking-tight">
+              {recordId ? (header.title || "Sample Card") : "New Sample Card"}
+            </h1>
+            <div className="mt-1 flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">Sample Card</p>
+              {readOnly && (
+                <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
+                  <Lock className="h-2.5 w-2.5" />View Only
+                </Badge>
+              )}
+            </div>
+          </div>
         </div>
-        <Button size="sm" variant="outline" onClick={() => { setNewStatus(card.status); setStatusNote(''); setStatusDialog(true); }}>Change Status</Button>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
+          {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
+          <Button variant="outline" size="sm" onClick={openStartFlow} disabled={!recordId}>
+            <Sparkles className="h-3.5 w-3.5 mr-2" />Start Sampling Flow
+          </Button>
+        </div>
       </div>
 
-      <Tabs defaultValue="overview">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="history">History ({card.history?.length ?? 0})</TabsTrigger>
-          <TabsTrigger value="tasks">BPM Tasks ({card.bpmTasks?.length ?? 0})</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4 pt-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Status</p><p className="font-medium capitalize">{card.status}</p></CardContent></Card>
-            <Card><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Due Date</p><p className="font-medium">{card.dueDate ? new Date(card.dueDate).toLocaleDateString() : '—'}</p></CardContent></Card>
-            <Card><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Colorway</p><p className="font-medium">{card.colorway || '—'}</p></CardContent></Card>
-            <Card><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Cost</p><p className="font-medium">{card.cost ? `${card.currency} ${card.cost}` : '—'}</p></CardContent></Card>
+      {/* Code / Name / In Use — always visible, matching the legacy header strip. Code is
+          read-only everywhere: server-generated on Save (SC-YYYY-NNN via previewNextCode()). */}
+      <FormGrid>
+        <div className={spanClass("normal")}>
+          <FieldLabel>Code</FieldLabel>
+          <InputGroup className="h-9">
+            <InputGroupInput
+              value={header.styleNumber || "Generating..."}
+              disabled
+              readOnly
+              title="Code is generated automatically and cannot be edited"
+              className="text-sm text-muted-foreground"
+            />
+            <InputGroupAddon align="inline-end">
+              <Search className="h-3.5 w-3.5 text-muted-foreground" />
+            </InputGroupAddon>
+          </InputGroup>
+        </div>
+        <fieldset disabled={readOnly} className="contents">
+          <div className={spanClass("normal")}>
+            <FieldLabel>Name</FieldLabel>
+            <input
+              ref={nameInputRef}
+              value={header.title}
+              onChange={(e) => { set("title", e.target.value); if (nameError) setNameError(""); }}
+              className={cn(
+                "h-9 w-full min-w-0 rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                nameError ? "border-destructive focus-visible:ring-destructive/40" : "border-input"
+              )}
+            />
+            {nameError && <p className="mt-1 text-xs text-destructive">{nameError}</p>}
           </div>
-          {card.notes && <Card><CardContent className="pt-4"><p className="text-sm text-muted-foreground">{card.notes}</p></CardContent></Card>}
-        </TabsContent>
+          <FieldCheck label="In Use" checked={header.inUse} onChange={(v) => set("inUse", v)} />
+        </fieldset>
+      </FormGrid>
 
-        <TabsContent value="history" className="pt-4">
-          <div className="space-y-2">
-            {!card.history?.length ? <p className="text-center py-6 text-muted-foreground">No history yet</p>
-              : card.history.map((h: any, i: number) => {
-                const status = h.toStatus || h.status || h.action;
-                return (
-                  <div key={i} className="flex items-start gap-3 p-3 rounded-lg border bg-card">
-                    <StatusIcon s={status} />
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {h.fromStatus && <span className="text-xs text-muted-foreground">{h.fromStatus} →</span>}
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{h.createdAt ? new Date(h.createdAt).toLocaleString() : ''}</span>
-                      </div>
-                      {h.notes && <p className="text-sm mt-1">{h.notes}</p>}
-                      {h.changedBy && <p className="text-xs text-muted-foreground mt-1">by {h.changedBy}</p>}
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        </TabsContent>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
+        <div className="rounded-xl border bg-card shadow-sm">
+          <ScrollableTabsList tabs={TABS} activeTab={activeTab} />
 
-        <TabsContent value="tasks" className="pt-4">
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader><TableRow><TableHead>Stage</TableHead><TableHead>Assignee</TableHead><TableHead>Status</TableHead><TableHead>Due</TableHead></TableRow></TableHeader>
-              <TableBody>
-                {!card.bpmTasks?.length ? <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">No tasks yet</TableCell></TableRow>
-                  : card.bpmTasks.map((t: any) => (
-                    <TableRow key={t.id}>
-                      <TableCell>{t.stage?.name || '—'}</TableCell>
-                      <TableCell>{t.assignedTo || '—'}</TableCell>
-                      <TableCell><Badge variant="outline">{t.status}</Badge></TableCell>
-                      <TableCell>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : '—'}</TableCell>
-                    </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
+          <div className="p-6">
+            {!recordId ? (
+              TABS.map((t) => (
+                <TabsContent key={t} value={t} className="rounded-lg border border-dashed bg-muted/20">
+                  {saveRequired(t)}
+                </TabsContent>
+              ))
+            ) : (
+              <>
+                <TabsContent value="General"><GeneralTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Measurement Chart"><MeasurementChartTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="BOM"><BomTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Wash & Care"><WashCareTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Study"><StudyTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Expenses"><ExpensesTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Order Info"><OrderInfoTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Cost"><CostTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+                <TabsContent value="Customized Fields"><CustomizedFieldsTab styleCardId={recordId} card={card} onReloadCard={reloadCard} /></TabsContent>
+              </>
+            )}
           </div>
-        </TabsContent>
+        </div>
       </Tabs>
 
-      <Dialog open={statusDialog} onOpenChange={setStatusDialog}>
+      <Dialog open={flowOpen} onOpenChange={setFlowOpen}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Change Status</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Start Sampling Flow</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label>New Status</Label>
-              <Select value={newStatus} onValueChange={setNewStatus}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+            <div>
+              <Label>Sample Type</Label>
+              <Select value={flowSampleTypeId} onValueChange={setFlowSampleTypeId}>
+                <SelectTrigger><SelectValue placeholder="Select sample type" /></SelectTrigger>
+                <SelectContent>{sampleTypes.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>Note</Label><Textarea value={statusNote} onChange={(e) => setStatusNote(e.target.value)} rows={2} /></div>
+            <div>
+              <Label>Title</Label>
+              <input
+                value={flowTitle}
+                onChange={(e) => setFlowTitle(e.target.value)}
+                className="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              />
+            </div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setStatusDialog(false)}>Cancel</Button><Button onClick={changeStatus} disabled={saving}>Update</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFlowOpen(false)}>Cancel</Button>
+            <Button onClick={submitStartFlow} disabled={flowSaving}>{flowSaving ? "Starting..." : "Start"}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {recordId && (
+        <SelectSizesDialog
+          open={sizesDialogOpen}
+          onOpenChange={setSizesDialogOpen}
+          styleCardId={recordId}
+          currentSizes={Array.isArray(card?.sizes) ? card.sizes : []}
+          onSaved={reloadCard}
+        />
+      )}
     </div>
+    </RowContextMenu>
   );
 }

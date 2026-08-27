@@ -3267,6 +3267,7 @@ model EmployeeCard {
   styleCardsAsProductionMerchandiser StyleCard[] @relation("StyleProductionMerchandiser")
   styleCardsAsProductMerchandiser    StyleCard[] @relation("StyleProductMerchandiser")
   styleCardsAsDesigner               StyleCard[] @relation("StyleDesigner")
+  styleCardsAsRepresentative         StyleCard[] @relation("StyleRepresentative")
 }
 
 model ResourceCard {
@@ -3335,6 +3336,47 @@ model ColorCard {
   inUse                    Boolean  @default(true)
   branchId                 String
   createdAt                DateTime @default(now())
+}
+
+model BrandCard {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  explanation String?
+  isActive    Boolean  @default(true)
+  branchId    String
+  createdAt   DateTime @default(now())
+}
+
+model SeasonCard {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  explanation String?
+  isActive    Boolean  @default(true)
+  branchId    String
+  createdAt   DateTime @default(now())
+}
+
+model GenderCard {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  explanation String?
+  isActive    Boolean  @default(true)
+  branchId    String
+  createdAt   DateTime @default(now())
+}
+
+model SizeCard {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  explanation String?
+  sequence    Int      @default(0)
+  isActive    Boolean  @default(true)
+  branchId    String
+  createdAt   DateTime @default(now())
 }
 
 model CompanyCard {
@@ -3595,6 +3637,19 @@ model StyleCard {
   colorways                Json?
   attachments              Json?
   explanations             String?
+  // Sample Card Master screen (legacy-ERP-style header/General tab parity) — no existing field
+  // represented any of these three, added directly on StyleCard rather than a new table since
+  // this screen reuses StyleCard as its backing record.
+  inUse                    Boolean  @default(true)
+  sentByCustomer           Boolean  @default(false)
+  productCode              String?
+  // Style Card screen (General tab parity with the reference screenshot) — Access Code/Special
+  // Code follow the same plain-text convention Fabric Card already uses for these two fields;
+  // Representative follows the exact same EmployeeCard-lookup pattern already used for Designer/
+  // Production Merchandiser/Product Merchandiser (a 4th named relation), rather than being new.
+  accessCode               String?
+  specialCode              String?
+  representativeId         String?
 
   // BOM tab header fields
   bomRouteCode       String?
@@ -3609,6 +3664,7 @@ model StyleCard {
   productionMerchandiser EmployeeCard?       @relation("StyleProductionMerchandiser", fields: [productionMerchandiserId], references: [id])
   productMerchandiser    EmployeeCard?       @relation("StyleProductMerchandiser", fields: [productMerchandiserId], references: [id])
   designer               EmployeeCard?       @relation("StyleDesigner", fields: [designerId], references: [id])
+  representative         EmployeeCard?       @relation("StyleRepresentative", fields: [representativeId], references: [id])
   details                StyleCardDetail[]
   sampleCards            SampleCard[]
   productCards           ProductCard[]

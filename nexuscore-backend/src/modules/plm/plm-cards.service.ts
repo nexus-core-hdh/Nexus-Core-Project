@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessagingService } from '../../messaging/messaging.service';
+import { DeleteDependencyService } from '../legacy-erp/delete-dependency.service';
 
 @Injectable()
 export class PlmCardsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly messaging: MessagingService,
+    private readonly deleteGuard: DeleteDependencyService,
   ) {}
 
   private async nextNumber(prefix: string, model: any, field: string): Promise<string> {
@@ -81,13 +83,26 @@ export class PlmCardsService {
   }
 
   async createStyleCard(dto: any, branchId: string, createdBy: string) {
-    const styleNumber = `SC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+    // Sample Card Master screen ("Code must be visible and read-only when creating records and
+    // unique per entity") — switched from Math.random() to the same nextNumber() helper already
+    // used for SampleCard/ProductCard numbering in this file, so styleNumber is sequential and
+    // genuinely collision-safe, and can be previewed server-side before Save (see
+    // previewNextStyleNumber() below). Same "SC-YYYY-NNN" format, so no visible change for the
+    // existing style-cards screen beyond becoming reliably unique.
+    const styleNumber = await this.nextNumber('SC', 'styleCard', 'styleNumber');
     const card = await this.prisma.styleCard.create({
       data: { ...dto, styleNumber, branchId, createdBy },
       include: { moodBoard: { select: { id: true, title: true } } },
     });
     await this.autoCreateDocket('style_card', card.id, `Docket — ${card.styleNumber}`, branchId, createdBy);
     return card;
+  }
+
+  // Read-only preview for the Sample Card Master screen's Code field, mirroring
+  // yarn-card.service.ts's previewNextCode() convention — generates nothing, just shows what
+  // createStyleCard() would assign.
+  async previewNextStyleNumber(): Promise<string> {
+    return this.nextNumber('SC', 'styleCard', 'styleNumber');
   }
 
   async getStyleCard(id: string) {
@@ -101,6 +116,7 @@ export class PlmCardsService {
         productionMerchandiser: true,
         productMerchandiser: true,
         designer: true,
+        representative: true,
         washCare: true,
         details: { include: { designDetailType: true } },
         sampleCards: { select: { id: true, sampleNumber: true, title: true, status: true } },
@@ -132,6 +148,7 @@ export class PlmCardsService {
 
   async deleteStyleCard(id: string) {
     await this.getStyleCard(id);
+    await this.deleteGuard.assertDeletable('StyleCard', id);
     await this.prisma.styleCard.delete({ where: { id } });
     return { message: 'Deleted' };
   }

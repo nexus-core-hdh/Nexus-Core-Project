@@ -341,6 +341,118 @@ export class PlmDefinitionsService {
     return { message: 'Deleted' };
   }
 
+  // ── Brand Cards ───────────────────────────────────────────────────────────────
+  async listBrands(branchId?: string, search?: string) {
+    return this.prisma.brandCard.findMany({
+      where: {
+        ...(branchId ? { branchId } : {}),
+        ...(search ? { OR: [{ code: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }] } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+  async createBrand(dto: any) {
+    return this.prisma.brandCard.create({ data: dto });
+  }
+  async getBrand(id: string) {
+    const r = await this.prisma.brandCard.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('BrandCard not found');
+    return r;
+  }
+  async updateBrand(id: string, dto: any) {
+    await this.getBrand(id);
+    return this.prisma.brandCard.update({ where: { id }, data: dto });
+  }
+  async deleteBrand(id: string) {
+    await this.getBrand(id);
+    await this.prisma.brandCard.delete({ where: { id } });
+    return { message: 'Deleted' };
+  }
+
+  // ── Season Cards ──────────────────────────────────────────────────────────────
+  async listSeasons(branchId?: string, search?: string) {
+    return this.prisma.seasonCard.findMany({
+      where: {
+        ...(branchId ? { branchId } : {}),
+        ...(search ? { OR: [{ code: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }] } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+  async createSeason(dto: any) {
+    return this.prisma.seasonCard.create({ data: dto });
+  }
+  async getSeason(id: string) {
+    const r = await this.prisma.seasonCard.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('SeasonCard not found');
+    return r;
+  }
+  async updateSeason(id: string, dto: any) {
+    await this.getSeason(id);
+    return this.prisma.seasonCard.update({ where: { id }, data: dto });
+  }
+  async deleteSeason(id: string) {
+    await this.getSeason(id);
+    await this.prisma.seasonCard.delete({ where: { id } });
+    return { message: 'Deleted' };
+  }
+
+  // ── Gender Cards ──────────────────────────────────────────────────────────────
+  async listGenders(branchId?: string, search?: string) {
+    return this.prisma.genderCard.findMany({
+      where: {
+        ...(branchId ? { branchId } : {}),
+        ...(search ? { OR: [{ code: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }] } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+  async createGender(dto: any) {
+    return this.prisma.genderCard.create({ data: dto });
+  }
+  async getGender(id: string) {
+    const r = await this.prisma.genderCard.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('GenderCard not found');
+    return r;
+  }
+  async updateGender(id: string, dto: any) {
+    await this.getGender(id);
+    return this.prisma.genderCard.update({ where: { id }, data: dto });
+  }
+  async deleteGender(id: string) {
+    await this.getGender(id);
+    await this.prisma.genderCard.delete({ where: { id } });
+    return { message: 'Deleted' };
+  }
+
+  // ── Size Cards ────────────────────────────────────────────────────────────────
+  async listSizes(branchId?: string, search?: string) {
+    return this.prisma.sizeCard.findMany({
+      where: {
+        ...(branchId ? { branchId } : {}),
+        ...(search ? { OR: [{ code: { contains: search, mode: 'insensitive' } }, { name: { contains: search, mode: 'insensitive' } }] } : {}),
+      },
+      orderBy: { sequence: 'asc' },
+    });
+  }
+  async createSize(dto: any) {
+    return this.prisma.sizeCard.create({ data: dto });
+  }
+  async getSize(id: string) {
+    const r = await this.prisma.sizeCard.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('SizeCard not found');
+    return r;
+  }
+  async updateSize(id: string, dto: any) {
+    await this.getSize(id);
+    return this.prisma.sizeCard.update({ where: { id }, data: dto });
+  }
+  async deleteSize(id: string) {
+    await this.getSize(id);
+    await this.prisma.sizeCard.delete({ where: { id } });
+    return { message: 'Deleted' };
+  }
+
   // ── Company Cards ─────────────────────────────────────────────────────────────
   async listCompanyCards() {
     return this.prisma.companyCard.findMany({ orderBy: { name: 'asc' } });

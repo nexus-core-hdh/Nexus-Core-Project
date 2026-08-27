@@ -9,8 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Plus, Save, Trash2 } from "lucide-react";
-import { plmApi } from "@/lib/nexuscore-api";
+import { plmApi, legacyErpApi } from "@/lib/nexuscore-api";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
+import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 
 type BomRow = {
   id: string;
@@ -197,8 +198,28 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
                     const calculatedQty = r.quantity * (1 + totalWaste / 100);
                     return (
                       <TableRow key={r.id} className="[&>td]:border-r [&>td]:p-0">
-                        <TableCell><GridInput value={r.fabricCode} onChange={(v) => update(r.id, { fabricCode: v })} /></TableCell>
-                        <TableCell><GridInput value={r.fabricName} onChange={(v) => update(r.id, { fabricName: v })} /></TableCell>
+                        <TableCell>
+                          {r.lineType === "fabric" || r.lineType === "trim" ? (
+                            <span className="px-2 text-xs text-muted-foreground font-mono">{r.fabricCode || "—"}</span>
+                          ) : (
+                            <GridInput value={r.fabricCode} onChange={(v) => update(r.id, { fabricCode: v })} />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {r.lineType === "fabric" || r.lineType === "trim" ? (
+                            <MasterAutocompleteField compact label={r.lineType === "fabric" ? "Fabric" : "Trim"}
+                              masterKey={r.lineType} displayValue={r.fabricName}
+                              fetchOptions={(t) => (r.lineType === "fabric" ? legacyErpApi.fabricCards.list(t) : legacyErpApi.trimInventoryCards.list(t))
+                                .then((rows: any[]) => (Array.isArray(rows) ? rows : []).map((row: any) => ({ id: row.id, code: row.inventoryCode, name: row.inventoryName })))}
+                              lookupPath={r.lineType === "fabric" ? "/dashboard/legacy-erp/fabric-cards" : "/dashboard/legacy-erp/trim-inventory-cards"}
+                              onSelect={(o) => update(r.id, { fabricCode: String(o.code ?? ""), fabricName: o.name })}
+                              onClear={() => update(r.id, { fabricCode: "", fabricName: "" })}
+                              onFreeTextCommit={(text) => update(r.id, { fabricName: text })}
+                            />
+                          ) : (
+                            <GridInput value={r.fabricName} onChange={(v) => update(r.id, { fabricName: v })} />
+                          )}
+                        </TableCell>
                         <TableCell><GridInput value={r.explanation} onChange={(v) => update(r.id, { explanation: v })} /></TableCell>
                         <TableCell><GridInput value={r.placement} onChange={(v) => update(r.id, { placement: v })} /></TableCell>
                         <TableCell className="p-1">

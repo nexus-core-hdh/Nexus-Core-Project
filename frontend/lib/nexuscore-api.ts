@@ -97,6 +97,10 @@ export const plmApi = {
   resources: { list: (q?: any) => api.get(plm('/resource-cards', q)), create: (d: any) => api.post(plm('/resource-cards'), d), get: (id: string) => api.get(plm(`/resource-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/resource-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/resource-cards/${id}`)) },
   activityTypes: { list: (q?: any) => api.get(plm('/activity-type-cards', q)), create: (d: any) => api.post(plm('/activity-type-cards'), d), get: (id: string) => api.get(plm(`/activity-type-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/activity-type-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/activity-type-cards/${id}`)) },
   colors: { list: (q?: any) => api.get(plm('/color-cards', q)), create: (d: any) => api.post(plm('/color-cards'), d), get: (id: string) => api.get(plm(`/color-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/color-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/color-cards/${id}`)) },
+  brands: { list: (q?: any) => api.get(plm('/brand-cards', q)), create: (d: any) => api.post(plm('/brand-cards'), d), get: (id: string) => api.get(plm(`/brand-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/brand-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/brand-cards/${id}`)) },
+  seasons: { list: (q?: any) => api.get(plm('/season-cards', q)), create: (d: any) => api.post(plm('/season-cards'), d), get: (id: string) => api.get(plm(`/season-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/season-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/season-cards/${id}`)) },
+  genders: { list: (q?: any) => api.get(plm('/gender-cards', q)), create: (d: any) => api.post(plm('/gender-cards'), d), get: (id: string) => api.get(plm(`/gender-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/gender-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/gender-cards/${id}`)) },
+  sizes: { list: (q?: any) => api.get(plm('/size-cards', q)), create: (d: any) => api.post(plm('/size-cards'), d), get: (id: string) => api.get(plm(`/size-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/size-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/size-cards/${id}`)) },
   companyCards: { list: () => api.get(plm('/company-cards')), create: (d: any) => api.post(plm('/company-cards'), d), get: (id: string) => api.get(plm(`/company-cards/${id}`)), update: (id: string, d: any) => api.put(plm(`/company-cards/${id}`), d), delete: (id: string) => api.delete(plm(`/company-cards/${id}`)) },
   sampleTaskTypes: { list: (q?: any) => api.get(plm('/sample-task-types', q)), create: (d: any) => api.post(plm('/sample-task-types'), d), get: (id: string) => api.get(plm(`/sample-task-types/${id}`)), update: (id: string, d: any) => api.put(plm(`/sample-task-types/${id}`), d), delete: (id: string) => api.delete(plm(`/sample-task-types/${id}`)) },
   routeCards: {
@@ -119,6 +123,9 @@ export const plmApi = {
   // Cards
   moodBoards: { list: (q?: any) => api.get(plm('/mood-boards', q)), create: (d: any) => api.post(plm('/mood-boards'), d), get: (id: string) => api.get(plm(`/mood-boards/${id}`)), update: (id: string, d: any) => api.put(plm(`/mood-boards/${id}`), d), delete: (id: string) => api.delete(plm(`/mood-boards/${id}`)), addImages: (id: string, images: string[]) => api.post(plm(`/mood-boards/${id}/images`), { images }) },
   styleCards: {
+    // Sample Card Master screen — Code preview, same convention as legacyErpApi.yarnCards'
+    // previewNextCode().
+    previewNextCode: () => api.get(plm('/style-cards/next-code')),
     list: (q?: any) => api.get(plm('/style-cards', q)),
     create: (d: any) => api.post(plm('/style-cards'), d),
     get: (id: string) => api.get(plm(`/style-cards/${id}`)),

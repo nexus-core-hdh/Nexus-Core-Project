@@ -89,6 +89,34 @@ export class PlmDefinitionsController {
   @Put('color-cards/:id') updateColor(@Param('id') id: string, @Body() dto: any) { return this.svc.updateColor(id, dto); }
   @Delete('color-cards/:id') deleteColor(@Param('id') id: string) { return this.svc.deleteColor(id); }
 
+  // Brand Cards
+  @Get('brand-cards') listBrands(@CurrentUser() u: any, @Query('branchId') b?: string, @Query('search') search?: string) { return this.svc.listBrands(b || u.branchId, search); }
+  @Post('brand-cards') createBrand(@Body() dto: any) { return this.svc.createBrand(dto); }
+  @Get('brand-cards/:id') getBrand(@Param('id') id: string) { return this.svc.getBrand(id); }
+  @Put('brand-cards/:id') updateBrand(@Param('id') id: string, @Body() dto: any) { return this.svc.updateBrand(id, dto); }
+  @Delete('brand-cards/:id') deleteBrand(@Param('id') id: string) { return this.svc.deleteBrand(id); }
+
+  // Season Cards
+  @Get('season-cards') listSeasons(@CurrentUser() u: any, @Query('branchId') b?: string, @Query('search') search?: string) { return this.svc.listSeasons(b || u.branchId, search); }
+  @Post('season-cards') createSeason(@Body() dto: any) { return this.svc.createSeason(dto); }
+  @Get('season-cards/:id') getSeason(@Param('id') id: string) { return this.svc.getSeason(id); }
+  @Put('season-cards/:id') updateSeason(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSeason(id, dto); }
+  @Delete('season-cards/:id') deleteSeason(@Param('id') id: string) { return this.svc.deleteSeason(id); }
+
+  // Gender Cards
+  @Get('gender-cards') listGenders(@CurrentUser() u: any, @Query('branchId') b?: string, @Query('search') search?: string) { return this.svc.listGenders(b || u.branchId, search); }
+  @Post('gender-cards') createGender(@Body() dto: any) { return this.svc.createGender(dto); }
+  @Get('gender-cards/:id') getGender(@Param('id') id: string) { return this.svc.getGender(id); }
+  @Put('gender-cards/:id') updateGender(@Param('id') id: string, @Body() dto: any) { return this.svc.updateGender(id, dto); }
+  @Delete('gender-cards/:id') deleteGender(@Param('id') id: string) { return this.svc.deleteGender(id); }
+
+  // Size Cards
+  @Get('size-cards') listSizes(@CurrentUser() u: any, @Query('branchId') b?: string, @Query('search') search?: string) { return this.svc.listSizes(b || u.branchId, search); }
+  @Post('size-cards') createSize(@Body() dto: any) { return this.svc.createSize(dto); }
+  @Get('size-cards/:id') getSize(@Param('id') id: string) { return this.svc.getSize(id); }
+  @Put('size-cards/:id') updateSize(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSize(id, dto); }
+  @Delete('size-cards/:id') deleteSize(@Param('id') id: string) { return this.svc.deleteSize(id); }
+
   // Company Cards
   @Get('company-cards') listCompanyCards() { return this.svc.listCompanyCards(); }
   @Post('company-cards') createCompanyCard(@Body() dto: any) { return this.svc.createCompanyCard(dto); }

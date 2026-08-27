@@ -17,6 +17,9 @@ export class PlmCardsController {
   @Post('mood-boards/:id/images') addImages(@Param('id') id: string, @Body('images') images: string[]) { return this.svc.addMoodBoardImages(id, images); }
 
   // Style Cards
+  // Sample Card Master screen — Code preview, declared before 'style-cards/:id' so it's never
+  // shadowed by that dynamic route (same defensive ordering as the other static routes here).
+  @Get('style-cards/next-code') async previewNextStyleNumber() { return { code: await this.svc.previewNextStyleNumber() }; }
   @Get('style-cards') @ApiOperation({ summary: 'List style cards' }) listStyleCards(@CurrentUser() u: any, @Query() q: any) { return this.svc.listStyleCards(u.branchId, q); }
   @Post('style-cards') createStyleCard(@Body() dto: any, @CurrentUser() u: any) { return this.svc.createStyleCard(dto, u.branchId, u.id); }
   @Get('style-cards/:id') getStyleCard(@Param('id') id: string) { return this.svc.getStyleCard(id); }
