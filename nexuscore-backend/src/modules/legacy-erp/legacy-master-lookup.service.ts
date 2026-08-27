@@ -193,6 +193,27 @@ export class LegacyMasterLookupService {
     return sanitizeRawRow(rows);
   }
 
+  // Single-record fetch by RecId — reused by fabric-card.service.ts's required-field
+  // validation (Fab Type / Finish GSM / Dye Type / Composition) so a submitted master id is
+  // confirmed to be a real record before Save, without a second copy of this table's
+  // config/query. Same IsDeleted-filtered shape as search() above, narrowed to one row by id
+  // instead of a name/code search. Active-only by default (a NEW selection, or a CHANGED
+  // identity field, must be active); `includeInactive` lets a caller resolve an EXISTING,
+  // unchanged reference whose master was deactivated since it was saved — same query/config,
+  // just without the active clause, rather than a second lookup method.
+  async getById(key: string, id: number, opts?: { includeInactive?: boolean }) {
+    const cfg = this.config(key);
+    const select = Prisma.raw(
+      ['"RecId" as id', cfg.codeColumn ? `"${cfg.codeColumn}" as "code"` : `NULL as "code"`, `"${cfg.nameColumn}" as "name"`].join(', '),
+    );
+    const table = Prisma.raw(`"${cfg.table}"`);
+    const activeFilter = cfg.activeColumn && !opts?.includeInactive ? Prisma.sql`AND "${Prisma.raw(cfg.activeColumn)}" = 1` : Prisma.sql``;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT ${select} FROM ${table} WHERE "RecId" = ${id} AND "IsDeleted" = 0 ${activeFilter} LIMIT 1
+    `);
+    return rows.length ? sanitizeRawRow(rows[0]) : null;
+  }
+
   // --- Master Lookup management screen (Fab Type Master today) ---------------------------
 
   meta(key: string) {

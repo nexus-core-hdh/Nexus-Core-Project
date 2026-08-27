@@ -77,8 +77,22 @@ const sanitizeRecord = (raw: Record<string, any>): Record<string, any> => {
 };
 
 type LookupOption = { id: number | string; code?: string | null; name: string };
-type LookupKey = "group" | "fabric" | "process" | "variant-type";
-const LOOKUP_KEYS: LookupKey[] = ["group", "fabric", "process", "variant-type"];
+type LookupKey = "group" | "fabric" | "process" | "variant-type" | "finish-gsm" | "dye-type" | "composition";
+const LOOKUP_KEYS: LookupKey[] = ["group", "fabric", "process", "variant-type", "finish-gsm", "dye-type", "composition"];
+
+// The 8 fields that make up a Fabric Card's identity (requirement: mandatory for Create/Save,
+// backend-validated — see fabric-card.service.ts's own IDENTITY_FIELDS). Mirrored here only
+// for the frontend's supplementary pre-save check and the live Name preview below.
+const IDENTITY_FIELDS: { key: string; label: string }[] = [
+  { key: "fabricTypeId", label: "Fabric Type" },
+  { key: "uD_FabGSM", label: "Finish GSM" },
+  { key: "uD_FabDyeType", label: "Dye Type" },
+  { key: "uD_FabComposition", label: "Composition" },
+  { key: "uD_FabYarnCount", label: "Yarn Count 1" },
+  { key: "uD_FabYarnCount1", label: "Yarn Count 2" },
+  { key: "uD_FabYarnCount2", label: "Yarn Count 3" },
+  { key: "uD_FabYarnCount3", label: "Yarn Count 4" },
+];
 
 const optionLabel = (o: LookupOption) => (o.code ? `${o.code} - ${o.name}` : o.name);
 const labelFor = (list: LookupOption[], id: any) => {
@@ -119,12 +133,20 @@ export default function FabricCardPage() {
   const [activeTab, setActiveTab] = useState("General");
 
   const [lookups, setLookups] = useState<Record<LookupKey, LookupOption[]>>({
-    group: [], fabric: [], process: [], "variant-type": [],
+    group: [], fabric: [], process: [], "variant-type": [], "finish-gsm": [], "dye-type": [], composition: [],
   });
   // Yarn Count 1-4 reuse the existing Yarn Card module/table (IM_Item, AccessCode='YARN')
   // via legacyErpApi.yarnCards — not the generic lookup/tables endpoint, which has no "yarn"
   // entry (MD_Yarn, the table it used to point at, is an empty, unused reference table).
-  const [yarnOptions, setYarnOptions] = useState<LookupOption[]>([]);
+  //
+  // No longer bulk-loads every Yarn Card at mount (that capped display/search at the first 50
+  // rows returned by yarn-card.service.ts's own list(), same limit every other list screen
+  // uses — not something this feature should raise). Instead this is a small resolved-name
+  // cache, populated on demand: whenever a search returns a row (typing in the field) or a
+  // saved Fabric Card is loaded (resolveYarnName below, one by-id fetch per already-selected
+  // Yarn Count), never for a full unfiltered listing.
+  const [yarnNames, setYarnNames] = useState<Record<string, LookupOption>>({});
+  const cacheYarn = (o: LookupOption) => setYarnNames((p) => ({ ...p, [String(o.id)]: o }));
 
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
   const { clearDraft } = useDraftForm({ storageKey: "fabricCardDraft", enabled: itemId == null, form, setForm });
@@ -134,15 +156,33 @@ export default function FabricCardPage() {
       const entries = await Promise.all(LOOKUP_KEYS.map((k) => legacyErpApi.lookupTable(k).catch(() => [])));
       setLookups(Object.fromEntries(LOOKUP_KEYS.map((k, i) => [k, entries[i] as LookupOption[]])) as any);
     })();
-    legacyErpApi.yarnCards.list().then((r: any) =>
-      setYarnOptions(Array.isArray(r) ? r.map((y: any) => ({ id: y.id, code: y.inventoryCode, name: y.inventoryName })) : [])
-    ).catch(() => setYarnOptions([]));
   }, []);
 
   const searchYarnCards = async (term: string) => {
     const r: any = await legacyErpApi.yarnCards.list(term || undefined);
-    return (Array.isArray(r) ? r : []).map((y: any) => ({ id: y.id, code: y.inventoryCode, name: y.inventoryName }));
+    const opts = (Array.isArray(r) ? r : []).map((y: any) => ({ id: y.id, code: y.inventoryCode, name: y.inventoryName }));
+    opts.forEach(cacheYarn);
+    return opts;
   };
+
+  // Resolves one already-selected Yarn Count id's display name via the existing single-record
+  // Yarn Card endpoint (legacyErpApi.yarnCards.get) — the same reuse-first pattern this page
+  // already applies for Fabric Card's own by-id load. A no-op once cached (from a prior search
+  // or a previous resolve), so re-rendering never re-fetches the same id twice.
+  const resolveYarnName = async (id: any) => {
+    if (id === "" || id === null || id === undefined) return;
+    const key = String(id);
+    if (yarnNames[key]) return;
+    try {
+      const y: any = await legacyErpApi.yarnCards.get(Number(id));
+      cacheYarn({ id: y.id, code: y.inventoryCode, name: y.inventoryName });
+    } catch {
+      // Referenced Yarn Card no longer resolvable (deleted) — field is left showing blank,
+      // same as any other unresolved lookup id on this page.
+    }
+  };
+  const resolveYarnNames = (f: Record<string, any>) =>
+    Promise.all([f.uD_FabYarnCount, f.uD_FabYarnCount1, f.uD_FabYarnCount2, f.uD_FabYarnCount3].map(resolveYarnName));
 
   // Shows the code the next Save will get, before Save is ever pressed — a preview only (see
   // fabric-card.controller.ts's next-code route): the code actually assigned at Save time is
@@ -173,6 +213,7 @@ export default function FabricCardPage() {
         lastSavedRef.current = f;
         setItemId(r.id);
         setCodeInput(r.inventoryCode);
+        resolveYarnNames(f);
       } catch (e: any) {
         toast.error(e.message || "Could not load fabric card");
       }
@@ -192,6 +233,7 @@ export default function FabricCardPage() {
       lastSavedRef.current = f;
       setItemId(r.id);
       setMode("edit");
+      resolveYarnNames(f);
       toast.success("Loaded");
     } catch {
       toast.error("No fabric card found with that code");
@@ -213,8 +255,11 @@ export default function FabricCardPage() {
     loadPreviewCode();
   };
 
+  // Supplementary only — backend is the real authority (fabric-card.service.ts's own
+  // resolveIdentity()) and returns the same message shape on a direct API call.
   const save = async () => {
-    if (!form.inventoryName.trim()) return toast.error("Name is required");
+    const missing = IDENTITY_FIELDS.filter((f) => !String(form[f.key] ?? "").trim()).map((f) => f.label);
+    if (missing.length) return toast.error(`Missing required field(s): ${missing.join(", ")}`);
     setSaving(true);
     try {
       if (itemId) {
@@ -242,6 +287,24 @@ export default function FabricCardPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+
+  // Live client-side preview of the backend's own naming convention (fabric-card.service.ts's
+  // buildIdentityName) — used only while form.inventoryName is still empty, i.e. a NEW/unsaved
+  // record (requirement: Name/preview updates as the 8 selections change on a new record). Once
+  // saved, form.inventoryName holds the real server-computed value and this is never consulted
+  // again until a fresh unsaved record starts over empty.
+  const previewName = () => {
+    const fab = lookups.fabric.find((o) => String(o.id) === String(form.fabricTypeId))?.name;
+    const gsm = lookups["finish-gsm"].find((o) => String(o.id) === String(form.uD_FabGSM))?.name;
+    const dye = lookups["dye-type"].find((o) => String(o.id) === String(form.uD_FabDyeType))?.name;
+    const comp = lookups.composition.find((o) => String(o.id) === String(form.uD_FabComposition))?.name;
+    const y1 = yarnNames[String(form.uD_FabYarnCount)]?.code;
+    const y2 = yarnNames[String(form.uD_FabYarnCount1)]?.code;
+    const y3 = yarnNames[String(form.uD_FabYarnCount2)]?.code;
+    const y4 = yarnNames[String(form.uD_FabYarnCount3)]?.code;
+    if (!fab || !gsm || !dye || !comp || !y1 || !y2 || !y3 || !y4) return "";
+    return `${fab} | ${gsm} GSM | ${dye} | ${comp} | ${y1}/${y2}/${y3}/${y4}`;
+  };
 
   const lookupField = (key: LookupKey, label: string, formKey: string, span: "normal" | "wide" = "normal") => (
     <LookupField
@@ -359,7 +422,16 @@ export default function FabricCardPage() {
                       onChange={() => {}}
                       disabled
                     />
-                    <FieldText label="Name" value={form.inventoryName} onChange={(v) => set("inventoryName", v)} />
+                    {/* Auto-generated from the 8 identity selections (Fabric Type, Finish GSM,
+                        Dye Type, Composition, Yarn Count 1-4) — always read-only, same as Code.
+                        Shows a live preview while unsaved; the authoritative value comes back
+                        from the server on Save. */}
+                    <FieldText
+                      label="Name"
+                      value={form.inventoryName || previewName() || "Auto-generated from selections above"}
+                      onChange={() => {}}
+                      disabled
+                    />
                   </div>
                 </IdentitySection>
 
@@ -386,15 +458,15 @@ export default function FabricCardPage() {
                   <MasterAutocompleteField
                     label="Finish GSM"
                     masterKey="finish-gsm"
-                    displayValue={form.uD_FabGSM}
-                    onSelect={(o) => set("uD_FabGSM", o.name)}
+                    displayValue={lookups["finish-gsm"].find((o) => String(o.id) === String(form.uD_FabGSM))?.name ?? ""}
+                    onSelect={(o) => set("uD_FabGSM", String(o.id))}
                     onClear={() => set("uD_FabGSM", "")}
                   />
                   <MasterAutocompleteField
                     label="Dye Type"
                     masterKey="dye-type"
-                    displayValue={form.uD_FabDyeType}
-                    onSelect={(o) => set("uD_FabDyeType", o.name)}
+                    displayValue={lookups["dye-type"].find((o) => String(o.id) === String(form.uD_FabDyeType))?.name ?? ""}
+                    onSelect={(o) => set("uD_FabDyeType", String(o.id))}
                     onClear={() => set("uD_FabDyeType", "")}
                   />
                 </FormSection>
@@ -403,15 +475,15 @@ export default function FabricCardPage() {
                   <MasterAutocompleteField
                     label="Composition"
                     masterKey="composition"
-                    displayValue={form.uD_FabComposition}
-                    onSelect={(o) => set("uD_FabComposition", o.name)}
+                    displayValue={lookups.composition.find((o) => String(o.id) === String(form.uD_FabComposition))?.name ?? ""}
+                    onSelect={(o) => set("uD_FabComposition", String(o.id))}
                     onClear={() => set("uD_FabComposition", "")}
                   />
                   <MasterAutocompleteField
                     label="Yarn Count 1"
                     masterKey="yarn"
-                    displayValue={yarnOptions.find((o) => String(o.id) === String(form.uD_FabYarnCount))?.name ?? ""}
-                    onSelect={(o) => set("uD_FabYarnCount", String(o.id))}
+                    displayValue={yarnNames[String(form.uD_FabYarnCount)]?.name ?? ""}
+                    onSelect={(o) => { cacheYarn(o); set("uD_FabYarnCount", String(o.id)); }}
                     onClear={() => set("uD_FabYarnCount", "")}
                     fetchOptions={searchYarnCards}
                     lookupPath="/dashboard/legacy-erp/yarn-cards-list"
@@ -419,8 +491,8 @@ export default function FabricCardPage() {
                   <MasterAutocompleteField
                     label="Yarn Count 2"
                     masterKey="yarn"
-                    displayValue={yarnOptions.find((o) => String(o.id) === String(form.uD_FabYarnCount1))?.name ?? ""}
-                    onSelect={(o) => set("uD_FabYarnCount1", String(o.id))}
+                    displayValue={yarnNames[String(form.uD_FabYarnCount1)]?.name ?? ""}
+                    onSelect={(o) => { cacheYarn(o); set("uD_FabYarnCount1", String(o.id)); }}
                     onClear={() => set("uD_FabYarnCount1", "")}
                     fetchOptions={searchYarnCards}
                     lookupPath="/dashboard/legacy-erp/yarn-cards-list"
@@ -428,8 +500,8 @@ export default function FabricCardPage() {
                   <MasterAutocompleteField
                     label="Yarn Count 3"
                     masterKey="yarn"
-                    displayValue={yarnOptions.find((o) => String(o.id) === String(form.uD_FabYarnCount2))?.name ?? ""}
-                    onSelect={(o) => set("uD_FabYarnCount2", String(o.id))}
+                    displayValue={yarnNames[String(form.uD_FabYarnCount2)]?.name ?? ""}
+                    onSelect={(o) => { cacheYarn(o); set("uD_FabYarnCount2", String(o.id)); }}
                     onClear={() => set("uD_FabYarnCount2", "")}
                     fetchOptions={searchYarnCards}
                     lookupPath="/dashboard/legacy-erp/yarn-cards-list"
@@ -437,8 +509,8 @@ export default function FabricCardPage() {
                   <MasterAutocompleteField
                     label="Yarn Count 4"
                     masterKey="yarn"
-                    displayValue={yarnOptions.find((o) => String(o.id) === String(form.uD_FabYarnCount3))?.name ?? ""}
-                    onSelect={(o) => set("uD_FabYarnCount3", String(o.id))}
+                    displayValue={yarnNames[String(form.uD_FabYarnCount3)]?.name ?? ""}
+                    onSelect={(o) => { cacheYarn(o); set("uD_FabYarnCount3", String(o.id)); }}
                     onClear={() => set("uD_FabYarnCount3", "")}
                     fetchOptions={searchYarnCards}
                     lookupPath="/dashboard/legacy-erp/yarn-cards-list"
