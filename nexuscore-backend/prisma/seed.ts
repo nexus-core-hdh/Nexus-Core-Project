@@ -667,6 +667,13 @@ async function main() {
           { title: 'Finish GSM Master', href: '/dashboard/legacy-erp/master-lookup?key=finish-gsm', icon: 'ListTree' },
           { title: 'Dye Type Master', href: '/dashboard/legacy-erp/master-lookup?key=dye-type', icon: 'ListTree' },
           { title: 'Composition Master', href: '/dashboard/legacy-erp/master-lookup?key=composition', icon: 'ListTree' },
+          // Subcontract Type / Subcontract Receipt — two deliberately separate masters (own
+          // table, own nav entry each) on the same generic Master Lookup screen every other
+          // *Master entry above already uses. See legacy-master-lookup.service.ts's TABLES
+          // config comment for why these were confirmed to need new tables (neither concept
+          // existed anywhere in the schema before).
+          { title: 'Subcontract Type Master', href: '/dashboard/legacy-erp/master-lookup?key=subcontract-type', icon: 'ListTree' },
+          { title: 'Subcontract Receipt Master', href: '/dashboard/legacy-erp/master-lookup?key=subcontract-receipt', icon: 'ListTree' },
           { title: 'Inventory Card List', href: '/dashboard/legacy-erp/inventory-cards-list', icon: 'Boxes', isNew: true },
           { title: '1 - Purchase Order', href: '/dashboard/legacy-erp/purchase-orders-list', icon: 'ShoppingCart', isNew: true },
           { title: '3 - Subcontract Order', href: '/dashboard/legacy-erp/subcontract-orders-list', icon: 'Factory', isNew: true },

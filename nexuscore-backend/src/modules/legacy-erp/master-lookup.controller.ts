@@ -29,7 +29,7 @@ export class MasterLookupController {
   @Put(':key/:id') update(
     @Param('key') key: string,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { code?: string; name?: string },
+    @Body() dto: { code?: string; name?: string; active?: boolean },
     @CurrentUser('id') userId: string,
   ) {
     return this.svc.update(key, id, dto, Number(userId) || 1);

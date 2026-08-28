@@ -56,3 +56,9 @@ export const getReceiptTypeConfig = (receiptType: number): ReceiptTypeConfig | u
 // piece of configuration, and
 // labels are still always resolved via getReceiptTypeConfig(), never hardcoded as strings.
 export const RELATED_IMPORT_SOURCE_TYPES = [2, 11] as const;
+
+// Mirrors frontend's SUBCONTRACT_RECEIPT_TYPES (receipt-types.ts) — the "Subcontract Receipts"
+// nav entry's own curated subset: the four "Outside Process" types. Used here to gate the
+// Script/Receipt Type mandatory-on-create validation (inventory-receipt.service.ts's create())
+// to only these types — every other receipt type's create() behavior is unaffected.
+export const SUBCONTRACT_RECEIPT_TYPES = [11, 12, 134, 133] as const;

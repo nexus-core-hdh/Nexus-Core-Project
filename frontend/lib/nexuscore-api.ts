@@ -532,7 +532,15 @@ export const legacyErpApi = {
   receipts: (receiptType: number) => {
     const base = `/legacy-erp/receipts/${receiptType}`;
     return {
-      list: (search?: string) => api.get(`${base}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+      // `subcontractTypeId` — Subcontract Receipts List's own "Subcontractation" filter
+      // dropdown; every other caller omits it and gets the exact same rows as before.
+      list: (search?: string, subcontractTypeId?: number) => {
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        if (subcontractTypeId !== undefined) params.set('subcontractTypeId', String(subcontractTypeId));
+        const qs = params.toString();
+        return api.get(`${base}${qs ? `?${qs}` : ''}`);
+      },
       get: (id: number) => api.get(`${base}/${id}`),
       getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
       previewNextReceiptNo: () => api.get(`${base}/next-receipt-no`),
@@ -639,7 +647,7 @@ export const legacyErpApi = {
     meta: (key: string) => api.get(`/legacy-erp/master-lookup/${key}/meta`),
     list: (key: string, search?: string) => api.get(`/legacy-erp/master-lookup/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     create: (key: string, d: { code: string; name: string }) => api.post(`/legacy-erp/master-lookup/${key}`, d),
-    update: (key: string, id: number, d: { code: string; name: string }) => api.put(`/legacy-erp/master-lookup/${key}/${id}`, d),
+    update: (key: string, id: number, d: { code: string; name: string; active?: boolean }) => api.put(`/legacy-erp/master-lookup/${key}/${id}`, d),
     delete: (key: string, id: number) => api.delete(`/legacy-erp/master-lookup/${key}/${id}`),
   },
   lookupParameters: (group: "style-group" | "brand" | "style-department", search?: string) =>
@@ -648,7 +656,7 @@ export const legacyErpApi = {
     key: "category" | "group" | "mark" | "model" | "variant-type" | "tax" | "withholding-type" | "warehouse"
       | "fabric" | "process" | "finish-gsm" | "dye-type" | "composition" | "forex" | "unit"
       | "service" | "manufacturing-order" | "size-parameter" | "city" | "state" | "country"
-      | "cash" | "cost-center",
+      | "cash" | "cost-center" | "subcontract-type" | "subcontract-receipt",
     search?: string,
   ) => api.get(`/legacy-erp/lookup/tables/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   // Purchase Order per-line Unit dropdown, scoped to the selected Item's own configured units

@@ -93,7 +93,13 @@ function resolvePrimaryConfig(primaryTable: string): UnifiedGridConfig | undefin
     return {
       table: 'IM_Receipt',
       label: rt.label,
-      extraWhere: Prisma.sql`AND "ReceiptType" = ${rt.receiptType}`,
+      // Qualified with `r.` — unqualified "ReceiptType" was safe only as long as no relationship
+      // ever joined another table that also has a "ReceiptType" column. Adding Script
+      // (RELATIONSHIPS['purchase-receipt'].script, joining IM_OrderReceipt, which does have one)
+      // made the unqualified form genuinely ambiguous the moment a worklist requests a Script
+      // field — Postgres error 42702. `r` is this function's own FROM-clause alias (see resolve()
+      // below: `FROM ${table} r`), not a guess.
+      extraWhere: Prisma.sql`AND r."ReceiptType" = ${rt.receiptType}`,
       searchColumns: ['ReceiptNo', 'DocumentNo'],
       orderBy: 'ReceiptNo',
       orderDir: 'DESC',
@@ -151,6 +157,14 @@ const SOURCE_TABLE: Record<WorklistSourceKey, { table: string; filter?: Prisma.S
   'size-set': { table: 'MA_SizeSet' },
   'unit-set': { table: 'MD_UnitSet' },
   'inventory-card': { table: 'IM_Item' },
+  // Joined-only targets for Subcontract Type/Receipt — see RELATIONSHIPS['purchase-receipt']
+  // below. No filter/receiptScope needed: MD_SubcontractType/MD_SubcontractReceipt aren't
+  // receipt-scoped tables, just plain masters (same shape as current-account/warehouse above).
+  'subcontract-type': { table: 'MD_SubcontractType' },
+  'subcontract-receipt': { table: 'MD_SubcontractReceipt' },
+  // Script — joined-only target, the parent Subcontract Order this receipt's ScriptId points at.
+  // Same table/filter shape as 'purchase-order' above, just ReceiptType=3 instead of 1.
+  script: { table: 'IM_OrderReceipt', filter: Prisma.sql`"ReceiptType" = 3` },
 };
 
 // The single, explicit decision point for how a JOINED target's ReceiptType is scoped — the
@@ -231,6 +245,19 @@ const RELATIONSHIPS: Partial<Record<string, Partial<Record<WorklistSourceKey, St
     warehouse: { kind: 'forward', fkColumn: 'InWarehouseId' },
     'yarn-card': { kind: 'reverse-bridge', bridgeTable: 'IM_ReceiptItem', bridgeFkToPrimary: 'InventoryReceiptId', bridgeFkToTarget: 'InventoryId' },
     'fabric-card': { kind: 'reverse-bridge', bridgeTable: 'IM_ReceiptItem', bridgeFkToPrimary: 'InventoryReceiptId', bridgeFkToTarget: 'InventoryId' },
+    // Real FK columns confirmed live on IM_Receipt (see inventory-receipt.service.ts's own
+    // HEADER_COLUMNS comment) — one row can reference at most one Subcontract Type and one
+    // Subcontract Receipt, so a plain forward join (not reverse/aggregated) is correct, same
+    // shape as current-account/warehouse above. Propagates to every other receipt type below via
+    // the existing `RELATIONSHIPS[k] = RELATIONSHIPS['purchase-receipt']` reuse loop — the two
+    // columns are only ever non-null for the 4 Outside Process types in practice, but the join
+    // itself is harmless (resolves to NULL) for every other type, exactly like every other
+    // relationship here.
+    'subcontract-type': { kind: 'forward', fkColumn: 'SubcontractTypeId' },
+    'subcontract-receipt': { kind: 'forward', fkColumn: 'SubcontractReceiptId' },
+    // Script — same real, single-valued FK shape as the two above (ScriptId), just targeting
+    // IM_OrderReceipt (ReceiptType=3) instead of a simple master table.
+    script: { kind: 'forward', fkColumn: 'ScriptId' },
   },
   'current-account': {
     warehouse: { kind: 'forward', fkColumn: 'WarehouseId' },

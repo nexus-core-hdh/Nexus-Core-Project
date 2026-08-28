@@ -112,6 +112,21 @@ const TABLES: Record<string, TableLookupConfig> = {
   // separate Name column — same "use Explanation as the display name" convention as `tax` above.
   cash: { table: 'FI_Cash', codeColumn: 'CashCode', nameColumn: 'Explanation', searchColumns: ['CashCode', 'Explanation'] },
   'cost-center': { table: 'FI_CostCenter', codeColumn: 'CostCenterCode', nameColumn: 'CostCenterName', searchColumns: ['CostCenterCode', 'CostCenterName'] },
+  // Subcontract Type / Subcontract Receipt — two DELIBERATELY separate masters (confirmed via a
+  // whole-repo + live-schema search that neither concept existed anywhere before: no table, no
+  // column, no lookup). Same "new table, exact structural mirror of MD_Fabric/MD_DyeType" pattern
+  // as Finish GSM/Dye Type/Composition above — own PK, own Code/Name pair, own InUse/IsDeleted —
+  // so their data can never mix with each other, with Composition, or with anything else. Adding
+  // a value to one can never create/modify a row in the other; they are two physically distinct
+  // tables with two physically distinct config keys.
+  'subcontract-type': {
+    table: 'MD_SubcontractType', codeColumn: 'SubcontractTypeCode', nameColumn: 'SubcontractTypeName',
+    searchColumns: ['SubcontractTypeCode', 'SubcontractTypeName'], activeColumn: 'InUse', label: 'Subcontract Type',
+  },
+  'subcontract-receipt': {
+    table: 'MD_SubcontractReceipt', codeColumn: 'SubcontractReceiptCode', nameColumn: 'SubcontractReceiptName',
+    searchColumns: ['SubcontractReceiptCode', 'SubcontractReceiptName'], activeColumn: 'InUse', label: 'Subcontract Receipt',
+  },
 };
 export type MasterLookupKey = keyof typeof TABLES;
 
@@ -280,7 +295,11 @@ export class LegacyMasterLookupService {
     return sanitizeRawRow(rows[0]);
   }
 
-  async update(key: string, id: number, dto: { code?: string; name?: string }, userId: number) {
+  // `active` is optional — callers that only want to flip Active/Inactive (the Status badge
+  // toggle, same interaction General Settings' own Approval Configuration screen already uses)
+  // still resend the row's current code/name alongside it, so this never has to guess a value
+  // the caller didn't intend to change.
+  async update(key: string, id: number, dto: { code?: string; name?: string; active?: boolean }, userId: number) {
     const cfg = this.manageable(key);
     const code = String(dto.code ?? '').trim();
     const name = String(dto.name ?? '').trim();
@@ -292,8 +311,11 @@ export class LegacyMasterLookupService {
     const select = Prisma.raw([
       '"RecId" as id', `"${cfg.codeColumn}" as "code"`, `"${cfg.nameColumn}" as "name"`, `"${cfg.activeColumn}" as "active"`,
     ].join(', '));
+    const activeAssignment = dto.active !== undefined
+      ? Prisma.sql`, "${Prisma.raw(cfg.activeColumn!)}" = ${dto.active ? 1 : 0}`
+      : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      UPDATE ${table} SET "${Prisma.raw(cfg.codeColumn!)}" = ${code}, "${Prisma.raw(cfg.nameColumn)}" = ${name}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
+      UPDATE ${table} SET "${Prisma.raw(cfg.codeColumn!)}" = ${code}, "${Prisma.raw(cfg.nameColumn)}" = ${name}, "UpdatedAt" = now(), "UpdatedBy" = ${userId} ${activeAssignment}
       WHERE "RecId" = ${id} AND "IsDeleted" = 0
       RETURNING ${select}
     `);

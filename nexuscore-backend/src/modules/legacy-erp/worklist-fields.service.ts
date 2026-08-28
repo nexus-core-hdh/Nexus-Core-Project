@@ -15,7 +15,16 @@ import { INVENTORY_CARD_COLUMNS } from './inventory-card.service';
 
 export type WorklistSourceKey =
   | 'purchase-receipt' | 'purchase-receipt-item' | 'yarn-card' | 'fabric-card' | 'current-account' | 'warehouse' | 'financial-receipt'
-  | 'trim-card' | 'trim-inventory-card' | 'purchase-order' | 'contract' | 'size-set' | 'unit-set' | 'inventory-card';
+  | 'trim-card' | 'trim-inventory-card' | 'purchase-order' | 'contract' | 'size-set' | 'unit-set' | 'inventory-card'
+  | 'subcontract-type' | 'subcontract-receipt' | 'script';
+
+// Subcontract Type / Subcontract Receipt — the two real columns on MD_SubcontractType/
+// MD_SubcontractReceipt (see legacy-master-lookup.service.ts's TABLES config for the master CRUD
+// side of these same two tables). Declared inline rather than imported from that service, which
+// only exports column NAMES as string literals inside its TABLES config, not a reusable array —
+// same "just the real column names" convention as every other SOURCES entry below.
+const SUBCONTRACT_TYPE_COLUMNS = ['SubcontractTypeCode', 'SubcontractTypeName'] as const;
+const SUBCONTRACT_RECEIPT_COLUMNS = ['SubcontractReceiptCode', 'SubcontractReceiptName'] as const;
 
 export interface WorklistSourceFields {
   source: WorklistSourceKey;
@@ -49,6 +58,19 @@ const SOURCES: WorklistSourceFields[] = [
   { source: 'size-set', label: 'Size List', fields: SIZE_SET_COLUMNS },
   { source: 'unit-set', label: 'Unit Set List', fields: UNIT_SET_COLUMNS },
   { source: 'inventory-card', label: 'Inventory Card List', fields: INVENTORY_CARD_COLUMNS },
+  // Joined targets ONLY (see worklist-rows.service.ts's RELATIONSHIPS['purchase-receipt']) — a
+  // worklist field with one of these sources resolves the real Name via a LEFT JOIN off the raw
+  // SubcontractTypeId/SubcontractReceiptId columns already on IM_Receipt (Standard's own "Add
+  // Record" grid still shows the raw id from the 'purchase-receipt' self-source unchanged; this
+  // is an additional, human-readable alternative, not a replacement).
+  { source: 'subcontract-type', label: 'Subcontract Type', fields: SUBCONTRACT_TYPE_COLUMNS },
+  { source: 'subcontract-receipt', label: 'Subcontract Receipt', fields: SUBCONTRACT_RECEIPT_COLUMNS },
+  // Script — joined target only (see worklist-rows.service.ts's RELATIONSHIPS['purchase-receipt']
+  // .script), the parent Subcontract Order (IM_OrderReceipt, ReceiptType=3) a Subcontract Receipt
+  // references via its own new ScriptId column. Reuses Purchase Order's own HEADER_COLUMNS
+  // wholesale (same table, same columns — see order-types.config.ts) exactly like the existing
+  // 'purchase-order' source already does for Subcontract Order's own self-source fields.
+  { source: 'script', label: 'Script (Subcontract Order)', fields: PURCHASE_ORDER_COLUMNS },
 ];
 
 // Scopes the field picker to one screen's own source(s) when that screen's page.tsx passes its

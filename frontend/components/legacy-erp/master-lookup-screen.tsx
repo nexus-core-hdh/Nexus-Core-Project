@@ -102,6 +102,7 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MasterLookupRow | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
 
   const codeInputRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef(new Map<number, HTMLTableRowElement>());
@@ -183,6 +184,22 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
       toast.error(e.message || "Failed to save");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Activate/Deactivate — same "click the Status badge" interaction General Settings' own
+  // Approval Configuration screen already uses for its own isActive toggle. Resends the row's
+  // current code/name alongside the flipped flag (legacy-master-lookup.service.ts's update()
+  // requires both) so this never has to duplicate that validation client-side.
+  const toggleActive = async (row: MasterLookupRow) => {
+    setTogglingId(row.id);
+    try {
+      await legacyErpApi.masterLookup.update(masterKey, row.id, { code: row.code, name: row.name, active: !row.active });
+      setRows((p) => p.map((r) => (r.id === row.id ? { ...r, active: !row.active } : r)));
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update status");
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -363,7 +380,14 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
                               <TableCell className="py-3"><span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span></TableCell>
                               <TableCell className="py-3 font-medium">{row.name}</TableCell>
                               <TableCell className="py-3">
-                                <Badge variant={isActive ? "default" : "secondary"} className="text-[11px] font-normal">{isActive ? "Active" : "Inactive"}</Badge>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); toggleActive(row); }}
+                                  disabled={togglingId === row.id}
+                                  title="Click to toggle Active/Inactive"
+                                >
+                                  <Badge variant={isActive ? "default" : "secondary"} className="text-[11px] font-normal">{isActive ? "Active" : "Inactive"}</Badge>
+                                </button>
                               </TableCell>
                               <TableCell className="py-3 text-right">
                                 {/* Maintenance actions (View/Edit/Delete) are ALWAYS present, regardless

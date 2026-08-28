@@ -165,7 +165,16 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
     blurTimer.current = setTimeout(() => setOpen(false), 150);
   };
 
-  const showNoMatch = open && searched && query.trim().length > 0 && options.length === 0;
+  // Was previously gated on `query.trim().length > 0` — i.e. only ever shown AFTER the user had
+  // typed something with no matches. That left focus-with-zero-typing on a master with zero
+  // Active rows rendering nothing at all: the dropdown panel itself only renders when
+  // `options.length > 0`, so an empty result from the open-on-focus search (onFocus already
+  // calls runSearch(query) — see above, this is existing behavior, not new) was indistinguishable
+  // from "the field ignored the click". Splitting into two messages (no records configured at
+  // all vs. no match for what was typed) fixes that dead-end for every field using this shared
+  // component, not just Subcontract Type.
+  const showEmpty = open && searched && options.length === 0;
+  const hasQuery = query.trim().length > 0;
 
   return (
     <div className={cn("relative", compact ? "" : "space-y-2", compact ? "" : spanClass(span))}>
@@ -220,10 +229,14 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
         </div>
       )}
 
-      {showNoMatch && (
+      {showEmpty && (
         <div className="absolute z-50 mt-1 flex w-full items-center gap-2 rounded-md border bg-popover px-3 py-2 text-xs text-muted-foreground shadow-md">
           <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-          <span>No matching {label} found. Keep typing, or press <kbd className="rounded border bg-muted px-1 font-mono">F2</kbd> to open the full list.</span>
+          {hasQuery ? (
+            <span>No matching {label} found. Keep typing, or press <kbd className="rounded border bg-muted px-1 font-mono">F2</kbd> to open the full list.</span>
+          ) : (
+            <span>No {label} records configured yet. Press <kbd className="rounded border bg-muted px-1 font-mono">F2</kbd> to add one.</span>
+          )}
         </div>
       )}
     </div>

@@ -42,6 +42,25 @@ const RECEIPT_TYPE = 2; // "[2-Purchase Receipt]" — see comment above
 export const HEADER_COLUMNS = [
   'ReceiptNo', 'ReceiptType', 'ReceiptDate', 'ShipmentDate', 'DocumentNo',
   'CurrentAccountId', 'InWarehouseId', 'PlateNumber', 'DriverName', 'IsApproved',
+  // Subcontract Type / Subcontract Receipt — only ever populated by the frontend form for
+  // receiptType in {11, 12, 134, 133} (see SUBCONTRACT_RECEIPT_TYPES in frontend's
+  // receipt-types.ts), but present in HEADER_COLUMNS unconditionally, same convention as
+  // DriverName/PlateNumber above (real columns on every row of this shared table, just only
+  // meaningful/rendered for certain types). Two brand-new nullable columns — confirmed via a
+  // whole-repo + live-schema search that no existing column represented either concept — FK'd
+  // to MD_SubcontractType/MD_SubcontractReceipt respectively (see legacy-master-lookup.service.ts's
+  // TABLES config), validated against the correct master by assertValidMasterRef() below so
+  // neither can ever be cross-mapped into the other's id space.
+  'SubcontractTypeId', 'SubcontractReceiptId',
+  // Script — the parent Subcontract Order (IM_OrderReceipt, ReceiptType=3) this whole receipt
+  // belongs to. A brand-new nullable column (confirmed via live-schema search: no existing
+  // header-level FK from IM_Receipt to IM_OrderReceipt — the closest existing link,
+  // IM_ReceiptItem.OrderReceiptItemId, is line-level/optional via Pending Orders import, not a
+  // mandatory whole-document reference). Optional — no form field sets it on new records anymore
+  // (removed per request); validated against IM_OrderReceipt ReceiptType=3 specifically by
+  // assertValidScript whenever it IS present, so it can never point at a Purchase Order or any
+  // other order type.
+  'ScriptId',
 ] as const;
 
 // Detail grid columns. The first 9 (through 'SpecialCode') are the original editable set —
@@ -144,25 +163,87 @@ export class InventoryReceiptService {
   // — any caller that doesn't pass them (i.e. every existing InventoryReceiptController route)
   // generates byte-identical SQL to before. Added so receipt-type.controller.ts (the generic
   // "other 11 receipt types" route) can reuse this exact same service instead of duplicating it.
-  async list(search?: string, receiptType: number = RECEIPT_TYPE) {
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "IM_Receipt"
-          WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
-            AND ("ReceiptNo" ILIKE ${`%${search}%`} OR "DocumentNo" ILIKE ${`%${search}%`})
-          ORDER BY "ReceiptNo" DESC LIMIT 50
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "IM_Receipt"
-          WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
-          ORDER BY "ReceiptNo" DESC LIMIT 50
-        `);
+  // Qualified rebuild of HEADER_SELECT (rather than reusing that shared unqualified fragment as-
+  // is) — MD_SubcontractType/MD_SubcontractReceipt/IM_OrderReceipt all have their own "RecId"
+  // columns too, so an unqualified "RecId" in the SELECT list would be ambiguous the moment
+  // they're joined in. Shared by list()/get() below so both resolve Subcontract Type/Receipt/
+  // Script's display values identically. Deliberately NOT filtered by InUse/deleted-target-order
+  // beyond IsDeleted=0 — an already-saved record referencing a since-deactivated Type/Receipt or
+  // a since-deleted Script must still show its real value (spec requirement); only NEW selections
+  // are Active-only, enforced client-side by each picker's own search().
+  private subcontractJoinedSelect() {
+    const qualifiedHeaderSelect = Prisma.raw(
+      ['"IM_Receipt"."RecId" as id', ...HEADER_COLUMNS.map((c) => `"IM_Receipt"."${c}" as "${camel(c)}"`)].join(', '),
+    );
+    return Prisma.sql`
+      SELECT ${qualifiedHeaderSelect},
+        st."SubcontractTypeName" as "subcontractTypeName",
+        sr."SubcontractReceiptName" as "subcontractReceiptName",
+        sc."ReceiptNo" as "scriptReceiptNo"
+      FROM "IM_Receipt"
+      LEFT JOIN "MD_SubcontractType" st ON st."RecId" = "IM_Receipt"."SubcontractTypeId"
+      LEFT JOIN "MD_SubcontractReceipt" sr ON sr."RecId" = "IM_Receipt"."SubcontractReceiptId"
+      LEFT JOIN "IM_OrderReceipt" sc ON sc."RecId" = "IM_Receipt"."ScriptId"
+    `;
+  }
+
+  // `subcontractTypeId` — Subcontract Receipts List's own "Subcontractation" filter dropdown;
+  // every other existing caller omits it and gets byte-identical rows to before.
+  //
+  // The extra joins/aggregate here are List-specific (the single-record get() below has no need
+  // for them — its own hydrate() already resolves Current Account/Warehouse separately, and has
+  // no "Receipt Total" summary field): Current Account Code/Name (FI_Account), Warehouse Code
+  // (IM_Warehouse) — both already-existing masters this table's own FK columns already point at,
+  // same join shape as subcontractJoinedSelect() above — and a per-receipt "Receipt Total",
+  // reusing the EXACT existing calculation already used on the detail form's own line grid
+  // (inventory-receipt-line-grid.tsx's totalAmount: `realRows.reduce((s, r) => s +
+  // num(r.netItemTotal ?? 0), 0)`) — same NetItemTotal column, same "null treated as 0" rule,
+  // just computed server-side as SUM() instead of client-side reduce() so it can be a sortable/
+  // searchable list column without loading every receipt's full line grid.
+  async list(search?: string, receiptType: number = RECEIPT_TYPE, subcontractTypeId?: number) {
+    const qualifiedHeaderSelect = Prisma.raw(
+      ['"IM_Receipt"."RecId" as id', ...HEADER_COLUMNS.map((c) => `"IM_Receipt"."${c}" as "${camel(c)}"`)].join(', '),
+    );
+    const searchFilter = search
+      ? Prisma.sql`AND (
+          "IM_Receipt"."ReceiptNo" ILIKE ${`%${search}%`}
+          OR "IM_Receipt"."DocumentNo" ILIKE ${`%${search}%`}
+          OR acc."CurrentAccountCode" ILIKE ${`%${search}%`}
+          OR acc."CurrentAccountName" ILIKE ${`%${search}%`}
+          OR wh."WarehouseCode" ILIKE ${`%${search}%`}
+          OR wh."WarehouseName" ILIKE ${`%${search}%`}
+          OR st."SubcontractTypeName" ILIKE ${`%${search}%`}
+        )`
+      : Prisma.sql``;
+    const subcontractTypeFilter = subcontractTypeId !== undefined
+      ? Prisma.sql`AND "IM_Receipt"."SubcontractTypeId" = ${subcontractTypeId}`
+      : Prisma.sql``;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT ${qualifiedHeaderSelect},
+        st."SubcontractTypeName" as "subcontractTypeName",
+        acc."CurrentAccountCode" as "currentAccountCode",
+        acc."CurrentAccountName" as "currentAccountName",
+        wh."WarehouseCode" as "warehouseCode",
+        COALESCE(tot."total", 0) as "receiptTotal"
+      FROM "IM_Receipt"
+      LEFT JOIN "MD_SubcontractType" st ON st."RecId" = "IM_Receipt"."SubcontractTypeId"
+      LEFT JOIN "FI_Account" acc ON acc."RecId" = "IM_Receipt"."CurrentAccountId"
+      LEFT JOIN "IM_Warehouse" wh ON wh."RecId" = "IM_Receipt"."InWarehouseId"
+      LEFT JOIN LATERAL (
+        SELECT SUM(COALESCE(ri."NetItemTotal", 0)) as total
+        FROM "IM_ReceiptItem" ri
+        WHERE ri."InventoryReceiptId" = "IM_Receipt"."RecId" AND ri."IsDeleted" = 0
+      ) tot ON true
+      WHERE "IM_Receipt"."IsDeleted" = 0 AND "IM_Receipt"."ReceiptType" = ${receiptType} ${searchFilter} ${subcontractTypeFilter}
+      ORDER BY "IM_Receipt"."ReceiptNo" DESC LIMIT 50
+    `);
     return sanitizeRawRow(rows);
   }
 
   async get(id: number, receiptType: number = RECEIPT_TYPE) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "IM_Receipt" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
+      ${this.subcontractJoinedSelect()}
+      WHERE "IM_Receipt"."RecId" = ${id} AND "IM_Receipt"."IsDeleted" = 0 AND "IM_Receipt"."ReceiptType" = ${receiptType}
     `);
     if (!rows.length) throw new NotFoundException('Inventory receipt not found');
     return sanitizeRawRow(rows[0]);
@@ -190,6 +271,46 @@ export class InventoryReceiptService {
     const lastSeq = rows.length ? parseInt(String(rows[0].code).split('-').pop() || '0', 10) : 0;
     const next = (Number.isFinite(lastSeq) ? lastSeq : 0) + 1;
     return `${numberPrefix}-${next}`;
+  }
+
+  // Subcontract Type / Subcontract Receipt write-time guard — confirms a submitted id genuinely
+  // exists in the SPECIFIC master table it's supposed to reference (soft-deleted rows excluded,
+  // same "IsDeleted = 0" convention as every other master here), so an id that only exists in
+  // the OTHER master (or doesn't exist at all) is rejected outright. This is what makes "no
+  // cross-mapping between Type and Receipt" a backend guarantee rather than a frontend-only
+  // convention — the frontend never being the authority on this was an explicit requirement.
+  // Deliberately does NOT check InUse/Active: an already-saved record referencing a since-
+  // deactivated value must keep loading/saving correctly (only NEW selections are restricted to
+  // Active rows, and that restriction already lives client-side in the picker's own active-only
+  // search — see legacy-master-lookup.service.ts's search()).
+  private async assertValidMasterRef(table: 'MD_SubcontractType' | 'MD_SubcontractReceipt', id: number, fieldLabel: string) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "${Prisma.raw(table)}" WHERE "RecId" = ${id} AND "IsDeleted" = 0
+    `);
+    if (!rows.length) throw new BadRequestException(`Invalid ${fieldLabel} selected.`);
+  }
+
+  // Script — validated against IM_OrderReceipt filtered to ReceiptType=3 specifically (Subcontract
+  // Order), the same "validate against the CORRECT table" guarantee assertValidMasterRef gives
+  // Subcontract Type/Receipt — an id belonging to a Purchase Order (ReceiptType=1) or any other
+  // order type is rejected, not silently accepted.
+  private async assertValidScript(scriptId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "IM_OrderReceipt" WHERE "RecId" = ${scriptId} AND "ReceiptType" = 3 AND "IsDeleted" = 0
+    `);
+    if (!rows.length) throw new BadRequestException('Invalid Script selected.');
+  }
+
+  private async assertValidSubcontractRefs(dto: Record<string, any>) {
+    if (dto.subcontractTypeId !== undefined && dto.subcontractTypeId !== null) {
+      await this.assertValidMasterRef('MD_SubcontractType', Number(dto.subcontractTypeId), 'Subcontract Type');
+    }
+    if (dto.subcontractReceiptId !== undefined && dto.subcontractReceiptId !== null) {
+      await this.assertValidMasterRef('MD_SubcontractReceipt', Number(dto.subcontractReceiptId), 'Subcontract Receipt');
+    }
+    if (dto.scriptId !== undefined && dto.scriptId !== null) {
+      await this.assertValidScript(Number(dto.scriptId));
+    }
   }
 
   private async assertReceiptNoAvailable(receiptNo: string, excludeId?: number, receiptType: number = RECEIPT_TYPE) {
@@ -223,6 +344,7 @@ export class InventoryReceiptService {
     if (dto.isApproved !== undefined && await this.approvalSvc.isApprovalRequired(screenKeyFor(receiptType))) {
       throw new ForbiddenException('This screen requires approval — Is Approved cannot be set directly.');
     }
+    await this.assertValidSubcontractRefs(dto);
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
 
@@ -285,6 +407,7 @@ export class InventoryReceiptService {
     if (dto.isApproved !== undefined && await this.approvalSvc.isApprovalRequired(screenKeyFor(receiptType))) {
       throw new ForbiddenException('This screen requires approval — use the Approve action instead of setting Is Approved directly.');
     }
+    await this.assertValidSubcontractRefs(dto);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) return this.autoApproveIfNotRequired(id, userId, receiptType);

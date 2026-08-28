@@ -29,7 +29,7 @@ import { InventoryReceiptLineGrid, type InventoryReceiptLineGridHandle, type Imp
 import { PendingOrdersDialog } from "./_components/pending-orders-dialog";
 import { RelatedReceiptImportDialog } from "./_components/related-receipt-import-dialog";
 import { CustomizedFieldsTab } from "./_components/customized-fields-tab";
-import { getReceiptTypeConfig } from "@/lib/legacy-erp/receipt-types";
+import { getReceiptTypeConfig, SUBCONTRACT_RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
 import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
 import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
@@ -61,6 +61,8 @@ const emptyForm: Record<string, any> = {
   receiptNo: "", receiptDate: new Date().toISOString().slice(0, 10), shipmentDate: "",
   documentNo: "", plateNumber: "", driverName: "",
   currentAccountId: "", currentAccountLabel: "", inWarehouseId: "", warehouseLabel: "",
+  subcontractTypeId: "", subcontractTypeLabel: "", subcontractReceiptId: "", subcontractReceiptLabel: "",
+  scriptId: "", scriptLabel: "",
 };
 
 const sanitizeRecord = (raw: Record<string, any>): Record<string, any> => {
@@ -247,6 +249,13 @@ export default function InventoryReceiptPage() {
       shipmentDate: r.shipmentDate ? String(r.shipmentDate).slice(0, 10) : "",
       currentAccountLabel: account ? `${(account as any).code} — ${(account as any).name}` : "",
       warehouseLabel: warehouse ? (warehouse as any).warehouseName : "",
+      // get() already resolves these via a LEFT JOIN server-side (see inventory-receipt.service.ts)
+      // — no second round-trip needed, unlike Current Account/Warehouse above. Deliberately not
+      // filtered by Active there, so an already-saved record referencing a since-deactivated
+      // value still shows its real Name here instead of going blank.
+      subcontractTypeLabel: r.subcontractTypeName ?? "",
+      subcontractReceiptLabel: r.subcontractReceiptName ?? "",
+      scriptLabel: r.scriptReceiptNo ?? "",
     });
   };
 
@@ -306,6 +315,16 @@ export default function InventoryReceiptPage() {
         driverName: form.driverName || undefined,
         currentAccountId: Number(form.currentAccountId), inWarehouseId: Number(form.inWarehouseId),
       };
+      // Script/Receipt Type/Subcontract Receipt no longer have form fields (removed per request),
+      // but an existing record that already has values keeps them: hydrate() still loads them
+      // into form state, so an edit-and-save round-trips them unchanged. A brand-new record on
+      // these 4 types simply never sets them (sent as null) — no longer mandatory.
+      const isSubcontractReceiptType = SUBCONTRACT_RECEIPT_TYPES.includes(receiptType as any);
+      if (isSubcontractReceiptType) {
+        dto.subcontractTypeId = form.subcontractTypeId ? Number(form.subcontractTypeId) : null;
+        dto.subcontractReceiptId = form.subcontractReceiptId ? Number(form.subcontractReceiptId) : null;
+        dto.scriptId = form.scriptId ? Number(form.scriptId) : null;
+      }
       if (!receiptId) dto.receiptNo = form.receiptNo?.trim() || undefined;
       let savedId = receiptId;
       if (receiptId) {
@@ -314,6 +333,8 @@ export default function InventoryReceiptPage() {
           ...r, receiptDate: String(r.receiptDate).slice(0, 10),
           shipmentDate: r.shipmentDate ? String(r.shipmentDate).slice(0, 10) : "",
           currentAccountLabel: form.currentAccountLabel, warehouseLabel: form.warehouseLabel,
+          subcontractTypeLabel: form.subcontractTypeLabel, subcontractReceiptLabel: form.subcontractReceiptLabel,
+          scriptLabel: form.scriptLabel,
         });
         setForm(f);
         lastSavedRef.current = f;
@@ -324,6 +345,8 @@ export default function InventoryReceiptPage() {
           ...r, receiptDate: String(r.receiptDate).slice(0, 10),
           shipmentDate: r.shipmentDate ? String(r.shipmentDate).slice(0, 10) : "",
           currentAccountLabel: form.currentAccountLabel, warehouseLabel: form.warehouseLabel,
+          subcontractTypeLabel: form.subcontractTypeLabel, subcontractReceiptLabel: form.subcontractReceiptLabel,
+          scriptLabel: form.scriptLabel,
         });
         setForm(f);
         lastSavedRef.current = f;
@@ -422,7 +445,14 @@ export default function InventoryReceiptPage() {
   // [Status] reads the existing, already-reused IsApproved column — no new column, no new
   // endpoint.
   const statusLabel = form.isApproved ? "Approved" : "Unapproved";
-  const titleText = receiptId ? `${cfg.label} [${receiptType}-${cfg.label}] [${statusLabel}] - ${form.receiptNo}` : `New ${cfg.label}`;
+  // Inserts the business Receipt Type (e.g. "Dyeing") right before the Receipt No when present —
+  // a no-op for every type other than the 4 Subcontract Receipt ones, since subcontractTypeLabel
+  // is only ever populated there (see the field's own conditional rendering above). Script is
+  // deliberately NOT inserted here (spec: don't force it into the title unless the existing
+  // naming architecture safely supports it) — it's persisted/traceable via the form field and
+  // grid/worklist columns instead.
+  const receiptTypeSuffix = form.subcontractTypeLabel ? ` - ${form.subcontractTypeLabel}` : "";
+  const titleText = receiptId ? `${cfg.label} [${receiptType}-${cfg.label}] [${statusLabel}]${receiptTypeSuffix} - ${form.receiptNo}` : `New ${cfg.label}`;
   // Puts this same titleText onto the actual Workspace tab (it already existed for the in-page
   // header above) — a no-op outside the workspace tab stack, see use-workspace-tab-title.ts.
   useWorkspaceTabTitle(titleText);

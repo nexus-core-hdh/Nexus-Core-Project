@@ -18,11 +18,13 @@ import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { getReceiptTypeConfig, SUBCONTRACT_RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
+import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Factory, SearchX,
   ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
+import { cn } from "@/lib/utils";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
@@ -40,20 +42,29 @@ import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 // no new business logic, no schema change.
 const TYPE_OPTIONS = SUBCONTRACT_RECEIPT_TYPES.map((t) => getReceiptTypeConfig(t));
 
-type SortKey = "receiptNo" | "documentNo" | "receiptDate";
+// "receiptType" is included for completeness (spec's "at minimum" sort list) even though every
+// visible row shares the same value while the type dropdown is scoped to one type — sorting by
+// it is a harmless no-op in that case, not a bug.
+type SortKey = "receiptType" | "subcontractTypeName" | "receiptNo" | "receiptDate" | "currentAccountCode" | "receiptTotal";
+// Sorted against the actual underlying number, not the formatted "22,500.0000" display string —
+// every other sort key here is already a plain string/short code, safe for localeCompare.
+const NUMERIC_SORT_KEYS = new Set<SortKey>(["receiptTotal"]);
 
 function SortableHead({
-  children, sortKey, activeKey, dir, onSort,
+  children, sortKey, activeKey, dir, onSort, align,
 }: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void;
+  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void; align?: "right";
 }) {
   const active = activeKey === sortKey;
   return (
     <TableHead
-      className="h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground"
+      className={cn(
+        "h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground",
+        align === "right" && "text-right",
+      )}
       onClick={() => onSort(sortKey)}
     >
-      <span className="group inline-flex items-center gap-1">
+      <span className={cn("group inline-flex items-center gap-1", align === "right" && "justify-end")}>
         {children}
         {active ? (
           dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
@@ -82,15 +93,24 @@ export default function SubcontractReceiptsListPage() {
   // tag, so switching receiptType just re-resolves the same active worklist against the newly
   // selected type's rows.
   const wl = useWorklist({ storageKey: "subcontractReceiptsListWorklists" });
+  // "Subcontractation" filter — the reference screen's own second selector, reusing the existing
+  // Subcontract Type master/MasterAutocompleteField wholesale (see legacy-master-lookup.service.ts's
+  // TABLES config). "" = no filter (every existing behavior before this filter existed).
+  const [subcontractTypeFilterId, setSubcontractTypeFilterId] = useState("");
+  const [subcontractTypeFilterLabel, setSubcontractTypeFilterLabel] = useState("");
 
-  const load = async (type: number, term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (type: number, term?: string, worklistOverride?: Worklist | null, subcontractTypeOverride?: string) => {
     setLoading(true);
     try {
       const typeCfg = getReceiptTypeConfig(type);
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
+      const subType = subcontractTypeOverride !== undefined ? subcontractTypeOverride : subcontractTypeFilterId;
+      // The filter only applies to the Standard path today — a custom worklist's rows come from
+      // the generic cross-source resolver (worklistFields.resolve), which has no
+      // subcontractTypeId param; adding one there is a separate, bigger change than this fix.
       const r: any = worklist
         ? await legacyErpApi.worklistFields.resolve(typeCfg.key, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await legacyErpApi.receipts(type).list(term);
+        : await legacyErpApi.receipts(type).list(term, subType ? Number(subType) : undefined);
       const list = Array.isArray(r) ? r : [];
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
@@ -106,6 +126,16 @@ export default function SubcontractReceiptsListPage() {
 
   const doSearch = () => load(receiptType, search.trim() || undefined);
   const refresh = () => { setSearch(""); load(receiptType); };
+  const onSubcontractTypeFilterSelect = (o: { id: number | string; name: string }) => {
+    setSubcontractTypeFilterId(String(o.id));
+    setSubcontractTypeFilterLabel(o.name);
+    load(receiptType, search.trim() || undefined, wl.activeWorklist, String(o.id));
+  };
+  const onSubcontractTypeFilterClear = () => {
+    setSubcontractTypeFilterId("");
+    setSubcontractTypeFilterLabel("");
+    load(receiptType, search.trim() || undefined, wl.activeWorklist, "");
+  };
 
   // Selected dropdown type has absolute priority, same as receipt-master-data's onTableChange:
   // switching it clears the grid and reloads fresh from the newly selected type, preserving
@@ -158,7 +188,9 @@ export default function SubcontractReceiptsListPage() {
   const sortedRows = useMemo(() => {
     const copy = [...rows];
     copy.sort((a, b) => {
-      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
+      const cmp = NUMERIC_SORT_KEYS.has(sortKey)
+        ? Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0)
+        : String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
       return sortDir === "asc" ? cmp : -cmp;
     });
     return copy;
@@ -198,7 +230,7 @@ export default function SubcontractReceiptsListPage() {
               <Search className="h-3.5 w-3.5 text-muted-foreground" />
             </InputGroupAddon>
             <InputGroupInput
-              placeholder="Search by Receipt No or Document No..."
+              placeholder="Search by Receipt No, Account, Document, or Warehouse..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doSearch()}
@@ -213,16 +245,34 @@ export default function SubcontractReceiptsListPage() {
           </Button>
         </div>
 
-        <Select value={String(receiptType)} onValueChange={onTypeChange}>
-          <SelectTrigger className="h-9 w-72 text-sm">
-            <SelectValue placeholder="Select receipt type" />
-          </SelectTrigger>
-          <SelectContent>
-            {TYPE_OPTIONS.map((o) => (
-              <SelectItem key={o.receiptType} value={String(o.receiptType)}>{o.receiptType}-{o.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          {/* "Subcontractation" filter — reuses the existing Subcontract Type master wholesale
+              (masterKey="subcontract-type") via the shared MasterAutocompleteField: searchable,
+              shows active values, and its own F2/search-icon already opens the real Subcontract
+              Type management screen (Add Record there saves and returns the new value here
+              automatically — no second "Add New" UI needed). `compact` matches this toolbar
+              row's height/no-label styling instead of a full form field's. */}
+          <div className="w-56">
+            <MasterAutocompleteField
+              label="Subcontractation"
+              masterKey="subcontract-type"
+              compact
+              displayValue={subcontractTypeFilterLabel}
+              onSelect={onSubcontractTypeFilterSelect}
+              onClear={onSubcontractTypeFilterClear}
+            />
+          </div>
+          <Select value={String(receiptType)} onValueChange={onTypeChange}>
+            <SelectTrigger className="h-9 w-72 text-sm">
+              <SelectValue placeholder="Select receipt type" />
+            </SelectTrigger>
+            <SelectContent>
+              {TYPE_OPTIONS.map((o) => (
+                <SelectItem key={o.receiptType} value={String(o.receiptType)}>{o.receiptType}-{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
@@ -238,11 +288,24 @@ export default function SubcontractReceiptsListPage() {
                   ))
                 ) : (
                   <>
+                    {/* Exact 9-column order per the reference screen. Receipt Type (technical,
+                        e.g. "11-Outside Process Receive Receipt") is the SAME value for every
+                        row while the type dropdown above scopes the whole grid to one type —
+                        still its own column, matching the reference, and still sortable per
+                        spec (a no-op sort in that case, not a bug). Subcontract is the business
+                        classification (Dyeing/Knitting/...); Current Account Code/Name and In
+                        Warehouse are newly-resolved via list()'s own joins (see
+                        inventory-receipt.service.ts); Receipt Total is a per-receipt SUM of the
+                        existing line-level NetItemTotal column, right-aligned per spec. */}
+                    <SortableHead sortKey="receiptType" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt Type</SortableHead>
+                    <SortableHead sortKey="subcontractTypeName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Subcontract</SortableHead>
                     <SortableHead sortKey="receiptNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt No</SortableHead>
                     <SortableHead sortKey="receiptDate" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt Date</SortableHead>
-                    <SortableHead sortKey="documentNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Document</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Vehicle No</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Driver Name</TableHead>
+                    <SortableHead sortKey="currentAccountCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Current Account Code</SortableHead>
+                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Current Account Name</TableHead>
+                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Document No</TableHead>
+                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">In Warehouse</TableHead>
+                    <SortableHead sortKey="receiptTotal" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right">Receipt Total</SortableHead>
                   </>
                 )}
                 <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
@@ -251,11 +314,11 @@ export default function SubcontractReceiptsListPage() {
             <TableBody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 5) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 9) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               ) : rows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 5) + 1} className="py-12">
+                  <TableCell colSpan={(activeColumns?.length ?? 9) + 1} className="py-12">
                     <Empty>
                       <EmptyHeader>
                         <EmptyMedia variant="icon">{searched ? <SearchX /> : <Factory />}</EmptyMedia>
@@ -285,13 +348,22 @@ export default function SubcontractReceiptsListPage() {
                     ))
                   ) : (
                     <>
+                      {/* Same string every row while the type dropdown scopes the grid to one
+                          type — the actual configured label (getReceiptTypeConfig), never
+                          hardcoded/abbreviated, matching the form/title's own convention. */}
+                      <TableCell className="py-3 whitespace-nowrap">{receiptType}-{cfg.label}</TableCell>
+                      <TableCell className="py-3">{row.subcontractTypeName || <span className="text-muted-foreground">—</span>}</TableCell>
                       <TableCell className="py-3">
                         <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>
                       </TableCell>
                       <TableCell className="py-3">{row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"}</TableCell>
+                      <TableCell className="py-3">{row.currentAccountCode || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="py-3">{row.currentAccountName || <span className="text-muted-foreground">—</span>}</TableCell>
                       <TableCell className="py-3">{row.documentNo || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.plateNumber || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.driverName || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="py-3">{row.warehouseCode || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="py-3 text-right tabular-nums">
+                        {Number(row.receiptTotal ?? 0).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+                      </TableCell>
                     </>
                   )}
                   <TableCell className="py-3 text-right">

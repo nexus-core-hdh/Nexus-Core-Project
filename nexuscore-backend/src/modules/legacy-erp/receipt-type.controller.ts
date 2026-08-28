@@ -28,9 +28,15 @@ export class ReceiptTypeController {
     return cfg;
   }
 
-  @Get() list(@Param('receiptType') receiptType: string, @Query('search') search?: string) {
+  @Get() list(
+    @Param('receiptType') receiptType: string,
+    @Query('search') search?: string,
+    // Subcontract Receipts List's own "Subcontractation" filter dropdown — every other caller
+    // omits this.
+    @Query('subcontractTypeId') subcontractTypeId?: string,
+  ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.list(search, cfg.receiptType);
+    return this.svc.list(search, cfg.receiptType, subcontractTypeId ? Number(subcontractTypeId) : undefined);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptType') receiptType: string, @Param('receiptNo') receiptNo: string) {
