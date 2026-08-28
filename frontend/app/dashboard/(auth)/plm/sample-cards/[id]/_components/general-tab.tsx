@@ -43,6 +43,11 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
   const [sizesDialogOpen, setSizesDialogOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pasteZoneRef = useRef<HTMLDivElement>(null);
+  // Synchronous re-entrancy guard for the clipboard button — `uploading` state only flips
+  // true once uploadFile() actually starts (after the clipboard read/permission prompt
+  // resolves), so a rapid double-click before that state update lands could otherwise fire
+  // navigator.clipboard.read() twice and add the same clipboard image as two attachments.
+  const clipboardBusyRef = useRef(false);
   // Populated by the Colourway picker's fetchOptions as search results come back, so onSelect
   // can resolve a picked swatch's colorName/pantoneCode without depending on a separately
   // fetched (and easily stale/short) full swatch list.
@@ -147,6 +152,39 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
         await uploadFile(file);
         return;
       }
+    }
+  };
+
+  // "Add Picture from Clipboard" button (as opposed to the paste-zone above, which needs the
+  // user to click into it first) — reads the OS clipboard directly via the Async Clipboard API
+  // on click, but still funnels the result through the exact same uploadFile()/uploadApi
+  // .uploadSingle() path as every other attachment here, so it's the same upload/storage
+  // workflow and the same StyleCard.attachments record shape, not a second mechanism.
+  const onClipboardButtonClick = async () => {
+    if (!navigator.clipboard?.read) {
+      toast.error("Clipboard access is not supported in this browser");
+      return;
+    }
+    if (clipboardBusyRef.current) return;
+    clipboardBusyRef.current = true;
+    try {
+      const items = await navigator.clipboard.read();
+      let found = false;
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          found = true;
+          const blob = await item.getType(imageType);
+          const file = new File([blob], `clipboard-${Date.now()}.${imageType.split("/")[1] || "png"}`, { type: imageType });
+          await uploadFile(file);
+          break;
+        }
+      }
+      if (!found) toast.error("No image found in clipboard. Copy an image first, then try again.");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not read clipboard. Grant clipboard permission, or use Ctrl+V in the paste box below.");
+    } finally {
+      clipboardBusyRef.current = false;
     }
   };
 
@@ -271,6 +309,9 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
             <div className="flex items-center gap-1.5">
               <Button variant="outline" size="sm" className="h-7 text-xs" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
                 <Upload className="h-3.5 w-3.5 mr-1" />Add New Document
+              </Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs" disabled={uploading} onClick={onClipboardButtonClick}>
+                <ClipboardPaste className="h-3.5 w-3.5 mr-1" />Add Picture from Clipboard
               </Button>
             </div>
             <input ref={fileInputRef} type="file" className="hidden" onChange={onFileSelected} />
