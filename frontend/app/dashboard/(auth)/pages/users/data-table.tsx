@@ -1,19 +1,8 @@
 "use client";
 
 import * as React from "react";
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable
-} from "@tanstack/react-table";
-import { ArrowUpDown, Columns, MoreHorizontal, PlusCircle, Key } from "lucide-react";
+import { ColumnDef } from "@tanstack/react-table";
+import { ArrowUpDown, MoreHorizontal, PlusCircle, Key } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -27,25 +16,16 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from "@/components/ui/table";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime, generateAvatarFallback } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ResetPasswordDialog } from "./reset-password-dialog";
+import { DataTable } from "@/components/shared/data-table/data-table";
 
 export type User = {
   id: number;
@@ -387,10 +367,6 @@ export const createColumns = (
 ];
 
 export default function UsersDataTable({ data }: { data: User[] }) {
-  const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
-  const [rowSelection, setRowSelection] = React.useState({});
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = React.useState(false);
   const [selectedUser, setSelectedUser] = React.useState<{ id: number; name: string } | null>(null);
 
@@ -400,25 +376,6 @@ export default function UsersDataTable({ data }: { data: User[] }) {
   };
 
   const columns = React.useMemo(() => createColumns(handleResetPassword), []);
-
-  const table = useReactTable({
-    data,
-    columns,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    onColumnVisibilityChange: setColumnVisibility,
-    onRowSelectionChange: setRowSelection,
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-      rowSelection
-    }
-  });
 
   const statuses = [
     {
@@ -483,195 +440,113 @@ export default function UsersDataTable({ data }: { data: User[] }) {
 
   return (
     <div className="w-full">
-      <div className="flex items-center gap-4 py-4">
-        <div className="flex gap-2">
-          <Input
-            placeholder="Search users..."
-            value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
-            onChange={(event) => table.getColumn("name")?.setFilterValue(event.target.value)}
-            className="max-w-sm"
-          />
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline">
-                <PlusCircle />
-                Status
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-52 p-0">
-              <Command>
-                <CommandInput placeholder="Status" className="h-9" />
-                <CommandList>
-                  <CommandEmpty>No status found.</CommandEmpty>
-                  <CommandGroup>
-                    {statuses.map((status) => (
-                      <CommandItem key={status.value} value={status.value}>
-                        <div className="flex items-center space-x-3 py-1">
-                          <Checkbox id={status.value} />
-                          <label
-                            htmlFor={status.value}
-                            className="leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                            {status.label}
-                          </label>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline">
-                <PlusCircle />
-                Plan
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-52 p-0">
-              <Command>
-                <CommandInput placeholder="Plan" className="h-9" />
-                <CommandList>
-                  <CommandEmpty>No plan found.</CommandEmpty>
-                  <CommandGroup>
-                    {plans.map((plan) => (
-                      <CommandItem key={plan.value} value={plan.value}>
-                        <div className="flex items-center space-x-3 py-1">
-                          <Checkbox id={plan.value} />
-                          <label
-                            htmlFor={plan.value}
-                            className="leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                            {plan.label}
-                          </label>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline">
-                <PlusCircle className="h-4 w-4" />
-                Role
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-52 p-0">
-              <Command>
-                <CommandInput placeholder="Role" className="h-9" />
-                <CommandList>
-                  <CommandEmpty>No role found.</CommandEmpty>
-                  <CommandGroup>
-                    {roles.map((role) => (
-                      <CommandItem
-                        key={role.value}
-                        value={role.value}
-                        onSelect={(currentValue) => {
-                          // setValue(currentValue === value ? "" : currentValue);
-                          // setOpen(false);
-                        }}>
-                        <div className="flex items-center space-x-3 py-1">
-                          <Checkbox id={role.value} />
-                          <label
-                            htmlFor={role.value}
-                            className="leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                            {role.label}
-                          </label>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto">
-              <Columns /> <span className="hidden md:inline">Columns</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => {
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    className="capitalize"
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(value) => column.toggleVisibility(value)}>
-                    {column.id}
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No results.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <div className="flex items-center justify-end space-x-2 pt-4">
-        <div className="text-muted-foreground flex-1 text-sm">
-          {table.getFilteredSelectedRowModel().rows.length} of{" "}
-          {table.getFilteredRowModel().rows.length} row(s) selected.
-        </div>
-        <div className="space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}>
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}>
-            Next
-          </Button>
-        </div>
-      </div>
+      <DataTable
+        columns={columns}
+        data={data}
+        storageKey="users"
+        searchColumn="name"
+        searchPlaceholder="Search users..."
+        toolbarExtra={() => (
+          <>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline">
+                  <PlusCircle />
+                  Status
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-52 p-0">
+                <Command>
+                  <CommandInput placeholder="Status" className="h-9" />
+                  <CommandList>
+                    <CommandEmpty>No status found.</CommandEmpty>
+                    <CommandGroup>
+                      {statuses.map((status) => (
+                        <CommandItem key={status.value} value={status.value}>
+                          <div className="flex items-center space-x-3 py-1">
+                            <Checkbox id={status.value} />
+                            <label
+                              htmlFor={status.value}
+                              className="leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                              {status.label}
+                            </label>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline">
+                  <PlusCircle />
+                  Plan
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-52 p-0">
+                <Command>
+                  <CommandInput placeholder="Plan" className="h-9" />
+                  <CommandList>
+                    <CommandEmpty>No plan found.</CommandEmpty>
+                    <CommandGroup>
+                      {plans.map((plan) => (
+                        <CommandItem key={plan.value} value={plan.value}>
+                          <div className="flex items-center space-x-3 py-1">
+                            <Checkbox id={plan.value} />
+                            <label
+                              htmlFor={plan.value}
+                              className="leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                              {plan.label}
+                            </label>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline">
+                  <PlusCircle className="h-4 w-4" />
+                  Role
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-52 p-0">
+                <Command>
+                  <CommandInput placeholder="Role" className="h-9" />
+                  <CommandList>
+                    <CommandEmpty>No role found.</CommandEmpty>
+                    <CommandGroup>
+                      {roles.map((role) => (
+                        <CommandItem
+                          key={role.value}
+                          value={role.value}
+                          onSelect={(currentValue) => {
+                            // setValue(currentValue === value ? "" : currentValue);
+                            // setOpen(false);
+                          }}>
+                          <div className="flex items-center space-x-3 py-1">
+                            <Checkbox id={role.value} />
+                            <label
+                              htmlFor={role.value}
+                              className="leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                              {role.label}
+                            </label>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </>
+        )}
+      />
 
       {selectedUser && (
         <ResetPasswordDialog

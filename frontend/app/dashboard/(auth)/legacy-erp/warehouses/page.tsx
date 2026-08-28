@@ -120,6 +120,8 @@ export default function WarehousesPage() {
 
       <PlmCrudTable
         title=""
+        storageKey="warehouses"
+        columnCustomization="widthOnly"
         data={data}
         loading={loading}
         searchKey={activeColumns ? worklistSearchKey : "warehouseName"}

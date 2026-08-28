@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -19,13 +17,14 @@ import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Factory, SearchX,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown,
+  ChevronRight,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // Subcontract Order list — same architecture as purchase-orders-list/page.tsx (Order Screen
 // Replication's second entry), reusing the exact same components/patterns. Customize Worklist
@@ -44,29 +43,6 @@ function ApprovalStatusBadge({ status }: { status?: string }) {
   if (status === "approved") return <Badge className="h-5 text-[11px] font-normal">Approved</Badge>;
   if (status === "rejected") return <Badge variant="destructive" className="h-5 text-[11px] font-normal">Rejected</Badge>;
   return <Badge variant="secondary" className="h-5 text-[11px] font-normal">Unapproved</Badge>;
-}
-
-function SortableHead({
-  children, sortKey, activeKey, dir, onSort,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className="h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground"
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="group inline-flex items-center gap-1">
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
 }
 
 export default function SubcontractOrderListPage() {
@@ -131,6 +107,47 @@ export default function SubcontractOrderListPage() {
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  // Unified column model for WorklistTable — see purchase-orders-list/page.tsx's own comment
+  // for the full rationale. Only the Standard columns are ever `sortable: true`.
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    const cols: WorklistTableColumn<any>[] = [
+      {
+        key: "receiptNo", label: "Receipt No", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>,
+      },
+      {
+        key: "receiptDate", label: "Order Date", sortable: true,
+        render: (row: any) => (row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"),
+      },
+      {
+        key: "documentNo", label: "Document No", sortable: true,
+        render: (row: any) => row.documentNo || <span className="text-muted-foreground">—</span>,
+      },
+      {
+        key: "grandTotal", label: "Grand Total",
+        render: (row: any) => (row.grandTotal != null ? Number(row.grandTotal).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"),
+      },
+    ];
+    if (approvalRequired) {
+      cols.push({ key: "approvalStatus", label: "Approval Status", render: (row: any) => <ApprovalStatusBadge status={row.approvalStatus} /> });
+    }
+    return cols;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns, approvalRequired]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
+  ];
 
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/subcontract-orders?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/subcontract-orders?id=${id}&mode=edit`);
@@ -226,84 +243,35 @@ export default function SubcontractOrderListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <SortableHead sortKey="receiptNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt No</SortableHead>
-                    <SortableHead sortKey="receiptDate" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Order Date</SortableHead>
-                    <SortableHead sortKey="documentNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Document No</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Grand Total</TableHead>
-                    {approvalRequired && <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Approval Status</TableHead>}
-                  </>
-                )}
-                <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? (approvalRequired ? 5 : 4)) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? (approvalRequired ? 5 : 4)) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Factory />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : "No subcontract orders yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "You can create a new Subcontract Order." : 'Click "Create New" to add your first Subcontract Order.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      <EmptyContent>
-                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
-                      </EmptyContent>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row) => {
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
-                ];
-                return (
-                <RowContextMenu key={row.id} actions={rowActions}>
-                <TableRow className="group cursor-pointer hover:bg-muted/40" onDoubleClick={() => view(row.id)}>
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>
-                      </TableCell>
-                      <TableCell className="py-3">{row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"}</TableCell>
-                      <TableCell className="py-3">{row.documentNo || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3 font-medium">{row.grandTotal != null ? Number(row.grandTotal).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</TableCell>
-                      {approvalRequired && <TableCell className="py-3"><ApprovalStatusBadge status={row.approvalStatus} /></TableCell>}
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                  </TableCell>
-                </TableRow>
-                </RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="subcontractOrdersList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          onRowDoubleClick={(row) => view(row.id)}
+          renderRowActions={(row) => (
+            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Factory />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No subcontract orders yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Subcontract Order." : 'Click "Create New" to add your first Subcontract Order.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

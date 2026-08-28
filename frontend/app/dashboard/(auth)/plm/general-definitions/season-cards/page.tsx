@@ -59,7 +59,7 @@ export default function SeasonCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Season Cards</p><h1 className="text-xl font-semibold">Season Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="seasonCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm(emptyForm); setEditing(null); setOpen(true); }}
         onEdit={(r: any) => { setForm({ ...emptyForm, ...r }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r: any) => { await plmApi.seasons.delete(r.id); load(); }}

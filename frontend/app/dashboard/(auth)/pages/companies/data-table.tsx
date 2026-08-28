@@ -1,42 +1,19 @@
 "use client";
 
 import * as React from "react";
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable
-} from "@tanstack/react-table";
-import { ArrowUpDown, Columns, MoreHorizontal, Copy, Check } from "lucide-react";
+import { ColumnDef } from "@tanstack/react-table";
+import { ArrowUpDown, MoreHorizontal, Copy, Check } from "lucide-react";
 
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { settingsApi } from "@/lib/api";
-import { getCurrentUser } from "@/lib/auth";
 import { formatDateTime } from "@/lib/utils";
-import { useCallback, useEffect } from "react";
+import { DataTable } from "@/components/shared/data-table/data-table";
 
 export type Company = {
   id: string;
@@ -431,182 +408,18 @@ export const columns: ColumnDef<Company>[] = [
 ];
 
 export default function CompaniesDataTable({ data }: { data: Company[] }) {
-  const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
-  const [rowSelection, setRowSelection] = React.useState({});
-  const [isLoadingPreferences, setIsLoadingPreferences] = React.useState(true);
-
-  // Load column visibility preferences from database
-  useEffect(() => {
-    const loadPreferences = async () => {
-      try {
-        const user = getCurrentUser();
-        if (!user?.id) return;
-
-        const settings = await settingsApi.getUserSettings(user.id);
-        if (settings?.tablePreferences?.companies) {
-          setColumnVisibility(settings.tablePreferences.companies);
-        }
-      } catch (error) {
-        console.error('Failed to load column preferences:', error);
-      } finally {
-        setIsLoadingPreferences(false);
-      }
-    };
-
-    loadPreferences();
-  }, []);
-
-  // Save column visibility preferences to database when they change (debounced)
-  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  const handleColumnVisibilityChange = useCallback((updater: any) => {
-    setColumnVisibility((prev) => {
-      const newVisibility = typeof updater === 'function' ? updater(prev) : updater;
-      
-      // Clear previous timeout
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-
-      // Debounce save by 500ms
-      saveTimeoutRef.current = setTimeout(async () => {
-        try {
-          const user = getCurrentUser();
-          if (!user?.id) return;
-
-          await settingsApi.updateTablePreferences(user.id, 'companies', newVisibility);
-        } catch (error) {
-          console.error('Failed to save column preferences:', error);
-        }
-      }, 500);
-      
-      return newVisibility;
-    });
-  }, []);
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const table = useReactTable({
-    data,
-    columns,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    onColumnVisibilityChange: handleColumnVisibilityChange,
-    onRowSelectionChange: setRowSelection,
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-      rowSelection
-    }
-  });
-
+  // Column order/visibility/width/resize now come from the shared DataTable component (the
+  // same useGridColumns-backed mechanism every legacy-erp grid uses) via storageKey "companies".
+  // The previous inline column-visibility persistence here called settingsApi.updateTablePreferences,
+  // which hits a backend route that was never actually implemented (PUT /settings/:userId/table-
+  // preferences 404s) — every save silently failed, so there was no real saved layout to migrate.
   return (
-    <div className="w-full">
-      <div className="flex items-center gap-4 py-4">
-        <Input
-          placeholder="Search companies..."
-          value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
-          onChange={(event) => table.getColumn("name")?.setFilterValue(event.target.value)}
-          className="max-w-sm"
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto">
-              <Columns /> <span className="hidden md:inline">Columns</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => {
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    className="capitalize"
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(value) => column.toggleVisibility(value)}>
-                    {column.id}
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id} className="px-6 py-4 whitespace-nowrap">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="px-6 py-4">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No results.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <div className="flex items-center justify-end space-x-2 pt-4">
-        <div className="text-muted-foreground flex-1 text-sm">
-          {table.getFilteredSelectedRowModel().rows.length} of{" "}
-          {table.getFilteredRowModel().rows.length} row(s) selected.
-        </div>
-        <div className="space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}>
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}>
-            Next
-          </Button>
-        </div>
-      </div>
-    </div>
+    <DataTable
+      columns={columns}
+      data={data}
+      storageKey="companies"
+      searchColumn="name"
+      searchPlaceholder="Search companies..."
+    />
   );
 }

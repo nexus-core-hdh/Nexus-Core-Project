@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -22,6 +20,7 @@ import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-t
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 interface UnitSetRow {
   id: number;
@@ -79,6 +78,50 @@ export default function UnitSetsListPage() {
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    return [
+      {
+        key: "setCode", label: "Code",
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.setCode}</span>,
+      },
+      { key: "setName", label: "Name", render: (row: any) => <span className="font-medium">{row.setName}</span> },
+      {
+        key: "type", label: "Type",
+        render: (row: any) => (
+          row.systemSet ? (
+            <Badge variant="secondary" className="text-[11px] font-normal">System</Badge>
+          ) : (
+            <Badge variant="outline" className="text-[11px] font-normal">User Defined</Badge>
+          )
+        ),
+      },
+      {
+        key: "status", label: "Status",
+        render: (row: any) => (
+          row.inUse ? (
+            <Badge variant="outline" className="border-emerald-400/50 text-[11px] font-normal text-emerald-600 dark:text-emerald-400">Active</Badge>
+          ) : (
+            <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">Inactive</Badge>
+          )
+        ),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget(row), destructive: true, separatorBefore: true },
+  ];
 
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/unit-sets?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/unit-sets?id=${id}&mode=edit`);
@@ -146,94 +189,32 @@ export default function UnitSetsListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Code</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Name</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Type</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
-                  </>
-                )}
-                <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 4) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 4) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Ruler />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : "No unit sets yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "You can create a new Unit Set." : 'Click "Create New" to add your first Unit Set.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      <EmptyContent>
-                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
-                      </EmptyContent>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : rows.map((row: any) => {
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget(row), destructive: true, separatorBefore: true },
-                ];
-                return (
-                <RowContextMenu key={row.id} actions={rowActions}>
-                <TableRow className="group">
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.setCode}</span>
-                      </TableCell>
-                      <TableCell className="py-3 font-medium">{row.setName}</TableCell>
-                      <TableCell className="py-3">
-                        {row.systemSet ? (
-                          <Badge variant="secondary" className="text-[11px] font-normal">System</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[11px] font-normal">User Defined</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="py-3">
-                        {row.inUse ? (
-                          <Badge variant="outline" className="border-emerald-400/50 text-[11px] font-normal text-emerald-600 dark:text-emerald-400">Active</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">Inactive</Badge>
-                        )}
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                  </TableCell>
-                </TableRow>
-                </RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={rows}
+          storageKey="unitSetsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          skeletonRowCount={5}
+          renderRowActions={(row) => (
+            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Ruler />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No unit sets yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Unit Set." : 'Click "Create New" to add your first Unit Set.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

@@ -58,7 +58,7 @@ export default function CompanyCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Company Cards</p><h1 className="text-xl font-semibold">Company Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="companyCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm(emptyForm); setEditing(null); setOpen(true); }}
         onEdit={(r: any) => { setForm({ ...emptyForm, ...r, startOfPeriod: toDateInput(r.startOfPeriod), endOfPeriod: toDateInput(r.endOfPeriod), password: "" }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r: any) => { await plmApi.companyCards.delete(r.id); load(); }}

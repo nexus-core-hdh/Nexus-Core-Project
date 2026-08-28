@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
@@ -14,11 +14,14 @@ import { toast } from "sonner";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
-import { Search, Save, FilePlus2, Plus, Trash2, Scissors, ListX, Settings2 } from "lucide-react";
+import { Search, Save, FilePlus2, Plus, Trash2, Scissors, ListX, Settings2, ListOrdered } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField, FormSwitchField } from "@/components/forms/form-field";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useGridColumns } from "@/hooks/use-grid-columns";
+import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { cn } from "@/lib/utils";
 import { GridInput, uid } from "./_components/grid-input";
 
 interface TrimLine {
@@ -49,6 +52,36 @@ const blankLine = (): TrimLine => ({
   orderQuantity: "", unit: "", quantity: "", wastePct: "", forexId: "", forexPrice: "", unitPrice: "",
   trimInventoryId: null,
 });
+
+// ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns.
+// storageKey "trimCardGrid" is net-new (this grid never had column customization before).
+type ColKey = "trimCode" | "trimName" | "explanation" | "orderQuantity" | "unit" | "quantity" | "wastePct" | "forexId" | "forexPrice" | "unitPrice";
+type ColumnDef = { key: ColKey; label: string; align?: "left" | "right" };
+const COLUMNS: ColumnDef[] = [
+  { key: "trimCode", label: "Trim Code" },
+  { key: "trimName", label: "Trim Name" },
+  { key: "explanation", label: "Explanation" },
+  { key: "orderQuantity", label: "Order Qty", align: "right" },
+  { key: "unit", label: "Unit" },
+  { key: "quantity", label: "Quantity", align: "right" },
+  { key: "wastePct", label: "Waste %", align: "right" },
+  { key: "forexId", label: "Forex" },
+  { key: "forexPrice", label: "Forex Price", align: "right" },
+  { key: "unitPrice", label: "Unit Price", align: "right" },
+];
+const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
+// Trim Code/Name identify the line and always stay first & visible — same rule every other
+// legacy-erp line grid's own Code/Name pair follows.
+const FIXED_COLS: ColKey[] = ["trimCode", "trimName"];
+const DEFAULT_WIDTHS: Record<ColKey, number> = {
+  trimCode: 150, trimName: 200, explanation: 200, orderQuantity: 110, unit: 90,
+  quantity: 100, wastePct: 90, forexId: 100, forexPrice: 110, unitPrice: 110,
+};
+const MIN_WIDTHS: Record<ColKey, number> = {
+  trimCode: 110, trimName: 140, explanation: 130, orderQuantity: 80, unit: 70,
+  quantity: 80, wastePct: 70, forexId: 76, forexPrice: 90, unitPrice: 90,
+};
+const DEL_W = 40;
 
 export default function CustomerDefineTrimsPage() {
   const [codeInput, setCodeInput] = useState("");
@@ -312,6 +345,93 @@ export default function CustomerDefineTrimsPage() {
   const isDirty = JSON.stringify({ form, lines }) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
 
+  const gridColumnDefs = useMemo(
+    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+    [],
+  );
+  const gridColumns = useGridColumns<ColKey>({
+    storageKey: "trimCardGrid",
+    columns: gridColumnDefs,
+    fixedColumns: FIXED_COLS,
+  });
+  const displayColumnDefs = useMemo(
+    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    [gridColumns.displayColumnDefs],
+  );
+  const colWidths = gridColumns.colWidths;
+  const startResize = gridColumns.startResize;
+  const resetColumnWidth = gridColumns.resetWidth;
+  const totalTableWidth = gridColumns.totalWidth(DEL_W);
+
+  // Cell content per column key — identical field bindings/editors to the original hardcoded
+  // markup, just looked up by key so Manage Columns can show/hide/reorder them.
+  const renderLineCell = (line: TrimLine, key: ColKey) => {
+    switch (key) {
+      case "trimCode":
+        return activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "trimCode" ? (
+          <AutocompleteTextCell
+            autoFocus
+            startOpen={false}
+            value={line.trimCode}
+            options={trimCardOptions}
+            showDropdownIcon
+            onChange={(v) => updateLine(line.id, { trimCode: v })}
+            onCommit={(v) => { commitTrimCode(line.id, v); setActiveAutocomplete(null); }}
+            onCancel={() => setActiveAutocomplete(null)}
+            onSelectOption={(opt) => { handleTrimCodeSelect(line.id, opt); setActiveAutocomplete(null); }}
+          />
+        ) : (
+          <EditableGridInput
+            value={line.trimCode}
+            onChange={() => {}}
+            onFocus={() => setActiveAutocomplete({ lineId: line.id, field: "trimCode" })}
+            readOnly
+            placeholder="Search Trim Code..."
+          />
+        );
+      case "trimName":
+        return <EditableGridInput value={line.trimName} onChange={() => {}} disabled placeholder="Auto-filled from Trim Code" />;
+      case "explanation":
+        return <GridInput value={line.explanation} onChange={(v) => updateLine(line.id, { explanation: v })} />;
+      case "orderQuantity":
+        return <GridInput type="number" align="right" value={line.orderQuantity} onChange={(v) => updateLine(line.id, { orderQuantity: v })} />;
+      case "unit":
+        return activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "unit" ? (
+          <AutocompleteTextCell
+            autoFocus
+            startOpen={false}
+            value={line.unit}
+            options={line.trimInventoryId != null ? (unitOptionsByTrim[String(line.trimInventoryId)] ?? []) : []}
+            showDropdownIcon
+            onChange={(v) => updateLine(line.id, { unit: v })}
+            onCommit={(v) => { commitUnit(line.id, v); setActiveAutocomplete(null); }}
+            onCancel={() => setActiveAutocomplete(null)}
+            onSelectOption={(opt) => { handleUnitSelect(line.id, opt); setActiveAutocomplete(null); }}
+          />
+        ) : (
+          <EditableGridInput
+            value={line.unit}
+            onChange={() => {}}
+            onFocus={() => setActiveAutocomplete({ lineId: line.id, field: "unit" })}
+            readOnly
+            placeholder="Unit"
+          />
+        );
+      case "quantity":
+        return <GridInput type="number" align="right" value={line.quantity} onChange={(v) => updateLine(line.id, { quantity: v })} />;
+      case "wastePct":
+        return <GridInput type="number" align="right" value={line.wastePct} onChange={(v) => updateLine(line.id, { wastePct: v })} />;
+      case "forexId":
+        return <GridInput value={line.forexId} onChange={(v) => updateLine(line.id, { forexId: v })} />;
+      case "forexPrice":
+        return <GridInput type="number" align="right" value={line.forexPrice} onChange={(v) => updateLine(line.id, { forexPrice: v })} />;
+      case "unitPrice":
+        return <GridInput type="number" align="right" value={line.unitPrice} onChange={(v) => updateLine(line.id, { unitPrice: v })} />;
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">
       <LegacyErpBreadcrumb trail={[
@@ -415,30 +535,64 @@ export default function CustomerDefineTrimsPage() {
             {!trimCardId ? (
               <Badge variant="secondary" className="h-5 text-[11px] font-normal">Staged until saved</Badge>
             ) : <span />}
-            <Button size="sm" variant="outline" onClick={addLine}><Plus className="h-3.5 w-3.5 mr-2" />Add Row</Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={gridColumns.manageColumns.openModal}>
+                <ListOrdered className="h-3.5 w-3.5 mr-2" />Manage Columns
+              </Button>
+              <Button size="sm" variant="outline" onClick={addLine}><Plus className="h-3.5 w-3.5 mr-2" />Add Row</Button>
+            </div>
           </div>
           <div className="rounded-xl border shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
+                <colgroup>
+                  {displayColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+                  <col style={{ width: DEL_W }} />
+                </colgroup>
                 <TableHeader>
                   <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Trim Code</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Trim Name</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Explanation</TableHead>
-                    <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Order Qty</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Unit</TableHead>
-                    <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Quantity</TableHead>
-                    <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Waste %</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Forex</TableHead>
-                    <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Forex Price</TableHead>
-                    <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Unit Price</TableHead>
+                    {displayColumnDefs.map((col) => {
+                      const fixed = FIXED_COLS.includes(col.key);
+                      return (
+                        <TableHead
+                          key={col.key}
+                          className={cn(
+                            "relative h-10 p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80",
+                            gridColumns.dragOverColumn === col.key && "bg-primary/15",
+                          )}
+                          onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
+                          onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
+                        >
+                          <span
+                            title={col.label}
+                            draggable={!fixed}
+                            onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
+                            onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
+                            className={cn(
+                              "flex h-10 w-full min-w-0 items-center truncate px-2",
+                              col.align === "right" ? "justify-end" : "justify-start",
+                              !fixed && "cursor-grab active:cursor-grabbing",
+                            )}
+                          >
+                            {col.label}
+                          </span>
+                          <div
+                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                            onMouseDown={startResize(col.key)}
+                            onDoubleClick={() => resetColumnWidth(col.key)}
+                            title="Drag to resize · double-click to reset width"
+                            aria-hidden="true"
+                          />
+                        </TableHead>
+                      );
+                    })}
                     <TableHead className="h-10 w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {lines.length === 0 ? (
                     <TableRow className="hover:bg-transparent">
-                      <TableCell colSpan={11} className="py-8">
+                      <TableCell colSpan={displayColumnDefs.length + 1} className="py-8">
                         <Empty>
                           <EmptyHeader>
                             <EmptyMedia variant="icon"><ListX /></EmptyMedia>
@@ -450,70 +604,9 @@ export default function CustomerDefineTrimsPage() {
                     </TableRow>
                   ) : lines.map((line) => (
                     <TableRow key={line.id} className="group">
-                      {/* Trim Code — real Trim Card binding. Searchable over the live IM_Item
-                          (AccessCode='TRIM') list; picking a suggestion resolves
-                          trimInventoryId + Code + Name + (async) Unit together. Closed at rest
-                          (a plain input, matching every other cell's look) — activating it swaps
-                          in the same AutocompleteTextCell every other lookup cell in the app
-                          uses, only opening its suggestion list once the user actually engages. */}
-                      <TableCell>
-                        {activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "trimCode" ? (
-                          <AutocompleteTextCell
-                            autoFocus
-                            startOpen={false}
-                            value={line.trimCode}
-                            options={trimCardOptions}
-                            showDropdownIcon
-                            onChange={(v) => updateLine(line.id, { trimCode: v })}
-                            onCommit={(v) => { commitTrimCode(line.id, v); setActiveAutocomplete(null); }}
-                            onCancel={() => setActiveAutocomplete(null)}
-                            onSelectOption={(opt) => { handleTrimCodeSelect(line.id, opt); setActiveAutocomplete(null); }}
-                          />
-                        ) : (
-                          <EditableGridInput
-                            value={line.trimCode}
-                            onChange={() => {}}
-                            onFocus={() => setActiveAutocomplete({ lineId: line.id, field: "trimCode" })}
-                            readOnly
-                            placeholder="Search Trim Code..."
-                          />
-                        )}
-                      </TableCell>
-                      {/* Trim Name — never typed, always the selected Trim Card's own name. */}
-                      <TableCell><EditableGridInput value={line.trimName} onChange={() => {}} disabled placeholder="Auto-filled from Trim Code" /></TableCell>
-                      <TableCell><GridInput value={line.explanation} onChange={(v) => updateLine(line.id, { explanation: v })} /></TableCell>
-                      <TableCell><GridInput type="number" align="right" value={line.orderQuantity} onChange={(v) => updateLine(line.id, { orderQuantity: v })} /></TableCell>
-                      {/* Unit — auto-bound to the selected Trim Card's configured Unit, still
-                          user-searchable/editable but scoped to only that Trim Card's own valid
-                          units (IM_ItemUnitItemSize via the existing lookupItemUnits binding). */}
-                      <TableCell>
-                        {activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "unit" ? (
-                          <AutocompleteTextCell
-                            autoFocus
-                            startOpen={false}
-                            value={line.unit}
-                            options={line.trimInventoryId != null ? (unitOptionsByTrim[String(line.trimInventoryId)] ?? []) : []}
-                            showDropdownIcon
-                            onChange={(v) => updateLine(line.id, { unit: v })}
-                            onCommit={(v) => { commitUnit(line.id, v); setActiveAutocomplete(null); }}
-                            onCancel={() => setActiveAutocomplete(null)}
-                            onSelectOption={(opt) => { handleUnitSelect(line.id, opt); setActiveAutocomplete(null); }}
-                          />
-                        ) : (
-                          <EditableGridInput
-                            value={line.unit}
-                            onChange={() => {}}
-                            onFocus={() => setActiveAutocomplete({ lineId: line.id, field: "unit" })}
-                            readOnly
-                            placeholder="Unit"
-                          />
-                        )}
-                      </TableCell>
-                      <TableCell><GridInput type="number" align="right" value={line.quantity} onChange={(v) => updateLine(line.id, { quantity: v })} /></TableCell>
-                      <TableCell><GridInput type="number" align="right" value={line.wastePct} onChange={(v) => updateLine(line.id, { wastePct: v })} /></TableCell>
-                      <TableCell><GridInput value={line.forexId} onChange={(v) => updateLine(line.id, { forexId: v })} /></TableCell>
-                      <TableCell><GridInput type="number" align="right" value={line.forexPrice} onChange={(v) => updateLine(line.id, { forexPrice: v })} /></TableCell>
-                      <TableCell><GridInput type="number" align="right" value={line.unitPrice} onChange={(v) => updateLine(line.id, { unitPrice: v })} /></TableCell>
+                      {displayColumnDefs.map((col) => (
+                        <TableCell key={col.key}>{renderLineCell(line, col.key)}</TableCell>
+                      ))}
                       <TableCell>
                         <Button variant="ghost" size="icon" className="opacity-60 group-hover:opacity-100 transition-opacity" onClick={() => removeLine(line)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
@@ -540,6 +633,13 @@ export default function CustomerDefineTrimsPage() {
         </TabsContent>
         </div>
       </Tabs>
+
+      <ManageColumnsModal
+        state={gridColumns.manageColumns}
+        fixedColumns={FIXED_COLS}
+        columns={gridColumnDefs}
+        description="Show, hide and reorder columns. Trim Code and Trim Name are required and always stay first."
+      />
     </div>
   );
 }

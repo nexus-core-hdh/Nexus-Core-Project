@@ -63,12 +63,20 @@ export function logout(): void {
   localStorage.removeItem('auth_token');
   localStorage.removeItem('user');
 
-  // Session-scoped grid preferences (e.g. Purchase Order line grid's "Save for This Session"
-  // column order) must reset on logout, not just on tab close — sessionStorage survives a full
-  // page navigation/reload within the same tab, which is exactly what this logout() causes, so
+  // Session-scoped grid preferences ("Save for This Session" column order/visibility/width, set
+  // by the shared useGridColumns hook every grid in the app uses — hooks/use-grid-columns.ts)
+  // must reset on logout, not just on tab close — sessionStorage survives a full page
+  // navigation/reload within the same tab, which is exactly what this logout() causes, so
   // without this a different user logging into the same tab would inherit the previous user's
-  // session-only column order.
-  sessionStorage.removeItem('po-line-grid-column-order');
+  // session-only grid layout. Pattern-matched by suffix (not a hardcoded key per grid) so this
+  // stays correct as new grids adopt the hook without needing an edit here every time.
+  const gridSessionKeySuffixes = ['-column-order', '-hidden-columns', '-column-widths'];
+  for (let i = sessionStorage.length - 1; i >= 0; i--) {
+    const key = sessionStorage.key(i);
+    if (key && gridSessionKeySuffixes.some((suffix) => key.endsWith(suffix))) {
+      sessionStorage.removeItem(key);
+    }
+  }
 
   // Clear cookie
   document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';

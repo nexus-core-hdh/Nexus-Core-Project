@@ -39,7 +39,7 @@ export default function DesignDetailTypesPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Design Detail Types</p><h1 className="text-xl font-semibold">Design Detail Types</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name" searchPlaceholder="Search..."
+      <PlmCrudTable title="" storageKey="designDetailTypes" data={data} loading={loading} searchKey="name" searchPlaceholder="Search..."
         onAdd={() => { setForm(empty); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, category: r.category || '', isActive: r.isActive, description: r.description || '' }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.designDetailTypes.delete(r.id); load(); }}

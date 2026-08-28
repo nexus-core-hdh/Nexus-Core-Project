@@ -593,7 +593,7 @@ export default function FabricCardPage() {
                     Status and Parameters share IM_ItemWarehouse instead of risking duplicate
                     rows per warehouse from two independent CRUD tabs (same reasoning as Yarn Card). */}
                 <TabsContent value="Warehouse Status">
-                  <SatelliteGridTab itemId={itemId} readOnly tab="warehouse-parameters" api={legacyErpApi.fabricCards} fields={[
+                  <SatelliteGridTab itemId={itemId} readOnly tab="warehouse-parameters" columnsKey="warehouse-status" api={legacyErpApi.fabricCards} fields={[
                     { key: "warehouseId", label: "Warehouse", type: "number" },
                     { key: "minimumQuantity", label: "Min Qty", type: "number" },
                     { key: "optimumQuantity", label: "Optimum Qty", type: "number" },

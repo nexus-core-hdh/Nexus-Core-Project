@@ -2,26 +2,23 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
-import { settingsApi } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
+import { useGridColumns } from "@/hooks/use-grid-columns";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from "@/components/ui/dialog";
+import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
-import { Search, Plus, Trash2, ListOrdered, GripVertical, Lock } from "lucide-react";
+import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 
@@ -89,37 +86,11 @@ const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 // last (rightmost), exactly like every other grid library's action column — it scrolls with
 // the rest of the row like every other column, not pinned.
 const FIXED_COLS: ColKey[] = ["type", "code", "name"];
-const REORDERABLE_DEFAULT: ColKey[] = COLUMNS.filter((c) => !FIXED_COLS.includes(c.key)).map((c) => c.key);
 
-// Column order persistence — "Save for This Session" writes to sessionStorage only (cleared on
-// tab close, and deliberately never read back after a hard refresh's worth of navigating away
-// and back is fine, but a real logout/browser-restart loses it, matching "restore default order
-// after next login"). "Save Permanently" additionally writes into the existing UserSettings
-// tablePreferences JSON blob (server-side shallow-merged with whatever else already lives
-// there — see user-settings.service.ts's updateSettings — so this never clobbers Workspace/My
-// Menu's own keys in the same blob) via the SAME settingsApi the Workspace store already uses,
-// no new backend endpoint. sanitizeColumnOrder is shared by both read paths: drops any stale
-// key that's no longer a valid reorderable column, and appends any column missing from an old
-// saved list (e.g. one added to COLUMNS after the preference was saved) so nothing vanishes.
-const SESSION_COLUMN_ORDER_KEY = "po-line-grid-column-order";
-const PERMANENT_COLUMN_ORDER_SETTINGS_KEY = "poLineGridColumnOrder";
-const sanitizeColumnOrder = (saved: unknown): ColKey[] => {
-  if (!Array.isArray(saved)) return REORDERABLE_DEFAULT;
-  const validSaved = saved.filter((k): k is ColKey => REORDERABLE_DEFAULT.includes(k as ColKey));
-  const missing = REORDERABLE_DEFAULT.filter((k) => !validSaved.includes(k));
-  return [...validSaved, ...missing];
-};
-
-// Column VISIBILITY persistence — same two-tier session/permanent scheme as order above, kept
-// as a separate sessionStorage key and a separate tablePreferences key (rather than nesting
-// both into one combined value) so the two features stay independently readable/writable and
-// an old, order-only saved value from before this pass still loads correctly with nothing
-// hidden by default. Only ever contains REORDERABLE keys — Type/Code/Name can never appear
-// here, matching FIXED_COLS' "cannot be hidden" rule at the data layer, not just the UI.
-const SESSION_HIDDEN_COLUMNS_KEY = "po-line-grid-hidden-columns";
-const PERMANENT_HIDDEN_COLUMNS_SETTINGS_KEY = "poLineGridHiddenColumns";
-const sanitizeHiddenColumns = (saved: unknown): ColKey[] =>
-  Array.isArray(saved) ? saved.filter((k): k is ColKey => REORDERABLE_DEFAULT.includes(k as ColKey)) : [];
+// Column resize/reorder/hide/persist mechanics now live in the shared useGridColumns hook
+// (hooks/use-grid-columns.ts), extracted from this file's own original implementation.
+// storageKey "poLineGrid" below reproduces the exact tablePreferences keys already saved for
+// existing users (poLineGridColumnOrder / poLineGridHiddenColumns) so no layout is orphaned.
 
 // Resizable columns — component-state only (no backend persistence asked for). Numeric
 // columns stay narrow (a number rarely needs more than ~8-10 characters); Name is the one
@@ -724,170 +695,25 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     cellRefs.current.get(cellKey(cursor.clientId, cursor.col))?.focus();
   }, [cursor, editing]);
 
-  // ---- Column reordering + visibility (drag-and-drop, Column Manager) -----------------------
-  const [columnOrder, setColumnOrder] = useState<ColKey[]>(REORDERABLE_DEFAULT);
-  const [hiddenColumns, setHiddenColumns] = useState<Set<ColKey>>(new Set());
+  // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
+  const gridColumnDefs = useMemo(
+    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+    [],
+  );
+  const gridColumns = useGridColumns<ColKey>({
+    storageKey: "poLineGrid",
+    columns: gridColumnDefs,
+    fixedColumns: FIXED_COLS,
+  });
   // The actual display order: Type/Code/Name first (always, unreorderable, never hidden), then
   // whichever of the rest the user hasn't hidden, in whatever order they've dragged them into.
   // Everything downstream (colgroup, header, body cells, keyboard nav) reads from this instead
-  // of the static COLUMNS declaration order — a hidden column is filtered out right here, so it
-  // automatically disappears from resize/keyboard-nav/rendering everywhere at once rather than
-  // needing a hidden-column check duplicated at each of those sites.
+  // of the static COLUMNS declaration order.
   const displayColumnDefs = useMemo(
-    () => [...FIXED_COLS, ...columnOrder.filter((k) => !hiddenColumns.has(k))].map((k) => COLUMN_BY_KEY.get(k)!),
-    [columnOrder, hiddenColumns],
+    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    [gridColumns.displayColumnDefs],
   );
   const navOrder = useMemo(() => displayColumnDefs.filter((c) => c.navigable).map((c) => c.key), [displayColumnDefs]);
-
-  // Restore persisted column order + visibility on mount — a session override (this tab, right
-  // now) wins if present, otherwise fall back to whatever was permanently saved for this user,
-  // otherwise the built-in default (nothing hidden, declaration order). One-time effect, one API
-  // call at most (skipped entirely when a session value already answers the question), not a
-  // request per render or per column change.
-  useEffect(() => {
-    let sessionOrderFound = false;
-    try {
-      const sessionRaw = sessionStorage.getItem(SESSION_COLUMN_ORDER_KEY);
-      if (sessionRaw) { setColumnOrder(sanitizeColumnOrder(JSON.parse(sessionRaw))); sessionOrderFound = true; }
-    } catch {
-      // Malformed sessionStorage entry — fall through to the permanent/default source below.
-    }
-    try {
-      const sessionHiddenRaw = sessionStorage.getItem(SESSION_HIDDEN_COLUMNS_KEY);
-      if (sessionHiddenRaw) setHiddenColumns(new Set(sanitizeHiddenColumns(JSON.parse(sessionHiddenRaw))));
-    } catch {
-      // Malformed sessionStorage entry — fall through to the permanent/default source below.
-    }
-    if (sessionOrderFound) return; // this tab already has an explicit session choice — skip the network round trip entirely
-    settingsApi.getCurrentSettings()
-      .then((s: any) => {
-        const savedOrder = s?.tablePreferences?.[PERMANENT_COLUMN_ORDER_SETTINGS_KEY];
-        if (Array.isArray(savedOrder) && savedOrder.length) setColumnOrder(sanitizeColumnOrder(savedOrder));
-        const savedHidden = s?.tablePreferences?.[PERMANENT_HIDDEN_COLUMNS_SETTINGS_KEY];
-        if (Array.isArray(savedHidden)) setHiddenColumns(new Set(sanitizeHiddenColumns(savedHidden)));
-      })
-      .catch(() => {});
-  }, []);
-
-  // Native HTML5 drag-and-drop — no library needed for reordering a handful of header cells.
-  // Fixed columns are simply never made draggable and never accept a drop (guarded in both
-  // handlers below), so they can't be moved and nothing can land in front of them.
-  const dragColRef = useRef<ColKey | null>(null);
-  const [dragOverCol, setDragOverCol] = useState<ColKey | null>(null);
-  const handleDragStartCol = (key: ColKey) => (e: React.DragEvent) => {
-    dragColRef.current = key;
-    e.dataTransfer.effectAllowed = "move";
-  };
-  const handleDragOverCol = (key: ColKey) => (e: React.DragEvent) => {
-    if (!dragColRef.current || dragColRef.current === key || FIXED_COLS.includes(key)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (dragOverCol !== key) setDragOverCol(key);
-  };
-  const handleDropCol = (key: ColKey) => (e: React.DragEvent) => {
-    e.preventDefault();
-    const dragged = dragColRef.current;
-    dragColRef.current = null;
-    setDragOverCol(null);
-    if (!dragged || dragged === key || FIXED_COLS.includes(key)) return;
-    setColumnOrder((prev) => {
-      const next = prev.filter((k) => k !== dragged);
-      next.splice(next.indexOf(key), 0, dragged);
-      return next;
-    });
-  };
-  const handleDragEndCol = () => { dragColRef.current = null; setDragOverCol(null); };
-
-  // ---- Column Manager modal (order + visibility, session/permanent persistence) -------------
-  // A second, explicit entry point onto the SAME columnOrder/hiddenColumns state the inline
-  // header-drag above already writes to (order only — visibility has no inline-header
-  // equivalent, this modal is its only entry point) — a dedicated list is easier to operate
-  // precisely than dragging small header cells, and is the only place session/permanent
-  // persistence is offered from. Drafts into its own modalOrder/modalHidden state so Cancel can
-  // discard without touching the live grid; Reset Default only resets the DRAFT (still requires
-  // an explicit Save to actually commit it), the same as every other change made inside this
-  // modal — one consistent mental model instead of Reset being a special one-off exception.
-  const [reorderOpen, setReorderOpen] = useState(false);
-  const [modalOrder, setModalOrder] = useState<ColKey[]>(columnOrder);
-  const [modalHidden, setModalHidden] = useState<Set<ColKey>>(hiddenColumns);
-  const [columnSearch, setColumnSearch] = useState("");
-  const [savingColumnPrefs, setSavingColumnPrefs] = useState(false);
-  const modalDragRef = useRef<ColKey | null>(null);
-  const [modalDragOver, setModalDragOver] = useState<ColKey | null>(null);
-
-  const openReorderModal = () => {
-    setModalOrder(columnOrder);
-    setModalHidden(new Set(hiddenColumns));
-    setColumnSearch("");
-    setReorderOpen(true);
-  };
-  const handleModalDragStart = (key: ColKey) => (e: React.DragEvent) => {
-    modalDragRef.current = key;
-    e.dataTransfer.effectAllowed = "move";
-  };
-  const handleModalDragOver = (key: ColKey) => (e: React.DragEvent) => {
-    if (!modalDragRef.current || modalDragRef.current === key) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (modalDragOver !== key) setModalDragOver(key);
-  };
-  const handleModalDrop = (key: ColKey) => (e: React.DragEvent) => {
-    e.preventDefault();
-    const dragged = modalDragRef.current;
-    modalDragRef.current = null;
-    setModalDragOver(null);
-    if (!dragged || dragged === key) return;
-    setModalOrder((prev) => {
-      const next = prev.filter((k) => k !== dragged);
-      next.splice(next.indexOf(key), 0, dragged);
-      return next;
-    });
-  };
-  const handleModalDragEnd = () => { modalDragRef.current = null; setModalDragOver(null); };
-  const toggleModalHidden = (key: ColKey, visible: boolean) => {
-    setModalHidden((prev) => {
-      const next = new Set(prev);
-      if (visible) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-  const resetModalToDefault = () => { setModalOrder(REORDERABLE_DEFAULT); setModalHidden(new Set()); };
-
-  // Applies immediately to the live grid AND writes sessionStorage — "Save Permanently" calls
-  // this too (in addition to its own DB write) so the current tab reflects the exact same value
-  // right away without waiting on a round trip.
-  const applySessionColumnPrefs = (order: ColKey[], hidden: Set<ColKey>) => {
-    setColumnOrder(order);
-    setHiddenColumns(hidden);
-    try {
-      sessionStorage.setItem(SESSION_COLUMN_ORDER_KEY, JSON.stringify(order));
-      sessionStorage.setItem(SESSION_HIDDEN_COLUMNS_KEY, JSON.stringify(Array.from(hidden)));
-    } catch {}
-  };
-  const saveForSession = () => { applySessionColumnPrefs(modalOrder, modalHidden); setReorderOpen(false); };
-  const savePermanently = async () => {
-    setSavingColumnPrefs(true);
-    try {
-      applySessionColumnPrefs(modalOrder, modalHidden);
-      await settingsApi.updateCurrentSettings({
-        tablePreferences: {
-          [PERMANENT_COLUMN_ORDER_SETTINGS_KEY]: modalOrder,
-          [PERMANENT_HIDDEN_COLUMNS_SETTINGS_KEY]: Array.from(modalHidden),
-        },
-      });
-      toast.success("Column preferences saved");
-      setReorderOpen(false);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save column preferences");
-    } finally {
-      setSavingColumnPrefs(false);
-    }
-  };
-  const modalOrderFiltered = useMemo(() => {
-    const q = columnSearch.trim().toLowerCase();
-    if (!q) return modalOrder;
-    return modalOrder.filter((k) => COLUMN_BY_KEY.get(k)!.label.toLowerCase().includes(q));
-  }, [modalOrder, columnSearch]);
 
   const moveCursor = useCallback((rowDelta: number, colDelta: number) => {
     setCursor((current) => {
@@ -951,40 +777,11 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     if (e.key === "Tab") { e.preventDefault(); persistRow(row.clientId, row); setEditing(false); moveCursor(0, e.shiftKey ? -1 : 1); }
   }, [persistRow, moveCursor, cancelEdit]);
 
-  // ---- Resizable columns (component state only) --------------------------------------------
+  // ---- Resize/reorder/hide state now lives in useGridColumns (gridColumns above) -----------
   const gridRootRef = useRef<HTMLDivElement>(null);
-  const [colWidths, setColWidths] = useState<Record<ColKey, number>>(DEFAULT_WIDTHS);
-  const startResize = (key: ColKey) => (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startWidth = colWidths[key];
-    const onMove = (ev: MouseEvent) => {
-      setColWidths((prev) => ({ ...prev, [key]: Math.max(MIN_WIDTHS[key], startWidth + (ev.clientX - startX)) }));
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-  // Double-click the resize handle to auto-fit — measures the real, currently-rendered
-  // content (header label + every visible row's cell for that column) via scrollWidth, which
-  // correctly reports an element's full content width even though `truncate` clips it
-  // visually (that's the standard trick: overflow:hidden doesn't shrink scrollWidth). Only
-  // ever-rendered rows can be measured this way (there's no virtualization to reach into), but
-  // for a screen where every row is already in the DOM that's the real content, not a guess.
-  const autoFitColumn = (key: ColKey) => {
-    if (!gridRootRef.current) return;
-    const els = gridRootRef.current.querySelectorAll<HTMLElement>(`[data-col="${key}"]`);
-    let max = 0;
-    els.forEach((el) => { max = Math.max(max, el.scrollWidth); });
-    if (max === 0) return;
-    const next = Math.min(480, Math.max(MIN_WIDTHS[key], max + 16));
-    setColWidths((prev) => ({ ...prev, [key]: next }));
-  };
+  const colWidths = gridColumns.colWidths;
+  const startResize = gridColumns.startResize;
+  const autoFitColumn = (key: ColKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
 
   // Footer totals — computed from the full row set (not the search-narrowed visibleRows);
   // search should never make the running totals lie about what's actually on the document.
@@ -1047,7 +844,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   // column's current width — removes that ambiguity outright: there is nothing left for the
   // browser to "compute," so a resize (or a reorder, which never changes the sum) always
   // renders at exactly the width colWidths says it should.
-  const totalTableWidth = displayColumnDefs.reduce((sum, c) => sum + colWidths[c.key], 0) + (!readOnly ? DEL_W : 0);
+  const totalTableWidth = gridColumns.totalWidth(!readOnly ? DEL_W : 0);
 
   if (loading) return <Skeleton className="h-64 w-full rounded-lg" />;
 
@@ -1090,7 +887,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
         </div>
         {!readOnly && (
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={openReorderModal}>
+            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
               <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
             </Button>
             <Button variant="ghost" size="sm" className="h-7 px-2.5 text-[13px]" onClick={addRow}>
@@ -1132,13 +929,13 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   // any mousedown-drag gesture started on a descendant — including the
                   // handle's own `draggable=false` — before startResize's mousemove logic
                   // ever got a chance to run. That's what made resizing silently do nothing.
-                  onDragOver={!fixed ? handleDragOverCol(col.key) : undefined}
-                  onDrop={!fixed ? handleDropCol(col.key) : undefined}
+                  onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
+                  onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
                   className={cn(
                     "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
                     CELL_BORDER,
                     colIdx === 0 && FIRST_COL_BORDER,
-                    dragOverCol === col.key && "bg-primary/15",
+                    gridColumns.dragOverColumn === col.key && "bg-primary/15",
                   )}
                 >
                   {/* The label itself is the drag source (reordering), not the whole header
@@ -1151,8 +948,8 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   <span
                     title={col.label}
                     draggable={!fixed && !readOnly}
-                    onDragStart={!fixed ? handleDragStartCol(col.key) : undefined}
-                    onDragEnd={!fixed ? handleDragEndCol : undefined}
+                    onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
+                    onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
                     data-col={col.key}
                     className={cn(
                       HEADER_H, "flex w-full min-w-0 items-center justify-center truncate text-center", CELL_PAD,
@@ -1727,105 +1524,12 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
         }}
       />
 
-      {/* Column Manager — order AND visibility together, modeled on AG Grid's Columns Tool
-          Panel / DevExpress Column Chooser: a search box narrows the (reorderable) list, each
-          row is checkbox + drag handle + name, Type/Code/Name are pinned at the top as
-          locked/required rows regardless of search. Header and footer sit outside the
-          scrollable middle section (flex-col + flex-1 overflow-y-auto), which is what makes the
-          footer "sticky" — it never scrolls out of view no matter how many columns the list
-          holds. */}
-      <Dialog open={reorderOpen} onOpenChange={setReorderOpen}>
-        <DialogContent className="flex max-h-[85vh] max-w-md flex-col gap-0 p-0">
-          <DialogHeader className="shrink-0 border-b border-border px-5 py-4">
-            <DialogTitle>Column Manager</DialogTitle>
-            <DialogDescription>Show, hide and reorder columns. Type, Code and Name are required and always stay first.</DialogDescription>
-          </DialogHeader>
-
-          <div className="shrink-0 border-b border-border px-5 py-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={columnSearch}
-                onChange={(e) => setColumnSearch(e.target.value)}
-                placeholder="Search columns..."
-                aria-label="Search columns"
-                className="h-8 pl-8 text-[13px]"
-              />
-            </div>
-          </div>
-
-          <div className="flex-1 space-y-1.5 overflow-y-auto px-4 py-3">
-            {FIXED_COLS.map((key) => {
-              const col = COLUMN_BY_KEY.get(key)!;
-              return (
-                <div key={key} className="flex items-center gap-3 rounded-md border border-transparent bg-muted/40 px-3 py-2.5">
-                  <Checkbox checked disabled aria-label={`${col.label} is a required column and cannot be hidden`} />
-                  <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  <span className="flex-1 text-[13px] font-medium">{col.label}</span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Required
-                  </span>
-                </div>
-              );
-            })}
-
-            {modalOrderFiltered.length === 0 && columnSearch.trim() !== "" && (
-              <p className="px-2 py-8 text-center text-[13px] text-muted-foreground">No columns match &ldquo;{columnSearch}&rdquo;</p>
-            )}
-
-            {modalOrderFiltered.map((key) => {
-              const col = COLUMN_BY_KEY.get(key)!;
-              const visible = !modalHidden.has(key);
-              return (
-                <div
-                  key={key}
-                  // Drop-target handlers only — NOT a drag source. Exactly the same fix as the
-                  // grid header's own column-drag (see handleDragStartCol's comment): a
-                  // draggable=true ancestor intercepts any mousedown gesture started on a
-                  // descendant, including the checkbox's own click — that's what made "hide
-                  // this column" silently do nothing when the whole row was draggable. The grip
-                  // icon below is the drag source instead, entirely outside the checkbox.
-                  onDragOver={handleModalDragOver(key)}
-                  onDrop={handleModalDrop(key)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-md border px-3 py-2.5 transition-colors",
-                    modalDragOver === key ? "border-primary bg-primary/10" : "border-border bg-card",
-                    !visible && "opacity-60",
-                  )}
-                >
-                  <Checkbox
-                    checked={visible}
-                    onCheckedChange={(checked) => toggleModalHidden(key, checked === true)}
-                    aria-label={`Show ${col.label} column`}
-                  />
-                  <span
-                    draggable
-                    onDragStart={handleModalDragStart(key)}
-                    onDragEnd={handleModalDragEnd}
-                    className="flex shrink-0 cursor-grab items-center active:cursor-grabbing"
-                  >
-                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                  </span>
-                  <span className="flex-1 text-[13px] font-medium">{col.label}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-border px-5 py-3 sm:justify-between">
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setReorderOpen(false)}>Cancel</Button>
-              <Button variant="ghost" size="sm" onClick={resetModalToDefault}>Reset Default</Button>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={saveForSession}>Save for This Session</Button>
-              <Button size="sm" onClick={savePermanently} disabled={savingColumnPrefs}>
-                {savingColumnPrefs ? "Saving..." : "Save Permanently"}
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ManageColumnsModal
+        state={gridColumns.manageColumns}
+        fixedColumns={FIXED_COLS}
+        columns={gridColumnDefs}
+        description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
+      />
 
       <LookupDialog
         open={moLookupClientId !== null}

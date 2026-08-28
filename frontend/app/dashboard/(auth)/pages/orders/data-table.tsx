@@ -2,19 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable
-} from "@tanstack/react-table";
-import { ArrowUpDown, Columns, FilterIcon, MoreHorizontal, PlusCircle, RotateCcw, ArrowRightLeft, Eye, Pencil, Trash2 } from "lucide-react";
+import { ColumnDef } from "@tanstack/react-table";
+import { ArrowUpDown, FilterIcon, MoreHorizontal, PlusCircle, RotateCcw, ArrowRightLeft, Eye, Pencil, Trash2 } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -28,25 +17,15 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { DataTable } from "@/components/shared/data-table/data-table";
 
 export type Order = {
   id: number;
@@ -267,30 +246,6 @@ export const columns: ColumnDef<Order>[] = [
 ];
 
 export default function OrdersDataTable({ data }: { data: Order[] }) {
-  const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
-  const [rowSelection, setRowSelection] = React.useState({});
-
-  const table = useReactTable({
-    data,
-    columns,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    onColumnVisibilityChange: setColumnVisibility,
-    onRowSelectionChange: setRowSelection,
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-      rowSelection
-    }
-  });
-
   const statuses = [
     {
       value: "pending",
@@ -401,120 +356,34 @@ export default function OrdersDataTable({ data }: { data: Order[] }) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex gap-3">
-        <Input
-          placeholder="Search orders by customer, order number..."
-          value={(table.getColumn("customer")?.getFilterValue() as string) ?? ""}
-          onChange={(event) => table.getColumn("customer")?.setFilterValue(event.target.value)}
-          className="md:max-w-sm"
-        />
-        <div className="hidden gap-2 md:flex">
-          <Filters />
-        </div>
-        {/*filter for mobile*/}
-        <div className="inline md:hidden">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="icon">
-                <FilterIcon />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-60 p-4">
-              <div className="grid space-y-2">
-                <Filters />
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-        <div className="ms-auto">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline">
-                <span className="hidden lg:inline">Columns</span> <Columns />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {table
-                .getAllColumns()
-                .filter((column) => column.getCanHide())
-                .map((column) => {
-                  return (
-                    <DropdownMenuCheckboxItem
-                      key={column.id}
-                      className="capitalize"
-                      checked={column.getIsVisible()}
-                      onCheckedChange={(value) => column.toggleVisibility(!!value)}>
-                      {column.id}
-                    </DropdownMenuCheckboxItem>
-                  );
-                })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-      <div className="space-y-4">
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => {
-                    return (
-                      <TableHead key={header.id}>
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                      </TableHead>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={columns.length} className="h-24 text-center">
-                    No results.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        <div className="flex items-center justify-end space-x-2">
-          <div className="text-muted-foreground flex-1 text-sm">
-            {table.getFilteredSelectedRowModel().rows.length} of{" "}
-            {table.getFilteredRowModel().rows.length} row(s) selected.
+    <DataTable
+      columns={columns}
+      data={data}
+      storageKey="orders"
+      searchColumn="customer"
+      searchPlaceholder="Search orders by customer, order number..."
+      toolbarExtra={() => (
+        <>
+          <div className="hidden gap-2 md:flex">
+            <Filters />
           </div>
-          <div className="space-x-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}>
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}>
-              Next
-            </Button>
+          {/*filter for mobile*/}
+          <div className="inline md:hidden">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <FilterIcon />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-60 p-4">
+                <div className="grid space-y-2">
+                  <Filters />
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    />
   );
 }

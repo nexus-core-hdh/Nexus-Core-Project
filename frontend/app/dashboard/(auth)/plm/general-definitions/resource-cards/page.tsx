@@ -45,7 +45,7 @@ export default function ResourceCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Resource Cards</p><h1 className="text-xl font-semibold">Resource Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="resourceCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm({ name: '', code: '', type: 'machine', status: 'available', costPerHour: '', isActive: true }); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, code: r.code, type: r.type, status: r.status, costPerHour: r.costPerHour || '', isActive: r.isActive }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.resources.delete(r.id); load(); }}

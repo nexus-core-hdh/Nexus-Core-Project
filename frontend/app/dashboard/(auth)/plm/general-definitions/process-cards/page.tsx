@@ -47,7 +47,7 @@ export default function ProcessCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Process Cards</p><h1 className="text-xl font-semibold">Process Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="processCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm({ name: '', code: '', departmentId: '', standardTime: '', isActive: true }); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, code: r.code, departmentId: r.departmentId, standardTime: r.standardTime || '', isActive: r.isActive }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.processCards.delete(r.id); load(); }}

@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
@@ -21,14 +19,14 @@ import { getReceiptTypeConfig, SUBCONTRACT_RECEIPT_TYPES } from "@/lib/legacy-er
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Factory, SearchX,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown,
+  ChevronRight,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
-import { cn } from "@/lib/utils";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // "Subcontract Receipts" — a dedicated nav entry over a curated subset of the existing generic
 // Inventory Receipt types (SUBCONTRACT_RECEIPT_TYPES: the four "Outside Process" types — see
@@ -49,32 +47,6 @@ type SortKey = "receiptType" | "subcontractTypeName" | "receiptNo" | "receiptDat
 // Sorted against the actual underlying number, not the formatted "22,500.0000" display string —
 // every other sort key here is already a plain string/short code, safe for localeCompare.
 const NUMERIC_SORT_KEYS = new Set<SortKey>(["receiptTotal"]);
-
-function SortableHead({
-  children, sortKey, activeKey, dir, onSort, align,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void; align?: "right";
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className={cn(
-        "h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground",
-        align === "right" && "text-right",
-      )}
-      onClick={() => onSort(sortKey)}
-    >
-      <span className={cn("group inline-flex items-center gap-1", align === "right" && "justify-end")}>
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
-}
 
 export default function SubcontractReceiptsListPage() {
   const router = useRouter();
@@ -160,6 +132,47 @@ export default function SubcontractReceiptsListPage() {
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  // Unified column model for WorklistTable — see purchase-orders-list/page.tsx's own comment
+  // for the full rationale. Only the Standard columns are ever `sortable: true`. Exact 9-column
+  // order/content preserved verbatim from the original Standard branch (see its own comments,
+  // now folded into each column's `render`).
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    return [
+      { key: "receiptType", label: "Receipt Type", sortable: true, render: () => <>{receiptType}-{cfg.label}</> },
+      { key: "subcontractTypeName", label: "Subcontract", sortable: true, render: (row: any) => row.subcontractTypeName || <span className="text-muted-foreground">—</span> },
+      {
+        key: "receiptNo", label: "Receipt No", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>,
+      },
+      {
+        key: "receiptDate", label: "Receipt Date", sortable: true,
+        render: (row: any) => (row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"),
+      },
+      { key: "currentAccountCode", label: "Current Account Code", sortable: true, render: (row: any) => row.currentAccountCode || <span className="text-muted-foreground">—</span> },
+      { key: "currentAccountName", label: "Current Account Name", render: (row: any) => row.currentAccountName || <span className="text-muted-foreground">—</span> },
+      { key: "documentNo", label: "Document No", render: (row: any) => row.documentNo || <span className="text-muted-foreground">—</span> },
+      { key: "warehouseCode", label: "In Warehouse", render: (row: any) => row.warehouseCode || <span className="text-muted-foreground">—</span> },
+      {
+        key: "receiptTotal", label: "Receipt Total", sortable: true, align: "right",
+        render: (row: any) => <span className="tabular-nums">{Number(row.receiptTotal ?? 0).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</span>,
+      },
+    ] as WorklistTableColumn<any>[];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns, receiptType, cfg.label]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
+  ];
 
   // None of the 4 Subcontract Receipt types is ever the special type-2 case, so the receiptType
   // param is always present — same generic route/screen inventory-receipts-list already opens.
@@ -276,106 +289,35 @@ export default function SubcontractReceiptsListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    {/* Exact 9-column order per the reference screen. Receipt Type (technical,
-                        e.g. "11-Outside Process Receive Receipt") is the SAME value for every
-                        row while the type dropdown above scopes the whole grid to one type —
-                        still its own column, matching the reference, and still sortable per
-                        spec (a no-op sort in that case, not a bug). Subcontract is the business
-                        classification (Dyeing/Knitting/...); Current Account Code/Name and In
-                        Warehouse are newly-resolved via list()'s own joins (see
-                        inventory-receipt.service.ts); Receipt Total is a per-receipt SUM of the
-                        existing line-level NetItemTotal column, right-aligned per spec. */}
-                    <SortableHead sortKey="receiptType" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt Type</SortableHead>
-                    <SortableHead sortKey="subcontractTypeName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Subcontract</SortableHead>
-                    <SortableHead sortKey="receiptNo" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt No</SortableHead>
-                    <SortableHead sortKey="receiptDate" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Receipt Date</SortableHead>
-                    <SortableHead sortKey="currentAccountCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Current Account Code</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Current Account Name</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Document No</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">In Warehouse</TableHead>
-                    <SortableHead sortKey="receiptTotal" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right">Receipt Total</SortableHead>
-                  </>
-                )}
-                <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 9) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 9) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Factory />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : `No ${cfg.label.toLowerCase()}s yet`}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? `You can create a new ${cfg.label}.` : `Click "Create New" to add your first ${cfg.label}.`}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      <EmptyContent>
-                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
-                      </EmptyContent>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row) => {
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
-                ];
-                return (
-                <RowContextMenu key={row.id} actions={rowActions}>
-                <TableRow className="group cursor-pointer hover:bg-muted/40" onDoubleClick={() => view(row.id)}>
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      {/* Same string every row while the type dropdown scopes the grid to one
-                          type — the actual configured label (getReceiptTypeConfig), never
-                          hardcoded/abbreviated, matching the form/title's own convention. */}
-                      <TableCell className="py-3 whitespace-nowrap">{receiptType}-{cfg.label}</TableCell>
-                      <TableCell className="py-3">{row.subcontractTypeName || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>
-                      </TableCell>
-                      <TableCell className="py-3">{row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"}</TableCell>
-                      <TableCell className="py-3">{row.currentAccountCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.currentAccountName || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.documentNo || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.warehouseCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3 text-right tabular-nums">
-                        {Number(row.receiptTotal ?? 0).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                  </TableCell>
-                </TableRow>
-                </RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="subcontractReceiptsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          onRowDoubleClick={(row) => view(row.id)}
+          renderRowActions={(row) => (
+            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Factory />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : `No ${cfg.label.toLowerCase()}s yet`}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? `You can create a new ${cfg.label}.` : `Click "Create New" to add your first ${cfg.label}.`}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

@@ -86,7 +86,7 @@ export default function ActivityTypeCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Activity Type Cards</p><h1 className="text-xl font-semibold">Activity Type Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="activityTypeCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm(emptyForm); setEditing(null); setOpen(true); }}
         onEdit={(r: any) => { setForm({
           ...emptyForm, ...r,

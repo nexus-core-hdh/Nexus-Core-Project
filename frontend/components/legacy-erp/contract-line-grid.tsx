@@ -15,7 +15,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
-import { Search, Plus, Trash2 } from "lucide-react";
+import { useGridColumns } from "@/hooks/use-grid-columns";
+import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Contract detail grid, shared by both "00-Purchase Contract" and "00-Sale Contract" (same
@@ -30,9 +32,14 @@ import { cn } from "@/lib/utils";
 // Input/Select). One active cell grid-wide (`cursor`); Enter/F2/click mounts that cell's real
 // editor in place of its plain-text display (staticProps/EDITOR_WRAP, same styling constants as
 // PO); Enter/Tab commit-and-advance, Escape cancels via a pre-edit snapshot, arrow keys move the
-// active cell like a spreadsheet when nothing is being edited. NOT ported: PO's column drag-
-// reorder/resize/Manage-Columns modal — that's generic grid chrome the task didn't ask for here
-// (see the file's own prior comment, now superseded, on why it was originally skipped).
+// active cell like a spreadsheet when nothing is being edited.
+//
+// COLUMN RESIZE/REORDER/HIDE/MANAGE COLUMNS — now wired via the shared useGridColumns hook
+// (hooks/use-grid-columns.ts) and <ManageColumnsModal>, the same shared infra every other
+// legacy-erp grid uses. This is a separate concern from the cell-editing engine above: the
+// hook only owns column order/visibility/width, never touches `cursor`/`editing`/row data —
+// the per-cell render logic below is byte-for-byte the same as before, just iterated over
+// `displayColumnDefs` (hook-derived order) instead of the static `COLUMNS` declaration order.
 //
 // INVENTORY NAME/CODE — Name is now the searchable/autocomplete field (shared AutocompleteTextCell
 // + Inventory Card List datasource, same component Purchase Order/Inventory Receipt use); Code
@@ -63,31 +70,53 @@ interface ColumnDef {
   label: string;
   align: "left" | "right";
   editable: boolean; // false = locked/computed cell — Enter/F2/click only moves the cursor
-  minWidth: string;
 }
 
 const COLUMNS: ColumnDef[] = [
-  { key: "type", label: "Type", align: "left", editable: true, minWidth: "110px" },
-  { key: "code", label: "Code", align: "left", editable: false, minWidth: "150px" },
-  { key: "name", label: "Name", align: "left", editable: true, minWidth: "180px" },
-  { key: "stockOnHand", label: "Stock On Hand", align: "right", editable: false, minWidth: "120px" },
-  { key: "lastPurchasePrice", label: "Last Purchase Price", align: "right", editable: false, minWidth: "140px" },
-  { key: "quantity", label: "Quantity", align: "right", editable: true, minWidth: "100px" },
-  { key: "grossQuantity", label: "Gross Quantity", align: "right", editable: true, minWidth: "120px" },
-  { key: "unit", label: "Unit", align: "left", editable: true, minWidth: "90px" },
-  { key: "rate", label: "Rate", align: "right", editable: true, minWidth: "100px" },
-  { key: "price", label: "Price", align: "right", editable: false, minWidth: "110px" },
-  { key: "forex", label: "Forex", align: "left", editable: true, minWidth: "100px" },
-  { key: "vatType", label: "VAT Type", align: "left", editable: true, minWidth: "110px" },
-  { key: "vatPct", label: "VAT %", align: "right", editable: true, minWidth: "80px" },
-  { key: "itemAmount", label: "Item Amount", align: "right", editable: false, minWidth: "120px" },
-  { key: "received", label: "Received", align: "right", editable: true, minWidth: "110px" },
-  { key: "deliveryDate", label: "Delivery Date", align: "left", editable: true, minWidth: "140px" },
-  { key: "specialCode", label: "Special Code", align: "left", editable: true, minWidth: "120px" },
-  { key: "explanation", label: "Explanation", align: "left", editable: true, minWidth: "180px" },
+  { key: "type", label: "Type", align: "left", editable: true },
+  { key: "code", label: "Code", align: "left", editable: false },
+  { key: "name", label: "Name", align: "left", editable: true },
+  { key: "stockOnHand", label: "Stock On Hand", align: "right", editable: false },
+  { key: "lastPurchasePrice", label: "Last Purchase Price", align: "right", editable: false },
+  { key: "quantity", label: "Quantity", align: "right", editable: true },
+  { key: "grossQuantity", label: "Gross Quantity", align: "right", editable: true },
+  { key: "unit", label: "Unit", align: "left", editable: true },
+  { key: "rate", label: "Rate", align: "right", editable: true },
+  { key: "price", label: "Price", align: "right", editable: false },
+  { key: "forex", label: "Forex", align: "left", editable: true },
+  { key: "vatType", label: "VAT Type", align: "left", editable: true },
+  { key: "vatPct", label: "VAT %", align: "right", editable: true },
+  { key: "itemAmount", label: "Item Amount", align: "right", editable: false },
+  { key: "received", label: "Received", align: "right", editable: true },
+  { key: "deliveryDate", label: "Delivery Date", align: "left", editable: true },
+  { key: "specialCode", label: "Special Code", align: "left", editable: true },
+  { key: "explanation", label: "Explanation", align: "left", editable: true },
 ];
 const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
-const NAV_ORDER: ColKey[] = COLUMNS.map((c) => c.key);
+
+// Type/Code/Name identify the line and always stay first & visible — same rule as every other
+// migrated legacy-erp grid's own FIXED_COLS (purchase-order-line-grid.tsx etc).
+const FIXED_COLS: ColKey[] = ["type", "code", "name"];
+
+// Column resize/reorder/hide/persist mechanics come from the shared useGridColumns hook
+// (hooks/use-grid-columns.ts). storageKey "contractLineGrid" — net-new, this grid never had
+// any of this before, so there's no legacy sessionStorage/tablePreferences key to preserve.
+// Defaults below are carried over from this grid's previous static per-column `minWidth` CSS
+// values; MIN_WIDTHS are a further ~15-20% narrower floor, same convention as every other
+// migrated grid's own MIN_WIDTHS.
+const DEFAULT_WIDTHS: Record<ColKey, number> = {
+  type: 110, code: 150, name: 200, stockOnHand: 130, lastPurchasePrice: 150,
+  quantity: 100, grossQuantity: 120, unit: 90, rate: 100, price: 110,
+  forex: 100, vatType: 110, vatPct: 80, itemAmount: 120, received: 110,
+  deliveryDate: 140, specialCode: 120, explanation: 200,
+};
+const MIN_WIDTHS: Record<ColKey, number> = {
+  type: 90, code: 110, name: 150, stockOnHand: 100, lastPurchasePrice: 110,
+  quantity: 80, grossQuantity: 90, unit: 70, rate: 80, price: 90,
+  forex: 80, vatType: 90, vatPct: 66, itemAmount: 96, received: 90,
+  deliveryDate: 110, specialCode: 90, explanation: 140,
+};
+const DEL_W = 40;
 
 const ROW_H = "h-11";
 const HEADER_H = "h-10";
@@ -414,6 +443,27 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
     };
   }, [rows]);
 
+  // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
+  const gridColumnDefs = useMemo(
+    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+    [],
+  );
+  const gridColumns = useGridColumns<ColKey>({
+    storageKey: "contractLineGrid",
+    columns: gridColumnDefs,
+    fixedColumns: FIXED_COLS,
+  });
+  const displayColumnDefs = useMemo(
+    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    [gridColumns.displayColumnDefs],
+  );
+  const navOrder = useMemo(() => displayColumnDefs.map((c) => c.key), [displayColumnDefs]);
+  const gridRootRef = useRef<HTMLDivElement>(null);
+  const colWidths = gridColumns.colWidths;
+  const startResize = gridColumns.startResize;
+  const autoFitColumn = (key: ColKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
+  const totalTableWidth = gridColumns.totalWidth(DEL_W);
+
   // ---- Excel-style click-to-edit cell model — ported from purchase-order-line-grid.tsx -------
   const [cursor, setCursor] = useState<{ clientId: string; col: ColKey } | null>(null);
   const [editing, setEditing] = useState(false);
@@ -434,14 +484,14 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
     setCursor((current) => {
       if (!current) return current;
       const rowIdx = rows.findIndex((r) => r.clientId === current.clientId);
-      const colIdx = NAV_ORDER.indexOf(current.col);
+      const colIdx = navOrder.indexOf(current.col);
       if (rowIdx === -1 || colIdx === -1) return current;
       const nextRow = rows[Math.min(Math.max(rowIdx + rowDelta, 0), rows.length - 1)];
-      const nextCol = NAV_ORDER[Math.min(Math.max(colIdx + colDelta, 0), NAV_ORDER.length - 1)];
+      const nextCol = navOrder[Math.min(Math.max(colIdx + colDelta, 0), navOrder.length - 1)];
       return { clientId: nextRow.clientId, col: nextCol };
     });
     setEditing(false);
-  }, [rows]);
+  }, [rows, navOrder]);
 
   // Snapshot of the row exactly as it was the instant editing began — Escape restores it, same
   // rationale as purchase-order-line-grid.tsx's own preEditSnapshotRef/cancelEdit.
@@ -496,46 +546,79 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
       align === "right" ? "justify-end tabular-nums" : "justify-start",
       muted && "font-normal text-muted-foreground",
     ),
-    children: <span className="min-w-0 truncate">{value}</span>,
+    children: <span data-col={col} className="min-w-0 truncate">{value}</span>,
   });
 
   if (loading) return <Skeleton className="h-64 w-full rounded-lg" />;
 
   return (
-    <div className="rounded-lg border border-border bg-card shadow-sm overflow-hidden">
+    <div ref={gridRootRef} className="rounded-lg border border-border bg-card shadow-sm overflow-hidden">
       <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Lines</span>
         {!readOnly && (
-          <Button type="button" variant="outline" size="sm" onClick={addRow}>
-            <Plus className="h-3.5 w-3.5 mr-2" />Add Row
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={gridColumns.manageColumns.openModal}>
+              <ListOrdered className="h-3.5 w-3.5 mr-2" />Manage Columns
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={addRow}>
+              <Plus className="h-3.5 w-3.5 mr-2" />Add Row
+            </Button>
+          </div>
         )}
       </div>
       <div className="overflow-x-auto" style={{ maxHeight: 480 }}>
-        <Table role="grid" aria-label="Contract detail lines" aria-rowcount={rows.length + 1}>
+        <Table role="grid" aria-label="Contract detail lines" aria-rowcount={rows.length + 1} className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
+          <colgroup>
+            {displayColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+            {!readOnly && <col style={{ width: DEL_W }} />}
+          </colgroup>
           <TableHeader>
             <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-              {COLUMNS.map((col, i) => (
-                <TableHead
-                  key={col.key}
-                  role="columnheader"
-                  scope="col"
-                  className={cn(
-                    "text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80",
-                    CELL_BORDER, i === 0 && FIRST_COL_BORDER,
-                  )}
-                  style={{ minWidth: col.minWidth }}
-                >
-                  {col.label}
-                </TableHead>
-              ))}
+              {displayColumnDefs.map((col, i) => {
+                const fixed = FIXED_COLS.includes(col.key);
+                return (
+                  <TableHead
+                    key={col.key}
+                    role="columnheader"
+                    scope="col"
+                    onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
+                    onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
+                    className={cn(
+                      "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80",
+                      CELL_BORDER, i === 0 && FIRST_COL_BORDER,
+                      gridColumns.dragOverColumn === col.key && "bg-primary/15",
+                    )}
+                  >
+                    <span
+                      title={col.label}
+                      draggable={!fixed && !readOnly}
+                      onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
+                      onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
+                      data-col={col.key}
+                      className={cn(
+                        HEADER_H, "flex w-full min-w-0 items-center truncate", CELL_PAD,
+                        !fixed && !readOnly && "cursor-grab active:cursor-grabbing",
+                      )}
+                    >
+                      {col.label}
+                    </span>
+                    <div
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                      onMouseDown={startResize(col.key)}
+                      onDoubleClick={() => autoFitColumn(col.key)}
+                      title="Drag to resize · double-click to auto-fit"
+                      aria-hidden="true"
+                    />
+                  </TableHead>
+                );
+              })}
               {!readOnly && <TableHead className="h-10 w-10" />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
               <TableRow key={row.clientId} className={cn(ROW_H, "group [&>td]:p-0")}>
-                {COLUMNS.map((col, i) => {
+                {displayColumnDefs.map((col, i) => {
                   const firstBorder = i === 0 ? FIRST_COL_BORDER : undefined;
                   const r = row;
 
@@ -873,6 +956,13 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ManageColumnsModal
+        state={gridColumns.manageColumns}
+        fixedColumns={FIXED_COLS}
+        columns={gridColumnDefs}
+        description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
+      />
     </div>
   );
 });

@@ -12,20 +12,46 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, Plus, Trash2 } from "lucide-react";
+import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
+import { useGridColumns } from "@/hooks/use-grid-columns";
+import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 
 // Financial Receipt detail grid — the per-line allocation against FI_ReceiptItem (curated
 // ITEM_COLUMNS: CurrentAccountId, DocumentNo, Explanation, SpecialCode, Debit, Credit — see
 // fi-receipt.service.ts). Simpler than inventory-receipt-line-grid.tsx's full spreadsheet
-// (keyboard nav, column drag/resize/manage-columns) — FI_ReceiptItem is a shared, generic
-// payment-line table across many legacy modules with no reference screenshot/spec for this
-// screen's own Detail tab, so this stays a straightforward editable table: add/edit/remove
-// rows, same draft-then-commit pre-save mechanics as Inventory Receipt's own grid.
+// (no roving-cursor keyboard nav/click-to-edit engine — cells commit on blur/select instead) —
+// FI_ReceiptItem is a shared, generic payment-line table across many legacy modules with no
+// reference screenshot/spec for this screen's own Detail tab beyond add/edit/remove rows, same
+// draft-then-commit pre-save mechanics as Inventory Receipt's own grid. Column resize/reorder/
+// hide/persist now come from the shared useGridColumns hook (hooks/use-grid-columns.ts), under
+// storageKey "financialReceiptLineGrid" (net-new — this grid never had column customization or
+// any saved layout to preserve).
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
+type ColKey = "currentAccount" | "documentNo" | "explanation" | "specialCode" | "debit" | "credit";
+interface ColumnDef { key: ColKey; label: string; align?: "left" | "right" }
+const COLUMNS: ColumnDef[] = [
+  { key: "currentAccount", label: "Current Account" },
+  { key: "documentNo", label: "Document No" },
+  { key: "explanation", label: "Explanation" },
+  { key: "specialCode", label: "Special Code" },
+  { key: "debit", label: "Debit", align: "right" },
+  { key: "credit", label: "Credit", align: "right" },
+];
+const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
+// Current Account identifies the line and always stays first & visible.
+const FIXED_COLS: ColKey[] = ["currentAccount"];
+const DEFAULT_WIDTHS: Record<ColKey, number> = {
+  currentAccount: 220, documentNo: 150, explanation: 220, specialCode: 140, debit: 120, credit: 120,
+};
+const MIN_WIDTHS: Record<ColKey, number> = {
+  currentAccount: 150, documentNo: 100, explanation: 140, specialCode: 90, debit: 80, credit: 80,
+};
+const DEL_W = 44;
 
 interface LineRow {
   clientId: string;
@@ -184,7 +210,24 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
   );
 
   const CELL = "px-3.5 h-12 border-r border-b border-border";
+  const CELL_BORDER = "border-r border-b border-border";
   const EDITOR_CONTROL = "h-full! w-full min-w-0 rounded-none border-0 bg-background px-3.5 text-[13px] font-medium shadow-none focus-visible:ring-0";
+
+  // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
+  const gridColumnDefs = useMemo(
+    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+    [],
+  );
+  const gridColumns = useGridColumns<ColKey>({
+    storageKey: "financialReceiptLineGrid",
+    columns: gridColumnDefs,
+    fixedColumns: FIXED_COLS,
+  });
+  const displayColumnDefs = useMemo(
+    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    [gridColumns.displayColumnDefs],
+  );
+  const totalTableWidth = gridColumns.totalWidth(!readOnly ? DEL_W : 0);
 
   if (loading) return <Skeleton className="h-48 w-full rounded-lg" />;
 
@@ -205,105 +248,164 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
           />
         </div>
         {!readOnly && (
-          <Button variant="ghost" size="sm" className="h-7 px-2.5 text-[13px]" onClick={addRow}>
-            <Plus className="h-3.5 w-3.5 mr-1" />Add Row
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
+              <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2.5 text-[13px]" onClick={addRow}>
+              <Plus className="h-3.5 w-3.5 mr-1" />Add Row
+            </Button>
+          </div>
         )}
       </div>
 
-      <Table>
+      <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
+        <colgroup>
+          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.colWidths[col.key] }} />)}
+          {!readOnly && <col style={{ width: DEL_W }} />}
+        </colgroup>
         <TableHeader>
           <TableRow className="h-11 bg-muted hover:bg-muted">
-            <TableHead className={cn(CELL, "text-[11px] font-semibold uppercase tracking-wide")}>Current Account</TableHead>
-            <TableHead className={cn(CELL, "text-[11px] font-semibold uppercase tracking-wide")}>Document No</TableHead>
-            <TableHead className={cn(CELL, "text-[11px] font-semibold uppercase tracking-wide")}>Explanation</TableHead>
-            <TableHead className={cn(CELL, "text-[11px] font-semibold uppercase tracking-wide")}>Special Code</TableHead>
-            <TableHead className={cn(CELL, "text-[11px] font-semibold uppercase tracking-wide text-right")}>Debit</TableHead>
-            <TableHead className={cn(CELL, "text-[11px] font-semibold uppercase tracking-wide text-right")}>Credit</TableHead>
+            {displayColumnDefs.map((col) => {
+              const fixed = FIXED_COLS.includes(col.key);
+              return (
+                <TableHead
+                  key={col.key}
+                  className={cn("relative p-0", CELL_BORDER, gridColumns.dragOverColumn === col.key && "bg-primary/15")}
+                  onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
+                  onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
+                >
+                  <span
+                    title={col.label}
+                    draggable={!fixed}
+                    onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
+                    onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
+                    className={cn(
+                      "flex h-11 w-full min-w-0 items-center truncate px-3.5 text-[11px] font-semibold uppercase tracking-wide",
+                      col.align === "right" ? "justify-end" : "justify-start",
+                      !fixed && "cursor-grab active:cursor-grabbing",
+                    )}
+                  >
+                    {col.label}
+                  </span>
+                  <div
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                    onMouseDown={gridColumns.startResize(col.key)}
+                    onDoubleClick={() => gridColumns.resetWidth(col.key)}
+                    title="Drag to resize · double-click to reset width"
+                    aria-hidden="true"
+                  />
+                </TableHead>
+              );
+            })}
             {!readOnly && <TableHead className="h-11 w-11" />}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {visibleRows.map((row) => (
-            <TableRow key={row.clientId} className="h-12">
-              <TableCell className={cn(CELL, "p-0")}>
-                {readOnly ? (
-                  <div className="flex h-12 items-center px-3.5 text-[13px]">{row.accountLabel || "—"}</div>
-                ) : (
-                  <AutocompleteTextCell
-                    value={row.accountLabel}
-                    options={accountOptions}
-                    showDropdownIcon
-                    onChange={(v) => updateRow(row.clientId, { accountLabel: v })}
-                    onCommit={(v) => { updateRow(row.clientId, { accountLabel: v }); persistRow(row.clientId, { ...row, accountLabel: v }); }}
-                    onCancel={() => {}}
-                    onSelectOption={(o) => {
-                      const label = o.code ? `${o.code} — ${o.name}` : (o.name ?? "");
-                      const updated = { ...row, currentAccountId: Number(o.id), accountLabel: label };
-                      updateRow(row.clientId, updated);
-                      persistRow(row.clientId, updated);
-                    }}
-                  />
-                )}
-              </TableCell>
-              <TableCell className={cn(CELL, "p-0")}>
-                <EditableGridInput
-                  value={row.documentNo}
-                  disabled={readOnly}
-                  onChange={(v) => updateRow(row.clientId, { documentNo: v })}
-                  onBlur={() => persistRow(row.clientId, row)}
-                  className={EDITOR_CONTROL}
-                />
-              </TableCell>
-              <TableCell className={cn(CELL, "p-0")}>
-                <EditableGridInput
-                  value={row.explanation}
-                  disabled={readOnly}
-                  onChange={(v) => updateRow(row.clientId, { explanation: v })}
-                  onBlur={() => persistRow(row.clientId, row)}
-                  className={EDITOR_CONTROL}
-                />
-              </TableCell>
-              <TableCell className={cn(CELL, "p-0")}>
-                <EditableGridInput
-                  value={row.specialCode}
-                  disabled={readOnly}
-                  onChange={(v) => updateRow(row.clientId, { specialCode: v })}
-                  onBlur={() => persistRow(row.clientId, row)}
-                  className={EDITOR_CONTROL}
-                />
-              </TableCell>
-              <TableCell className={cn(CELL, "p-0")}>
-                <EditableGridInput
-                  type="number" align="right"
-                  value={row.debit}
-                  disabled={readOnly}
-                  onChange={(v) => updateRow(row.clientId, { debit: v })}
-                  onBlur={() => persistRow(row.clientId, row)}
-                  className={EDITOR_CONTROL}
-                />
-              </TableCell>
-              <TableCell className={cn(CELL, "p-0")}>
-                <EditableGridInput
-                  type="number" align="right"
-                  value={row.credit}
-                  disabled={readOnly}
-                  onChange={(v) => updateRow(row.clientId, { credit: v })}
-                  onBlur={() => persistRow(row.clientId, row)}
-                  className={EDITOR_CONTROL}
-                />
-              </TableCell>
-              {!readOnly && (
-                <TableCell className="h-12 border-b border-border p-0 text-center">
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => setPendingDeleteId(row.clientId)}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+          {visibleRows.map((row) => {
+            const cells: Record<ColKey, React.ReactNode> = {
+              currentAccount: (
+                <TableCell key="currentAccount" className={cn(CELL, "p-0")}>
+                  {readOnly ? (
+                    <div className="flex h-12 items-center px-3.5 text-[13px]">{row.accountLabel || "—"}</div>
+                  ) : (
+                    <AutocompleteTextCell
+                      value={row.accountLabel}
+                      options={accountOptions}
+                      showDropdownIcon
+                      onChange={(v) => updateRow(row.clientId, { accountLabel: v })}
+                      onCommit={(v) => { updateRow(row.clientId, { accountLabel: v }); persistRow(row.clientId, { ...row, accountLabel: v }); }}
+                      onCancel={() => {}}
+                      onSelectOption={(o) => {
+                        const label = o.code ? `${o.code} — ${o.name}` : (o.name ?? "");
+                        const updated = { ...row, currentAccountId: Number(o.id), accountLabel: label };
+                        updateRow(row.clientId, updated);
+                        persistRow(row.clientId, updated);
+                      }}
+                    />
+                  )}
                 </TableCell>
-              )}
-            </TableRow>
-          ))}
+              ),
+              documentNo: (
+                <TableCell key="documentNo" className={cn(CELL, "p-0")}>
+                  <EditableGridInput
+                    value={row.documentNo}
+                    disabled={readOnly}
+                    onChange={(v) => updateRow(row.clientId, { documentNo: v })}
+                    onBlur={() => persistRow(row.clientId, row)}
+                    className={EDITOR_CONTROL}
+                  />
+                </TableCell>
+              ),
+              explanation: (
+                <TableCell key="explanation" className={cn(CELL, "p-0")}>
+                  <EditableGridInput
+                    value={row.explanation}
+                    disabled={readOnly}
+                    onChange={(v) => updateRow(row.clientId, { explanation: v })}
+                    onBlur={() => persistRow(row.clientId, row)}
+                    className={EDITOR_CONTROL}
+                  />
+                </TableCell>
+              ),
+              specialCode: (
+                <TableCell key="specialCode" className={cn(CELL, "p-0")}>
+                  <EditableGridInput
+                    value={row.specialCode}
+                    disabled={readOnly}
+                    onChange={(v) => updateRow(row.clientId, { specialCode: v })}
+                    onBlur={() => persistRow(row.clientId, row)}
+                    className={EDITOR_CONTROL}
+                  />
+                </TableCell>
+              ),
+              debit: (
+                <TableCell key="debit" className={cn(CELL, "p-0")}>
+                  <EditableGridInput
+                    type="number" align="right"
+                    value={row.debit}
+                    disabled={readOnly}
+                    onChange={(v) => updateRow(row.clientId, { debit: v })}
+                    onBlur={() => persistRow(row.clientId, row)}
+                    className={EDITOR_CONTROL}
+                  />
+                </TableCell>
+              ),
+              credit: (
+                <TableCell key="credit" className={cn(CELL, "p-0")}>
+                  <EditableGridInput
+                    type="number" align="right"
+                    value={row.credit}
+                    disabled={readOnly}
+                    onChange={(v) => updateRow(row.clientId, { credit: v })}
+                    onBlur={() => persistRow(row.clientId, row)}
+                    className={EDITOR_CONTROL}
+                  />
+                </TableCell>
+              ),
+            };
+            return (
+              <TableRow key={row.clientId} className="h-12">
+                {displayColumnDefs.map((col) => cells[col.key])}
+                {!readOnly && (
+                  <TableCell className="h-12 border-b border-border p-0 text-center">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => setPendingDeleteId(row.clientId)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
+                )}
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
+
+      <ManageColumnsModal
+        state={gridColumns.manageColumns}
+        fixedColumns={FIXED_COLS}
+        columns={gridColumnDefs}
+        description="Show, hide and reorder columns. Current Account is required and always stays first."
+      />
 
       <AlertDialog open={!!pendingDeleteId} onOpenChange={(open) => !open && setPendingDeleteId(null)}>
         <AlertDialogContent>

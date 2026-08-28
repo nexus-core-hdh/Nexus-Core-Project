@@ -47,7 +47,7 @@ export default function StudyTemplatesPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Study Templates</p><h1 className="text-xl font-semibold">Study Templates</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="studyTemplates" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm({ name: '', description: '' }); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, description: r.description || '' }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.studyTemplates.delete(r.id); load(); }}

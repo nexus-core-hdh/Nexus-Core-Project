@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -20,13 +18,14 @@ import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
   Search, RefreshCw, Plus, Boxes, SearchX, FileClock,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, MousePointerClick, XCircle,
+  ChevronRight, MousePointerClick, XCircle,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // Combines Fabric Card, Yarn Card and Trim Card into one grid — a read-only aggregation via
 // legacyErpApi.inventoryCards.list() (see inventory-card.service.ts), never a data source of
@@ -48,29 +47,6 @@ const SOURCE_ROUTES: Record<string, string> = {
   yarn: "/dashboard/legacy-erp/yarn-cards",
   trim: "/dashboard/legacy-erp/trim-inventory-cards",
 };
-
-function SortableHead({
-  children, sortKey, activeKey, dir, onSort,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className="h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground"
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="group inline-flex items-center gap-1">
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
-}
 
 export default function InventoryCardListPage() {
   const router = useRouter();
@@ -197,6 +173,56 @@ export default function InventoryCardListPage() {
     [rows, sourceTypeFilter],
   );
 
+  // Unified column model for WorklistTable — a custom worklist's dynamic fields (formatCell,
+  // prefix-stripped via rawKey) or the Standard fixed set (own renderers/sortable headers).
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[rawKey(c)]),
+      }));
+    }
+    return [
+      {
+        key: "inventoryCode", label: "Inventory Code", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>,
+      },
+      { key: "inventoryName", label: "Inventory Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span> },
+      { key: "inventoryType", label: "Inventory Type", render: (row: any) => <Badge variant="outline" className="text-[11px] font-normal">{row.inventoryType}</Badge> },
+      { key: "unit", label: "Unit", render: (row: any) => row.unit || <span className="text-muted-foreground">—</span> },
+      { key: "stockOnHand", label: "Stock On Hand", render: (row: any) => row.stockOnHand },
+      {
+        key: "insertedAt", label: "Inserted At", sortable: true,
+        render: (row: any) => <span className="text-muted-foreground">{row.insertedAt ? format(new Date(row.insertedAt), "dd MMM yyyy, hh:mm a") : "—"}</span>,
+      },
+      { key: "insertedBy", label: "Inserted By", sortable: true, render: (row: any) => row.insertedBy },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row) },
+  ];
+
+  // Preserves the existing keyboard-nav/selected-row-highlight behavior (tabIndex/onFocus/
+  // onKeyDown/conditional background), which WorklistTable's own <TableRow> doesn't expose as
+  // props — cloneElement injects them onto the row element WorklistTable already built.
+  // `wrapRow` only receives (row, element), so the index for ArrowUp/Down nav is looked up from
+  // sortedRows (rows are unique object references, so indexOf resolves correctly here).
+  const wrapInventoryRow = (row: any, el: React.ReactNode) => {
+    const rowKey = `${row.sourceType}-${row.id}`;
+    if (!isValidElement(el)) return el;
+    const index = sortedRows.indexOf(row);
+    const withNav = cloneElement(el as React.ReactElement<any>, {
+      tabIndex: 0,
+      onFocus: () => setSelectedRowKey(rowKey),
+      onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
+      className: cn((el as React.ReactElement<any>).props.className, selectedRowKey === rowKey && "bg-primary/10"),
+    });
+    return mode === "lookup" ? withNav : <RowContextMenu key={rowKey} actions={getRowActions(row)}>{withNav}</RowContextMenu>;
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -254,114 +280,45 @@ export default function InventoryCardListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <SortableHead sortKey="inventoryCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Inventory Code</SortableHead>
-                    <SortableHead sortKey="inventoryName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Inventory Name</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Inventory Type</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Unit</TableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Stock On Hand</TableHead>
-                    <SortableHead sortKey="insertedAt" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Inserted At</SortableHead>
-                    <SortableHead sortKey="insertedBy" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Inserted By</SortableHead>
-                  </>
-                )}
-                <TableHead className={cn("h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80", mode === "lookup" ? "w-28" : "w-14")} />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 7) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : sortedRows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 7) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Boxes />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "No matching records" : "No inventory cards yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "Try a different search term." : 'Click "Add New Inventory Card" to create the first one.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      {!searched && mode !== "lookup" && (
-                        <EmptyContent>
-                          <Button size="sm" onClick={addNew}><Plus className="h-3.5 w-3.5 mr-2" />Add New Inventory Card</Button>
-                        </EmptyContent>
-                      )}
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row, index) => {
-                // Manage mode only — lookup mode keeps its existing double-click/Select-button
-                // flow untouched (no context menu, no quick actions).
-                const rowActions: RowAction[] = [
-                  { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row) },
-                ];
-                const tableRow = (
-                <TableRow
-                  key={`${row.sourceType}-${row.id}`}
-                  tabIndex={0}
-                  onFocus={() => setSelectedRowKey(`${row.sourceType}-${row.id}`)}
-                  onKeyDown={(e) => handleRowKeyDown(e, row, index)}
-                  className={cn(
-                    "group cursor-pointer outline-none",
-                    selectedRowKey === `${row.sourceType}-${row.id}` && "bg-primary/10",
-                    "hover:bg-muted/40",
-                  )}
-                  onDoubleClick={() => (mode === "lookup" ? returnAndClose(row) : openCard(row, "view"))}
-                >
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[rawKey(c)])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>
-                      </TableCell>
-                      <TableCell className="py-3 font-medium">{row.inventoryName}</TableCell>
-                      <TableCell className="py-3">
-                        <Badge variant="outline" className="text-[11px] font-normal">{row.inventoryType}</Badge>
-                      </TableCell>
-                      <TableCell className="py-3">{row.unit || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.stockOnHand}</TableCell>
-                      <TableCell className="py-3 text-muted-foreground">
-                        {row.insertedAt ? format(new Date(row.insertedAt), "dd MMM yyyy, hh:mm a") : "—"}
-                      </TableCell>
-                      <TableCell className="py-3">{row.insertedBy}</TableCell>
-                    </>
-                  )}
-                  {mode === "lookup" ? (
-                    <TableCell className="py-3 text-right">
-                      <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
-                        <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
-                      </Button>
-                    </TableCell>
-                  ) : (
-                    <TableCell className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                    </TableCell>
-                  )}
-                </TableRow>
-                );
-                return mode === "lookup" ? tableRow : (
-                  <RowContextMenu key={`${row.sourceType}-${row.id}`} actions={rowActions}>{tableRow}</RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="inventoryCardsList"
+          getRowKey={(row) => `${row.sourceType}-${row.id}`}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          onRowDoubleClick={(row) => (mode === "lookup" ? returnAndClose(row) : openCard(row, "view"))}
+          wrapRow={wrapInventoryRow}
+          renderRowActions={(row) => (
+            mode === "lookup" ? (
+              <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
+                <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
+              </Button>
+            ) : (
+              <span onClick={(e) => e.stopPropagation()}>
+                <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+              </span>
+            )
+          )}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Boxes />}</EmptyMedia>
+                <EmptyTitle>{searched ? "No matching records" : "No inventory cards yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "Try a different search term." : 'Click "Add New Inventory Card" to create the first one.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              {!searched && mode !== "lookup" && (
+                <EmptyContent>
+                  <Button size="sm" onClick={addNew}><Plus className="h-3.5 w-3.5 mr-2" />Add New Inventory Card</Button>
+                </EmptyContent>
+              )}
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

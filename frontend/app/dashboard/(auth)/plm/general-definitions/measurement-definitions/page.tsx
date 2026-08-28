@@ -38,7 +38,7 @@ export default function MeasurementDefsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Measurement Definitions</p><h1 className="text-xl font-semibold">Measurement Definitions</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="measurementDefinitions" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm(empty); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, code: r.code, unit: r.unit, bodyPart: r.bodyPart || '', sequence: r.sequence, isActive: r.isActive }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.measurementDefs.delete(r.id); load(); }}

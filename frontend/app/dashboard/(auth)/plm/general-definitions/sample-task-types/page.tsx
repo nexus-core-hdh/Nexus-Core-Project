@@ -49,7 +49,7 @@ export default function SampleTaskTypesPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Sample Task Types</p><h1 className="text-xl font-semibold">Sample Task Types</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="sampleTaskTypes" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm({ ...emptyForm, sequence: String((data.length + 1) * 1) }); setEditing(null); setOpen(true); }}
         onEdit={(r: any) => { setForm({ ...emptyForm, ...r, sequence: String(r.sequence ?? '') }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r: any) => { await plmApi.sampleTaskTypes.delete(r.id); load(); }}

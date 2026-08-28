@@ -256,6 +256,37 @@ export const plmApi = {
   },
 };
 
+// Item Statement / Stock Control Ledger filters — mirrors item-statement.service.ts's own
+// ItemStatementFilters exactly (kept as a plain interface here, not a shared package, since
+// frontend/backend don't share a types package in this repo).
+export interface ItemStatementFilters {
+  dateFrom?: string;
+  dateTo?: string;
+  receiptType?: number;
+  documentOrReceiptNo?: string;
+  colorCardId?: string;
+  lotBatch?: string;
+  warehouseId?: number;
+  currentAccountId?: number;
+  itemCode?: string;
+  itemName?: string;
+}
+
+function buildItemStatementQuery(filters?: ItemStatementFilters): string {
+  const qs = new URLSearchParams();
+  if (filters?.dateFrom) qs.set("dateFrom", filters.dateFrom);
+  if (filters?.dateTo) qs.set("dateTo", filters.dateTo);
+  if (filters?.receiptType != null) qs.set("receiptType", String(filters.receiptType));
+  if (filters?.documentOrReceiptNo) qs.set("documentOrReceiptNo", filters.documentOrReceiptNo);
+  if (filters?.colorCardId) qs.set("colorCardId", filters.colorCardId);
+  if (filters?.lotBatch) qs.set("lotBatch", filters.lotBatch);
+  if (filters?.warehouseId != null) qs.set("warehouseId", String(filters.warehouseId));
+  if (filters?.currentAccountId != null) qs.set("currentAccountId", String(filters.currentAccountId));
+  if (filters?.itemCode) qs.set("itemCode", filters.itemCode);
+  if (filters?.itemName) qs.set("itemName", filters.itemName);
+  return qs.toString();
+}
+
 // Legacy ERP (migrated SQL Server schema, raw-SQL backed)
 export const legacyErpApi = {
   warehouses: {
@@ -615,17 +646,24 @@ export const legacyErpApi = {
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/trim-inventory-cards/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/trim-inventory-cards/${id}/attachments/${attId}/content`,
   },
-  // Item Statement / Transaction History — reachable from Trim/Fabric/Yarn/Inventory Card
-  // List's "View Statement" row action. `itemId` is always the row's real IM_Item.RecId.
+  // Item Statement / Stock Control Ledger — reachable from Trim/Fabric/Yarn/Inventory Card
+  // List's "View Statement" row action (itemId = the row's real IM_Item.RecId), or standalone
+  // (no itemId) as a general ledger across items. Same backend tables/direction rules either way
+  // — see item-statement.service.ts.
   itemStatement: {
-    get: (itemId: number, filters?: { dateFrom?: string; dateTo?: string; receiptType?: number; receiptNo?: string }) => {
-      const qs = new URLSearchParams();
-      if (filters?.dateFrom) qs.set("dateFrom", filters.dateFrom);
-      if (filters?.dateTo) qs.set("dateTo", filters.dateTo);
-      if (filters?.receiptType != null) qs.set("receiptType", String(filters.receiptType));
-      if (filters?.receiptNo) qs.set("receiptNo", filters.receiptNo);
+    get: (itemId: number | null, filters?: ItemStatementFilters) => {
+      const query = buildItemStatementQuery(filters);
+      const path = itemId != null ? `/legacy-erp/inventory-items/${itemId}/statement` : `/legacy-erp/inventory-items/ledger`;
+      return api.get(`${path}${query ? `?${query}` : ''}`);
+    },
+    getDetailed: (itemId: number | null, filters?: ItemStatementFilters, dimensions?: { color?: boolean; lot?: boolean; warehouse?: boolean }) => {
+      const qs = new URLSearchParams(buildItemStatementQuery(filters));
+      if (dimensions?.color) qs.set("dimColor", "true");
+      if (dimensions?.lot) qs.set("dimLot", "true");
+      if (dimensions?.warehouse) qs.set("dimWarehouse", "true");
       const query = qs.toString();
-      return api.get(`/legacy-erp/inventory-items/${itemId}/statement${query ? `?${query}` : ''}`);
+      const path = itemId != null ? `/legacy-erp/inventory-items/${itemId}/statement/detailed` : `/legacy-erp/inventory-items/ledger/detailed`;
+      return api.get(`${path}${query ? `?${query}` : ''}`);
     },
   },
   // Unified read-only aggregation over Fabric/Yarn/Trim (Inventory Card List) — see

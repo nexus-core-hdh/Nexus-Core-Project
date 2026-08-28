@@ -2,25 +2,22 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
-import { settingsApi } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
+import { useGridColumns } from "@/hooks/use-grid-columns";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from "@/components/ui/dialog";
-import { Search, Plus, Trash2, ListOrdered, GripVertical, Lock } from "lucide-react";
+import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 
@@ -55,16 +52,12 @@ import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-
 // PO never sends VatAmount either, so IR doesn't invent that here; VAT Amount/VAT Base stay
 // plain read-only extras, unchanged.
 //
-// Manage Columns (order + visibility, session/permanent persistence) AND per-header
-// drag-to-reorder + drag-to-resize are a straight port of purchase-order-line-grid.tsx's own
-// mechanisms — same state shape, same two-tier sessionStorage/UserSettings.tablePreferences
-// persistence via the same settingsApi, same Reset Default / Save for This Session / Save
-// Permanently footer — under IR-scoped keys so it never collides with Purchase Order's own
-// saved preferences in the same tablePreferences blob. Column resizing (drag handle + double-
-// click auto-fit) and arrow-key/Enter/F2/Tab/Escape cell navigation are likewise ported
-// verbatim from PO's grid — previously this grid had neither (colWidths had no setter and
-// static cells had no onKeyDown), which was the gap versus PO's "same resize/keyboard
-// interaction" requirement.
+// Manage Columns (order + visibility + resize, session/permanent persistence) AND per-header
+// drag-to-reorder + drag-to-resize now come from the shared useGridColumns hook
+// (hooks/use-grid-columns.ts, itself extracted from this grid's own original port of
+// purchase-order-line-grid.tsx's mechanisms) — under IR-scoped keys ("irLineGrid") so it never
+// collides with Purchase Order's own saved preferences in the same tablePreferences blob.
+// Arrow-key/Enter/F2/Tab/Escape cell navigation stays local to this file, unaffected.
 
 type ColKey =
   | "itemOrderNo" | "type" | "itemId" | "code" | "name" | "color" | "stockOnHand" | "lastPurchasePrice" | "specialCode" | "explanation"
@@ -265,29 +258,11 @@ const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 // Type/Code/Name are permanently first and unhideable — same rule as Purchase Order's own
 // FIXED_COLS (purchase-order-line-grid.tsx), applied here to the same three columns.
 const FIXED_COLS: ColKey[] = ["type", "code", "name"];
-const REORDERABLE_DEFAULT: ColKey[] = COLUMNS.filter((c) => !FIXED_COLS.includes(c.key)).map((c) => c.key);
 
-// Column order/visibility persistence — IR-scoped keys so this never collides with Purchase
-// Order's own saved values in the same sessionStorage / UserSettings.tablePreferences blob.
-// Mechanism is a direct port of purchase-order-line-grid.tsx's own (see its comment for the
-// session-vs-permanent rationale): "Save for This Session" -> sessionStorage only; "Save
-// Permanently" -> additionally settingsApi.updateCurrentSettings (server-side shallow-merged
-// tablePreferences, same endpoint the Workspace store already uses, no new backend endpoint).
-const SESSION_COLUMN_ORDER_KEY = "ir-line-grid-column-order";
-const PERMANENT_COLUMN_ORDER_SETTINGS_KEY = "irLineGridColumnOrder";
-const SESSION_HIDDEN_COLUMNS_KEY = "ir-line-grid-hidden-columns";
-const PERMANENT_HIDDEN_COLUMNS_SETTINGS_KEY = "irLineGridHiddenColumns";
-const sanitizeColumnOrder = (saved: unknown): ColKey[] => {
-  if (!Array.isArray(saved)) return REORDERABLE_DEFAULT;
-  const validSaved = saved.filter((k): k is ColKey => REORDERABLE_DEFAULT.includes(k as ColKey));
-  const missing = REORDERABLE_DEFAULT.filter((k) => !validSaved.includes(k));
-  return [...validSaved, ...missing];
-};
-// No saved value (new user, or an old pre-Manage-Columns preference blob) => empty hidden set,
-// i.e. every column visible — "IMPORTANT CHANGE FROM THE LEGACY SCREEN: by default, ALL
-// available columns above must be VISIBLE."
-const sanitizeHiddenColumns = (saved: unknown): ColKey[] =>
-  Array.isArray(saved) ? saved.filter((k): k is ColKey => REORDERABLE_DEFAULT.includes(k as ColKey)) : [];
+// Column resize/reorder/hide/persist mechanics now live in the shared useGridColumns hook
+// (hooks/use-grid-columns.ts). storageKey "irLineGrid" below reproduces the exact
+// tablePreferences keys already saved for existing users (irLineGridColumnOrder /
+// irLineGridHiddenColumns) so no layout is orphaned.
 
 const DEFAULT_WIDTHS: Record<ColKey, number> = Object.fromEntries(
   COLUMNS.map((c) => {
@@ -562,7 +537,6 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   const [colorOptions, setColorOptions] = useState<any[]>([]);
   const [cursor, setCursor] = useState<{ clientId: string; col: ColKey } | null>(null);
   const [editing, setEditing] = useState(false);
-  const [colWidths, setColWidths] = useState<Record<ColKey, number>>(DEFAULT_WIDTHS);
 
   useEffect(() => {
     legacyErpApi.lookupTable("forex").then((r: any) => setForexOptions(Array.isArray(r) ? r : [])).catch(() => {});
@@ -962,155 +936,20 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     [rows, searchTerm],
   );
 
-  // ---- Column visibility (Manage Columns) — direct port of purchase-order-line-grid.tsx's own
-  // columnOrder/hiddenColumns state + modal, see that file's own comments for the full
-  // rationale. Default state (nothing hidden, catalog declaration order) already satisfies
-  // "all columns visible by default" with zero extra code — sanitizeHiddenColumns only ever
-  // removes entries, it never hides anything on its own.
-  const [columnOrder, setColumnOrder] = useState<ColKey[]>(REORDERABLE_DEFAULT);
-  const [hiddenColumns, setHiddenColumns] = useState<Set<ColKey>>(new Set());
-  const displayColumnDefs = useMemo(
-    () => [...FIXED_COLS, ...columnOrder.filter((k) => !hiddenColumns.has(k))].map((k) => COLUMN_BY_KEY.get(k)!),
-    [columnOrder, hiddenColumns],
+  // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
+  const gridColumnDefs = useMemo(
+    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+    [],
   );
-
-  // ---- Inline header drag-to-reorder — direct port of purchase-order-line-grid.tsx's own
-  // handleDragStartCol/handleDragOverCol/handleDropCol/handleDragEndCol (see that file's own
-  // comment on why the drop-target handlers live on the <th> while `draggable` lives on the
-  // label span, not the whole header cell). Writes into the SAME columnOrder state the Manage
-  // Columns modal reads/writes — a second, inline entry point onto that one source of truth,
-  // not a parallel ordering mechanism.
-  const dragColRef = useRef<ColKey | null>(null);
-  const [dragOverCol, setDragOverCol] = useState<ColKey | null>(null);
-  const handleDragStartCol = (key: ColKey) => (e: React.DragEvent) => {
-    dragColRef.current = key;
-    e.dataTransfer.effectAllowed = "move";
-  };
-  const handleDragOverCol = (key: ColKey) => (e: React.DragEvent) => {
-    if (!dragColRef.current || dragColRef.current === key || FIXED_COLS.includes(key)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (dragOverCol !== key) setDragOverCol(key);
-  };
-  const handleDropCol = (key: ColKey) => (e: React.DragEvent) => {
-    e.preventDefault();
-    const dragged = dragColRef.current;
-    dragColRef.current = null;
-    setDragOverCol(null);
-    if (!dragged || dragged === key || FIXED_COLS.includes(key)) return;
-    setColumnOrder((prev) => {
-      const next = prev.filter((k) => k !== dragged);
-      next.splice(next.indexOf(key), 0, dragged);
-      return next;
-    });
-  };
-  const handleDragEndCol = () => { dragColRef.current = null; setDragOverCol(null); };
-
-  // Restore persisted column order + visibility on mount — session override wins if present,
-  // otherwise the permanently saved UserSettings.tablePreferences value, otherwise the built-in
-  // default (nothing hidden, catalog order) — i.e. every column visible.
-  useEffect(() => {
-    let sessionOrderFound = false;
-    try {
-      const sessionRaw = sessionStorage.getItem(SESSION_COLUMN_ORDER_KEY);
-      if (sessionRaw) { setColumnOrder(sanitizeColumnOrder(JSON.parse(sessionRaw))); sessionOrderFound = true; }
-    } catch {}
-    try {
-      const sessionHiddenRaw = sessionStorage.getItem(SESSION_HIDDEN_COLUMNS_KEY);
-      if (sessionHiddenRaw) setHiddenColumns(new Set(sanitizeHiddenColumns(JSON.parse(sessionHiddenRaw))));
-    } catch {}
-    if (sessionOrderFound) return;
-    settingsApi.getCurrentSettings()
-      .then((s: any) => {
-        const savedOrder = s?.tablePreferences?.[PERMANENT_COLUMN_ORDER_SETTINGS_KEY];
-        if (Array.isArray(savedOrder) && savedOrder.length) setColumnOrder(sanitizeColumnOrder(savedOrder));
-        const savedHidden = s?.tablePreferences?.[PERMANENT_HIDDEN_COLUMNS_SETTINGS_KEY];
-        if (Array.isArray(savedHidden)) setHiddenColumns(new Set(sanitizeHiddenColumns(savedHidden)));
-      })
-      .catch(() => {});
-  }, []);
-
-  // ---- Column Manager modal (order + visibility, session/permanent persistence) — same
-  // draft-then-Save/Cancel/Reset model as Purchase Order's modal: edits its own modalOrder/
-  // modalHidden state so Cancel discards cleanly, Reset Default only resets the draft.
-  const [reorderOpen, setReorderOpen] = useState(false);
-  const [modalOrder, setModalOrder] = useState<ColKey[]>(columnOrder);
-  const [modalHidden, setModalHidden] = useState<Set<ColKey>>(hiddenColumns);
-  const [columnSearch, setColumnSearch] = useState("");
-  const [savingColumnPrefs, setSavingColumnPrefs] = useState(false);
-  const modalDragRef = useRef<ColKey | null>(null);
-  const [modalDragOver, setModalDragOver] = useState<ColKey | null>(null);
-
-  const openReorderModal = () => {
-    setModalOrder(columnOrder);
-    setModalHidden(new Set(hiddenColumns));
-    setColumnSearch("");
-    setReorderOpen(true);
-  };
-  const handleModalDragStart = (key: ColKey) => (e: React.DragEvent) => {
-    modalDragRef.current = key;
-    e.dataTransfer.effectAllowed = "move";
-  };
-  const handleModalDragOver = (key: ColKey) => (e: React.DragEvent) => {
-    if (!modalDragRef.current || modalDragRef.current === key) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (modalDragOver !== key) setModalDragOver(key);
-  };
-  const handleModalDrop = (key: ColKey) => (e: React.DragEvent) => {
-    e.preventDefault();
-    const dragged = modalDragRef.current;
-    modalDragRef.current = null;
-    setModalDragOver(null);
-    if (!dragged || dragged === key) return;
-    setModalOrder((prev) => {
-      const next = prev.filter((k) => k !== dragged);
-      next.splice(next.indexOf(key), 0, dragged);
-      return next;
-    });
-  };
-  const handleModalDragEnd = () => { modalDragRef.current = null; setModalDragOver(null); };
-  const toggleModalHidden = (key: ColKey, visible: boolean) => {
-    setModalHidden((prev) => {
-      const next = new Set(prev);
-      if (visible) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-  const resetModalToDefault = () => { setModalOrder(REORDERABLE_DEFAULT); setModalHidden(new Set()); };
-
-  const applySessionColumnPrefs = (order: ColKey[], hidden: Set<ColKey>) => {
-    setColumnOrder(order);
-    setHiddenColumns(hidden);
-    try {
-      sessionStorage.setItem(SESSION_COLUMN_ORDER_KEY, JSON.stringify(order));
-      sessionStorage.setItem(SESSION_HIDDEN_COLUMNS_KEY, JSON.stringify(Array.from(hidden)));
-    } catch {}
-  };
-  const saveForSession = () => { applySessionColumnPrefs(modalOrder, modalHidden); setReorderOpen(false); };
-  const savePermanently = async () => {
-    setSavingColumnPrefs(true);
-    try {
-      applySessionColumnPrefs(modalOrder, modalHidden);
-      await settingsApi.updateCurrentSettings({
-        tablePreferences: {
-          [PERMANENT_COLUMN_ORDER_SETTINGS_KEY]: modalOrder,
-          [PERMANENT_HIDDEN_COLUMNS_SETTINGS_KEY]: Array.from(modalHidden),
-        },
-      });
-      toast.success("Column preferences saved");
-      setReorderOpen(false);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save column preferences");
-    } finally {
-      setSavingColumnPrefs(false);
-    }
-  };
-  const modalOrderFiltered = useMemo(() => {
-    const q = columnSearch.trim().toLowerCase();
-    if (!q) return modalOrder;
-    return modalOrder.filter((k) => COLUMN_BY_KEY.get(k)!.label.toLowerCase().includes(q));
-  }, [modalOrder, columnSearch]);
+  const gridColumns = useGridColumns<ColKey>({
+    storageKey: "irLineGrid",
+    columns: gridColumnDefs,
+    fixedColumns: FIXED_COLS,
+  });
+  const displayColumnDefs = useMemo(
+    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    [gridColumns.displayColumnDefs],
+  );
 
   const isActive = (clientId: string, col: ColKey) => cursor?.clientId === clientId && cursor.col === col;
 
@@ -1197,36 +1036,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     children: <span data-col={col} className="min-w-0 truncate">{value}</span>,
   });
 
-  // ---- Resizable columns — direct port of purchase-order-line-grid.tsx's own startResize/
-  // autoFitColumn (component-state only, no backend persistence, same as PO). This was the
-  // concrete resize gap versus PO: colWidths previously had no setter at all.
+  // ---- Resize/reorder/hide state now lives in useGridColumns (gridColumns above) -----------
   const gridRootRef = useRef<HTMLDivElement>(null);
-  const startResize = (key: ColKey) => (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startWidth = colWidths[key];
-    const onMove = (ev: MouseEvent) => {
-      setColWidths((prev) => ({ ...prev, [key]: Math.max(MIN_WIDTHS[key], startWidth + (ev.clientX - startX)) }));
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-  const autoFitColumn = (key: ColKey) => {
-    if (!gridRootRef.current) return;
-    const els = gridRootRef.current.querySelectorAll<HTMLElement>(`[data-col="${key}"]`);
-    let max = 0;
-    els.forEach((el) => { max = Math.max(max, el.scrollWidth); });
-    if (max === 0) return;
-    const next = Math.min(480, Math.max(MIN_WIDTHS[key], max + 16));
-    setColWidths((prev) => ({ ...prev, [key]: next }));
-  };
+  const colWidths = gridColumns.colWidths;
+  const startResize = gridColumns.startResize;
+  const autoFitColumn = (key: ColKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
 
-  const totalTableWidth = displayColumnDefs.reduce((sum, c) => sum + colWidths[c.key], 0) + (!readOnly ? DEL_W : 0);
+  const totalTableWidth = gridColumns.totalWidth(!readOnly ? DEL_W : 0);
 
   // Item summary footer — same pattern as Purchase Order's own line grid
   // (purchase-order-line-grid.tsx): Total Records/Quantity/Amount from this grid's own rows,
@@ -1281,7 +1097,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         </div>
         {!readOnly && (
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={openReorderModal}>
+            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
               <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
             </Button>
             <Button variant="ghost" size="sm" className="h-7 px-2.5 text-[13px]" onClick={addRow}>
@@ -1305,19 +1121,19 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                   key={col.key}
                   role="columnheader"
                   scope="col"
-                  onDragOver={!fixed ? handleDragOverCol(col.key) : undefined}
-                  onDrop={!fixed ? handleDropCol(col.key) : undefined}
+                  onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
+                  onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
                   className={cn(
                     "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
                     CELL_BORDER, i === 0 && FIRST_COL_BORDER,
-                    dragOverCol === col.key && "bg-primary/15",
+                    gridColumns.dragOverColumn === col.key && "bg-primary/15",
                   )}
                 >
                   <span
                     title={col.label}
                     draggable={!fixed && !readOnly}
-                    onDragStart={!fixed ? handleDragStartCol(col.key) : undefined}
-                    onDragEnd={!fixed ? handleDragEndCol : undefined}
+                    onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
+                    onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
                     data-col={col.key}
                     className={cn(
                       HEADER_H, "flex w-full min-w-0 items-center justify-center truncate text-center", CELL_PAD,
@@ -1705,94 +1521,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Column Manager — identical structure/copy/footer actions to Purchase Order's own modal
-          (purchase-order-line-grid.tsx), scoped to this grid's own COLUMN_BY_KEY/FIXED_COLS. */}
-      <Dialog open={reorderOpen} onOpenChange={setReorderOpen}>
-        <DialogContent className="flex max-h-[85vh] max-w-md flex-col gap-0 p-0">
-          <DialogHeader className="shrink-0 border-b border-border px-5 py-4">
-            <DialogTitle>Column Manager</DialogTitle>
-            <DialogDescription>Show, hide and reorder columns. Type, Code and Name are required and always stay first.</DialogDescription>
-          </DialogHeader>
-
-          <div className="shrink-0 border-b border-border px-5 py-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={columnSearch}
-                onChange={(e) => setColumnSearch(e.target.value)}
-                placeholder="Search columns..."
-                aria-label="Search columns"
-                className="h-8 pl-8 text-[13px]"
-              />
-            </div>
-          </div>
-
-          <div className="flex-1 space-y-1.5 overflow-y-auto px-4 py-3">
-            {FIXED_COLS.map((key) => {
-              const col = COLUMN_BY_KEY.get(key)!;
-              return (
-                <div key={key} className="flex items-center gap-3 rounded-md border border-transparent bg-muted/40 px-3 py-2.5">
-                  <Checkbox checked disabled aria-label={`${col.label} is a required column and cannot be hidden`} />
-                  <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  <span className="flex-1 text-[13px] font-medium">{col.label}</span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Required
-                  </span>
-                </div>
-              );
-            })}
-
-            {modalOrderFiltered.length === 0 && columnSearch.trim() !== "" && (
-              <p className="px-2 py-8 text-center text-[13px] text-muted-foreground">No columns match &ldquo;{columnSearch}&rdquo;</p>
-            )}
-
-            {modalOrderFiltered.map((key) => {
-              const col = COLUMN_BY_KEY.get(key)!;
-              const visible = !modalHidden.has(key);
-              return (
-                <div
-                  key={key}
-                  onDragOver={handleModalDragOver(key)}
-                  onDrop={handleModalDrop(key)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-md border px-3 py-2.5 transition-colors",
-                    modalDragOver === key ? "border-primary bg-primary/10" : "border-border bg-card",
-                    !visible && "opacity-60",
-                  )}
-                >
-                  <Checkbox
-                    checked={visible}
-                    onCheckedChange={(checked) => toggleModalHidden(key, checked === true)}
-                    aria-label={`Show ${col.label} column`}
-                  />
-                  <span
-                    draggable
-                    onDragStart={handleModalDragStart(key)}
-                    onDragEnd={handleModalDragEnd}
-                    className="flex shrink-0 cursor-grab items-center active:cursor-grabbing"
-                  >
-                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                  </span>
-                  <span className="flex-1 text-[13px] font-medium">{col.label}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-border px-5 py-3 sm:justify-between">
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setReorderOpen(false)}>Cancel</Button>
-              <Button variant="ghost" size="sm" onClick={resetModalToDefault}>Reset Default</Button>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={saveForSession}>Save for This Session</Button>
-              <Button size="sm" onClick={savePermanently} disabled={savingColumnPrefs}>
-                {savingColumnPrefs ? "Saving..." : "Save Permanently"}
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ManageColumnsModal
+        state={gridColumns.manageColumns}
+        fixedColumns={FIXED_COLS}
+        columns={gridColumnDefs}
+        description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
+      />
     </div>
   );
 });

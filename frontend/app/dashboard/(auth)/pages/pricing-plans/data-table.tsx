@@ -1,42 +1,22 @@
 "use client";
 
 import * as React from "react";
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable
-} from "@tanstack/react-table";
-import { ArrowUpDown, Columns, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { ColumnDef } from "@tanstack/react-table";
+import { ArrowUpDown, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { pricingPlansApi } from "@/lib/api";
 import { toast } from "sonner";
 import CreatePricingPlanDialog from "./create-pricing-plan-dialog";
+import { DataTable } from "@/components/shared/data-table/data-table";
 
 export type PricingPlan = {
   id: number;
@@ -216,10 +196,6 @@ export default function PricingPlansDataTable({
   data: PricingPlan[];
   onRefresh: () => void;
 }) {
-  const [sorting, setSorting] = React.useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
-  const [rowSelection, setRowSelection] = React.useState({});
   const [editingPlan, setEditingPlan] = React.useState<PricingPlan | null>(null);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
 
@@ -242,133 +218,28 @@ export default function PricingPlansDataTable({
     }
   };
 
-  const table = useReactTable({
-    data,
-    columns: columns(handleEdit, handleDelete),
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    onColumnVisibilityChange: setColumnVisibility,
-    onRowSelectionChange: setRowSelection,
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-      rowSelection
-    }
-  });
+  const tableColumns = React.useMemo(() => columns(handleEdit, handleDelete), []);
 
   return (
     <div className="w-full space-y-4">
-      <div className="flex items-center justify-between">
-        <Input
-          placeholder="Filter plans..."
-          value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
-          onChange={(event) => table.getColumn("name")?.setFilterValue(event.target.value)}
-          className="max-w-sm"
-        />
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="ml-auto">
-                <Columns className="mr-2 h-4 w-4" />
-                Columns
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {table
-                .getAllColumns()
-                .filter((column) => column.getCanHide())
-                .map((column) => {
-                  return (
-                    <DropdownMenuCheckboxItem
-                      key={column.id}
-                      className="capitalize"
-                      checked={column.getIsVisible()}
-                      onCheckedChange={(value) => column.toggleVisibility(!!value)}>
-                      {column.id}
-                    </DropdownMenuCheckboxItem>
-                  );
-                })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <CreatePricingPlanDialog
-            open={isDialogOpen}
-            onOpenChange={(open) => {
-              setIsDialogOpen(open);
-              if (!open) setEditingPlan(null);
-            }}
-            plan={editingPlan}
-            onSuccess={onRefresh}
-          />
-          <Button onClick={() => setIsDialogOpen(true)}>
-            Create Plan
-          </Button>
-        </div>
-      </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
-                  return (
-                    <TableHead key={header.id} className="px-6 py-4">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  );
-                })}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && "selected"}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="px-6 py-4">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={table.getAllColumns().length} className="h-24 text-center">
-                  No results.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <div className="flex items-center justify-end space-x-2">
-        <div className="flex-1 text-sm text-muted-foreground">
-          {table.getFilteredSelectedRowModel().rows.length} of{" "}
-          {table.getFilteredRowModel().rows.length} row(s) selected.
-        </div>
-        <div className="space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}>
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}>
-            Next
-          </Button>
-        </div>
-      </div>
+      <DataTable
+        columns={tableColumns}
+        data={data}
+        storageKey="pricingPlans"
+        searchColumn="name"
+        searchPlaceholder="Filter plans..."
+        onAddClick={() => setIsDialogOpen(true)}
+        addLabel="Create Plan"
+      />
+      <CreatePricingPlanDialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) setEditingPlan(null);
+        }}
+        plan={editingPlan}
+        onSuccess={onRefresh}
+      />
     </div>
   );
 }

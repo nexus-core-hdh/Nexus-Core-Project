@@ -50,7 +50,7 @@ export default function EmployeeCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Employee Cards</p><h1 className="text-xl font-semibold">Employee Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="employeeCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm({ name: '', employeeNumber: '', departmentId: '', designation: '', isActive: true }); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, employeeNumber: r.employeeNumber, departmentId: r.departmentId, designation: r.designation || '', isActive: r.isActive }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.employees.delete(r.id); load(); }}

@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -23,13 +21,14 @@ import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Ribbon, SearchX, FileClock,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, MousePointerClick, XCircle,
+  ChevronRight, MousePointerClick, XCircle,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // Trim Card listing — the generic IM_Item-based item master (alongside Fabric Card / Yarn
 // Card), NOT "Customer Define Trim" (that's trim-cards-list/page.tsx, backed by the completely
@@ -40,29 +39,6 @@ import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 const TRIM_INVENTORY_CARDS_LIST_PATH = "/dashboard/legacy-erp/trim-inventory-cards-list";
 
 type SortKey = "inventoryCode" | "inventoryName" | "specialCode";
-
-function SortableHead({
-  children, sortKey, activeKey, dir, onSort,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className="h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground"
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="group inline-flex items-center gap-1">
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
-}
 
 export default function TrimCardListPage() {
   const router = useRouter();
@@ -189,6 +165,54 @@ export default function TrimCardListPage() {
     return copy;
   }, [rows, sortKey, sortDir]);
 
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    return [
+      {
+        key: "inventoryCode", label: "Code", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>,
+      },
+      { key: "inventoryName", label: "Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span> },
+      { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span> },
+      {
+        key: "status", label: "Status",
+        render: (row: any) => <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">{row.inUse ? "Active" : "Inactive"}</Badge>,
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
+  ];
+
+  // Preserves keyboard-nav/focus/selected-highlight (tabIndex/onFocus/onKeyDown/ref/conditional
+  // background) via cloneElement, same technique as inventory-cards-list's own migration —
+  // WorklistTable's <TableRow> doesn't expose these as props.
+  const wrapTrimCardRow = (row: any, el: React.ReactNode) => {
+    if (!isValidElement(el)) return el;
+    const index = sortedRows.indexOf(row);
+    const withNav = cloneElement(el as React.ReactElement<any>, {
+      ref: (node: HTMLTableRowElement | null) => {
+        if (node) rowRefs.current.set(row.id, node); else rowRefs.current.delete(row.id);
+      },
+      tabIndex: 0,
+      onFocus: () => setSelectedId(row.id),
+      onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
+      className: cn((el as React.ReactElement<any>).props.className, "outline-none", selectedId === row.id && "bg-primary/10", mode === "lookup" && "cursor-pointer"),
+    });
+    return <RowContextMenu key={row.id} actions={getRowActions(row)}>{withNav}</RowContextMenu>;
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -243,105 +267,42 @@ export default function TrimCardListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <SortableHead sortKey="inventoryCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
-                    <SortableHead sortKey="inventoryName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
-                    <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
-                  </>
-                )}
-                <TableHead className={cn("h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80", mode === "lookup" ? "w-40" : "w-14")} />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 4) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 4) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Ribbon />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : "No trim cards yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "You can create a new Trim Card." : 'Click "Add New Trim Card" to add your first Trim Card.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      <EmptyContent>
-                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Add New Trim Card</Button>
-                      </EmptyContent>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row, index) => {
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
-                ];
-                return (
-                <RowContextMenu key={row.id} actions={rowActions}>
-                <TableRow
-                  ref={(el) => { if (el) rowRefs.current.set(row.id, el); else rowRefs.current.delete(row.id); }}
-                  tabIndex={0}
-                  onFocus={() => setSelectedId(row.id)}
-                  onKeyDown={(e) => handleRowKeyDown(e, row, index)}
-                  onDoubleClick={() => returnAndClose(row)}
-                  className={cn(
-                    "group outline-none",
-                    selectedId === row.id && "bg-primary/10",
-                    mode === "lookup" && "cursor-pointer",
-                  )}
-                >
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>
-                      </TableCell>
-                      <TableCell className="py-3 font-medium">{row.inventoryName}</TableCell>
-                      <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">
-                        <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
-                          {row.inUse ? "Active" : "Inactive"}
-                        </Badge>
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {mode === "lookup" && (
-                        <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
-                          <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
-                        </Button>
-                      )}
-                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </TableCell>
-                </TableRow>
-                </RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="trimInventoryCardsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          onRowDoubleClick={(row) => returnAndClose(row)}
+          wrapRow={wrapTrimCardRow}
+          renderRowActions={(row) => (
+            <div className="flex items-center justify-end gap-1">
+              {mode === "lookup" && (
+                <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
+                  <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
+                </Button>
+              )}
+              <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+            </div>
+          )}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Ribbon />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No trim cards yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Trim Card." : 'Click "Add New Trim Card" to add your first Trim Card.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Add New Trim Card</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

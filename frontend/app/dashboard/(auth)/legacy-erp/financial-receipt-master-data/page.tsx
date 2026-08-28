@@ -6,8 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import {
@@ -26,6 +24,7 @@ import { STANDARD_WORKLIST_ID, mapTableKeyToWorklistSource, type Worklist } from
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // "Financial Receipt & Master Data" — a structural clone of the existing "Receipt & Master
 // Data" screen (receipt-master-data/page.tsx), scoped to the genuinely separate FI_Receipt
@@ -114,6 +113,27 @@ export default function FinancialReceiptMasterDataPage() {
   );
   const columnLabel = (c: string) => wl.columnLabel(c);
 
+  // Unified column model for WorklistTable — this screen has no Standard/custom-worklist split
+  // (unlike purchase-orders-list etc.): `columns` above is always just the resolved key list
+  // (worklist fields, or raw row keys when no worklist is active), so every column maps the
+  // same way. No sortable columns existed here before, so none are added now.
+  const worklistColumns: WorklistTableColumn<any>[] = useMemo(
+    () => columns.map((c) => ({ key: c, label: columnLabel(c), render: (row: any) => formatCell(row[c]) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [columns],
+  );
+
+  const getRowActions = (row: Record<string, any>): RowAction[] => {
+    const rowIsApproved = actions.isApproved?.(row);
+    return [
+      { key: "new", label: "New", icon: Plus, onSelect: () => actions.onNew?.({ router, reload, openDetails: setDetailsRow }), disabled: !actions.onNew },
+      { key: "view", label: "View", icon: Eye, onSelect: () => actions.onView({ row, router, reload, openDetails: setDetailsRow }) },
+      { key: "update", label: "Update", icon: Pencil, onSelect: () => actions.onUpdate?.({ row, router, reload, openDetails: setDetailsRow }), disabled: !actions.onUpdate },
+      { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget(row), destructive: true, separatorBefore: true },
+      { key: "approve", label: rowIsApproved ? "Already Approved" : "Approval", icon: BadgeCheck, onSelect: () => setApproveTarget(row), disabled: !actions.onApprove || !!rowIsApproved },
+    ];
+  };
+
   const runDelete = async () => {
     if (!deleteTarget) return;
     setBusy(true);
@@ -200,67 +220,27 @@ export default function FinancialReceiptMasterDataPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="max-h-[65vh] overflow-auto">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                <TableHead className="h-10 w-9" />
-                {columns.map((c) => (
-                  <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                    {columnLabel(c)}
-                  </TableHead>
-                ))}
-                {columns.length === 0 && <TableHead className="h-10" />}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: Math.max(columns.length, 5) + 1 }).map((_, j) => (
-                      <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={Math.max(columns.length, 1) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Landmark />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : `No ${actions.label.toLowerCase()} records yet`}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "Try a different search term." : `Right-click any row (once loaded) for actions, or use New ${actions.label} above.`}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                rows.map((row) => {
-                  const rowIsApproved = actions.isApproved?.(row);
-                  const rowActions: RowAction[] = [
-                    { key: "new", label: "New", icon: Plus, onSelect: () => actions.onNew?.({ router, reload, openDetails: setDetailsRow }), disabled: !actions.onNew },
-                    { key: "view", label: "View", icon: Eye, onSelect: () => actions.onView({ row, router, reload, openDetails: setDetailsRow }) },
-                    { key: "update", label: "Update", icon: Pencil, onSelect: () => actions.onUpdate?.({ row, router, reload, openDetails: setDetailsRow }), disabled: !actions.onUpdate },
-                    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget(row), destructive: true, separatorBefore: true },
-                    { key: "approve", label: rowIsApproved ? "Already Approved" : "Approval", icon: BadgeCheck, onSelect: () => setApproveTarget(row), disabled: !actions.onApprove || !!rowIsApproved },
-                  ];
-                  return (
-                    <RowContextMenu key={String(row.RecId)} actions={rowActions}>
-                      <TableRow className="cursor-context-menu hover:bg-muted/40" onDoubleClick={() => actions.onView({ row, router, reload, openDetails: setDetailsRow })}>
-                        <TableCell className="py-1"><RowActionsMenu actions={rowActions} /></TableCell>
-                        {columns.map((c) => (
-                          <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                        ))}
-                      </TableRow>
-                    </RowContextMenu>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={worklistColumns}
+          rows={rows}
+          storageKey="financialReceiptMasterData"
+          getRowKey={(row) => String(row.RecId)}
+          loading={loading}
+          onRowDoubleClick={(row) => actions.onView({ row, router, reload, openDetails: setDetailsRow })}
+          renderRowActions={(row) => <RowActionsMenu actions={getRowActions(row)} />}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Landmark />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : `No ${actions.label.toLowerCase()} records yet`}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "Try a different search term." : `Right-click any row (once loaded) for actions, or use New ${actions.label} above.`}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

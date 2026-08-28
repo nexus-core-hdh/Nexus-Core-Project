@@ -525,7 +525,7 @@ export default function YarnCardPage() {
                     Status and Parameters share IM_ItemWarehouse instead of risking duplicate
                     rows per warehouse from two independent CRUD tabs. */}
                 <TabsContent value="Warehouse Status">
-                  <SatelliteGridTab itemId={itemId} readOnly tab="warehouse-parameters" fields={[
+                  <SatelliteGridTab itemId={itemId} readOnly tab="warehouse-parameters" columnsKey="warehouse-status" fields={[
                     { key: "warehouseId", label: "Warehouse", type: "number" },
                     { key: "minimumQuantity", label: "Min Qty", type: "number" },
                     { key: "optimumQuantity", label: "Optimum Qty", type: "number" },

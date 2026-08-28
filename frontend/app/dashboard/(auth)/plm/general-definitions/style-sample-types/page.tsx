@@ -48,7 +48,7 @@ export default function StyleSampleTypesPage() {
         <h1 className="text-xl font-semibold">Style Sample Types</h1>
       </div>
       <PlmCrudTable
-        title="" data={data} loading={loading} searchKey="name" searchPlaceholder="Search types..."
+        title="" storageKey="styleSampleTypes" data={data} loading={loading} searchKey="name" searchPlaceholder="Search types..."
         onAdd={openAdd} onEdit={openEdit} onDelete={del}
         columns={[
           { key: 'sequence', label: '#', render: (r) => <span className="text-muted-foreground">{r.sequence}</span> },

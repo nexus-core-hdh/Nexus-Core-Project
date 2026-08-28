@@ -60,7 +60,7 @@ export default function BrandCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Brand Cards</p><h1 className="text-xl font-semibold">Brand Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="brandCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm(emptyForm); setEditing(null); setOpen(true); }}
         onEdit={(r: any) => { setForm({ ...emptyForm, ...r }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r: any) => { await plmApi.brands.delete(r.id); load(); }}

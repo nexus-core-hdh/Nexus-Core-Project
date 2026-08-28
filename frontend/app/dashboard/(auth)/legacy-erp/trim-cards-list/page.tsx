@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -15,17 +13,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Scissors, SearchX,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown,
+  ChevronRight,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // Customer Define Trim listing — MA_YarnTrimCard, a customer/style-scoped trim BOM header,
 // NOT the generic Trim Card item master (that's trim-inventory-cards-list/page.tsx). Same
@@ -36,29 +34,6 @@ import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 // nothing in this app looks Customer Define Trim up as a picker field the way Yarn/Fabric/Trim
 // Card are.
 type SortKey = "code" | "customerName" | "explanation";
-
-function SortableHead({
-  children, sortKey, activeKey, dir, onSort,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className="h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground"
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="group inline-flex items-center gap-1">
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
-}
 
 export default function CustomerDefineTrimListPage() {
   const router = useRouter();
@@ -107,6 +82,45 @@ export default function CustomerDefineTrimListPage() {
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    return [
+      {
+        key: "code", label: "Code", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span>,
+      },
+      {
+        key: "customerName", label: "Customer", sortable: true,
+        render: (row: any) => <span className="font-medium">{row.customerName || <span className="text-muted-foreground">—</span>}</span>,
+      },
+      {
+        key: "explanation", label: "Explanation", sortable: true,
+        render: (row: any) => row.explanation || <span className="text-muted-foreground">—</span>,
+      },
+      {
+        key: "status", label: "Status",
+        render: (row: any) => (
+          <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
+            {row.inUse ? "Active" : "Inactive"}
+          </Badge>
+        ),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.code }), destructive: true, separatorBefore: true },
+  ];
 
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/trim-cards?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/trim-cards?id=${id}&mode=edit`);
@@ -190,88 +204,34 @@ export default function CustomerDefineTrimListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <SortableHead sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
-                    <SortableHead sortKey="customerName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Customer</SortableHead>
-                    <SortableHead sortKey="explanation" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Explanation</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
-                  </>
-                )}
-                <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 4) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 4) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Scissors />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : "No Customer Define Trim records yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "You can create a new Customer Define Trim." : 'Click "Add Customer Define Trim" to add your first record.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      <EmptyContent>
-                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Add Customer Define Trim</Button>
-                      </EmptyContent>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row) => {
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.code }), destructive: true, separatorBefore: true },
-                ];
-                return (
-                <RowContextMenu key={row.id} actions={rowActions}>
-                <TableRow className="group">
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span>
-                      </TableCell>
-                      <TableCell className="py-3 font-medium">{row.customerName || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">{row.explanation || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">
-                        <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
-                          {row.inUse ? "Active" : "Inactive"}
-                        </Badge>
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </TableCell>
-                </TableRow>
-                </RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="trimCardsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          renderRowActions={(row) => (
+            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Scissors />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No Customer Define Trim records yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Customer Define Trim." : 'Click "Add Customer Define Trim" to add your first record.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Add Customer Define Trim</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

@@ -48,7 +48,7 @@ export default function DepartmentCardsPage() {
   return (
     <div className="p-6">
       <div className="mb-2"><p className="text-xs text-muted-foreground">General Definitions › Departments</p><h1 className="text-xl font-semibold">Department Cards</h1></div>
-      <PlmCrudTable title="" data={data} loading={loading} searchKey="name"
+      <PlmCrudTable title="" storageKey="departmentCards" data={data} loading={loading} searchKey="name"
         onAdd={() => { setForm({ name: '', code: '', description: '', isActive: true }); setEditing(null); setOpen(true); }}
         onEdit={(r) => { setForm({ name: r.name, code: r.code, description: r.description || '', isActive: r.isActive }); setEditing(r.id); setOpen(true); }}
         onDelete={async (r) => { await plmApi.departments.delete(r.id); load(); }}

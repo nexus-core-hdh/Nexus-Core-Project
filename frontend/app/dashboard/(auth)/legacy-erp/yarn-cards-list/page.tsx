@@ -4,8 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -23,40 +21,18 @@ import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Layers, SearchX, FileClock,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, MousePointerClick, XCircle,
+  ChevronRight, MousePointerClick, XCircle,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 const YARN_CARDS_LIST_PATH = "/dashboard/legacy-erp/yarn-cards-list";
 
 type SortKey = "inventoryCode" | "inventoryName" | "specialCode";
-
-function SortableHead({
-  children, sortKey, activeKey, dir, onSort,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc"; onSort: (k: SortKey) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className="h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground"
-      onClick={() => onSort(sortKey)}
-    >
-      <span className="group inline-flex items-center gap-1">
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
-}
 
 export default function YarnCardListPage() {
   const router = useRouter();
@@ -121,6 +97,48 @@ export default function YarnCardListPage() {
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  // Unified column model for WorklistTable — see purchase-orders-list/page.tsx for the reference
+  // pattern this mirrors. Only the Standard columns are ever `sortable: true`.
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    return [
+      {
+        key: "inventoryCode", label: "Code", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>,
+      },
+      {
+        key: "inventoryName", label: "Name", sortable: true,
+        render: (row: any) => <span className="font-medium">{row.inventoryName}</span>,
+      },
+      {
+        key: "specialCode", label: "Special Code", sortable: true,
+        render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span>,
+      },
+      {
+        key: "status", label: "Status",
+        render: (row: any) => (
+          <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
+            {row.inUse ? "Active" : "Inactive"}
+          </Badge>
+        ),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
+  ];
 
   const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/yarn-cards?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/yarn-cards?id=${id}&mode=edit`);
@@ -241,110 +259,53 @@ export default function YarnCardListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <SortableHead sortKey="inventoryCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
-                    <SortableHead sortKey="inventoryName" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
-                    <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
-                    <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
-                  </>
-                )}
-                <TableHead className={cn("h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80", mode === "lookup" ? "w-40" : "w-14")} />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 4) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 4) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Layers />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : "No yarn cards yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "You can create a new Yarn Card." : 'Click "Create New" to add your first Yarn Card.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      <EmptyContent>
-                        <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
-                      </EmptyContent>
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row, index) => {
-                // One action list, both surfaces (right-click + the Quick Actions trigger in
-                // the row's own cell) — see components/legacy-erp/row-actions.tsx.
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
-                ];
-                return (
-                <RowContextMenu key={row.id} actions={rowActions}>
-                <TableRow
-                  ref={(el) => { if (el) rowRefs.current.set(row.id, el); else rowRefs.current.delete(row.id); }}
-                  tabIndex={0}
-                  onFocus={() => setSelectedId(row.id)}
-                  onKeyDown={(e) => handleRowKeyDown(e, row, index)}
-                  onDoubleClick={() => returnAndClose(row)}
-                  className={cn(
-                    "group outline-none",
-                    selectedId === row.id && "bg-primary/10",
-                    mode === "lookup" && "cursor-pointer",
-                  )}
-                >
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>
-                      </TableCell>
-                      <TableCell className="py-3 font-medium">{row.inventoryName}</TableCell>
-                      <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3">
-                        <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">
-                          {row.inUse ? "Active" : "Inactive"}
-                        </Badge>
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    {/* Maintenance actions (View/Update/Delete) stay exactly as they were,
-                        regardless of mode. Select is ADDITIONAL, shown only in lookup mode —
-                        same convention as the Master Lookup screen's Maintenance grid. */}
-                    <div className="flex items-center justify-end gap-1">
-                      {mode === "lookup" && (
-                        <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
-                          <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
-                        </Button>
-                      )}
-                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </TableCell>
-                </TableRow>
-                </RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="yarnCardsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          actionsColumnWidth={mode === "lookup" ? 160 : 56}
+          getRowProps={(row, index) => ({
+            ref: (el: HTMLTableRowElement | null) => { if (el) rowRefs.current.set(row.id, el); else rowRefs.current.delete(row.id); },
+            tabIndex: 0,
+            onFocus: () => setSelectedId(row.id),
+            onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
+            onDoubleClick: () => returnAndClose(row),
+            className: cn("group outline-none", selectedId === row.id && "bg-primary/10", mode === "lookup" && "cursor-pointer"),
+          })}
+          renderRowActions={(row) => (
+            // Maintenance actions (View/Update/Delete) stay exactly as they were, regardless of
+            // mode. Select is ADDITIONAL, shown only in lookup mode — same convention as the
+            // Master Lookup screen's Maintenance grid.
+            <div className="flex items-center justify-end gap-1">
+              {mode === "lookup" && (
+                <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
+                  <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
+                </Button>
+              )}
+              <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+            </div>
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Layers />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No yarn cards yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Yarn Card." : 'Click "Create New" to add your first Yarn Card.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar

@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -23,13 +21,14 @@ import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Users, SearchX,
-  ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, MousePointerClick, XCircle,
+  ChevronRight, MousePointerClick, XCircle,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 
 // Also doubles as the Current Account lookup for Purchase Order (and any other screen that
 // needs it) — this same, unmodified manage screen gains a lookup mode (mode=lookup&
@@ -46,33 +45,6 @@ const balanceTone = (n: any) => {
 };
 
 type SortKey = "code" | "name" | "specialCode" | "debit" | "credit" | "balance" | "balanceTrial";
-
-function SortableHead({
-  children, sortKey, activeKey, dir, align = "left", onSort,
-}: {
-  children: React.ReactNode; sortKey: SortKey; activeKey: SortKey; dir: "asc" | "desc";
-  align?: "left" | "right"; onSort: (k: SortKey) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <TableHead
-      className={cn(
-        "h-10 cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground",
-        align === "right" && "text-right"
-      )}
-      onClick={() => onSort(sortKey)}
-    >
-      <span className={cn("group inline-flex items-center gap-1", align === "right" && "flex-row-reverse")}>
-        {children}
-        {active ? (
-          dir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
-        ) : (
-          <ChevronsUpDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-40" />
-        )}
-      </span>
-    </TableHead>
-  );
-}
 
 export default function CurrentAccountListPage() {
   const router = useRouter();
@@ -202,6 +174,53 @@ export default function CurrentAccountListPage() {
     return copy;
   }, [rows, sortKey, sortDir]);
 
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    return [
+      {
+        key: "code", label: "Code", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span>,
+      },
+      { key: "name", label: "Name", sortable: true, render: (row: any) => <span className="font-medium">{row.name}</span> },
+      { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span> },
+      { key: "debit", label: "Debit", sortable: true, align: "right", render: (row: any) => <span className="font-mono">{fmt(row.debit)}</span> },
+      { key: "credit", label: "Credit", sortable: true, align: "right", render: (row: any) => <span className="font-mono">{fmt(row.credit)}</span> },
+      {
+        key: "balance", label: "Balance", sortable: true, align: "right",
+        render: (row: any) => <span className={cn("font-mono font-semibold", balanceTone(row.balance))}>{fmt(row.balance)}</span>,
+      },
+      {
+        key: "balanceTrial", label: "Balance Trial (BT)", sortable: true, align: "right",
+        render: (row: any) => <span className={cn("font-mono font-semibold", balanceTone(row.balanceTrial))}>{fmt(row.balanceTrial)}</span>,
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.code }), destructive: true, separatorBefore: true },
+  ];
+
+  const wrapAccountRow = (row: any, el: React.ReactNode) => {
+    if (!isValidElement(el)) return el;
+    const index = sortedRows.indexOf(row);
+    const withNav = cloneElement(el as React.ReactElement<any>, {
+      tabIndex: 0,
+      onFocus: () => setSelectedRowKey(String(row.id)),
+      onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
+      className: cn((el as React.ReactElement<any>).props.className, selectedRowKey === String(row.id) && "bg-primary/10"),
+    });
+    return mode === "lookup" ? withNav : <RowContextMenu key={row.id} actions={getRowActions(row)}>{withNav}</RowContextMenu>;
+  };
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -258,107 +277,43 @@ export default function CurrentAccountListPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                {activeColumns ? (
-                  activeColumns.map((c) => (
-                    <TableHead key={c} className="h-10 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                      {wl.columnLabel(c)}
-                    </TableHead>
-                  ))
-                ) : (
-                  <>
-                    <SortableHead sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
-                    <SortableHead sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
-                    <SortableHead sortKey="specialCode" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Special Code</SortableHead>
-                    <SortableHead sortKey="debit" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Debit</SortableHead>
-                    <SortableHead sortKey="credit" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Credit</SortableHead>
-                    <SortableHead sortKey="balance" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Balance</SortableHead>
-                    <SortableHead sortKey="balanceTrial" activeKey={sortKey} dir={sortDir} align="right" onSort={toggleSort}>Balance Trial (BT)</SortableHead>
-                  </>
-                )}
-                <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: (activeColumns?.length ?? 7) + 1 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              ) : rows.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={(activeColumns?.length ?? 7) + 1} className="py-12">
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">{searched ? <SearchX /> : <Users />}</EmptyMedia>
-                        <EmptyTitle>{searched ? "Record not found" : "No current accounts yet"}</EmptyTitle>
-                        <EmptyDescription>
-                          {searched ? "You can create a new Current Account." : 'Click "Create New" to add your first Current Account.'}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                      {!searched && mode !== "lookup" && (
-                        <EmptyContent>
-                          <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
-                        </EmptyContent>
-                      )}
-                    </Empty>
-                  </TableCell>
-                </TableRow>
-              ) : sortedRows.map((row, index) => {
-                const rowActions: RowAction[] = [
-                  { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-                  { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.code }), destructive: true, separatorBefore: true },
-                ];
-                const tableRow = (
-                <TableRow
-                  key={row.id}
-                  tabIndex={0}
-                  onFocus={() => setSelectedRowKey(String(row.id))}
-                  onKeyDown={(e) => handleRowKeyDown(e, row, index)}
-                  onDoubleClick={() => (mode === "lookup" ? returnAndClose(row) : view(row.id))}
-                  className={cn(
-                    "group cursor-pointer outline-none hover:bg-muted/40",
-                    selectedRowKey === String(row.id) && "bg-primary/10",
-                  )}
-                >
-                  {activeColumns ? (
-                    activeColumns.map((c) => (
-                      <TableCell key={c} className="whitespace-nowrap py-3 text-sm">{formatCell(row[c])}</TableCell>
-                    ))
-                  ) : (
-                    <>
-                      <TableCell className="py-3">
-                        <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.code}</span>
-                      </TableCell>
-                      <TableCell className="py-3 font-medium">{row.name}</TableCell>
-                      <TableCell className="py-3">{row.specialCode || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="py-3 text-right font-mono">{fmt(row.debit)}</TableCell>
-                      <TableCell className="py-3 text-right font-mono">{fmt(row.credit)}</TableCell>
-                      <TableCell className={cn("py-3 text-right font-mono font-semibold", balanceTone(row.balance))}>{fmt(row.balance)}</TableCell>
-                      <TableCell className={cn("py-3 text-right font-mono font-semibold", balanceTone(row.balanceTrial))}>{fmt(row.balanceTrial)}</TableCell>
-                    </>
-                  )}
-                  <TableCell className="py-3 text-right">
-                    {mode === "lookup" ? (
-                      <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
-                        <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
-                      </Button>
-                    ) : (
-                      <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
-                    )}
-                  </TableCell>
-                </TableRow>
-                );
-                return mode === "lookup" ? tableRow : (
-                  <RowContextMenu key={row.id} actions={rowActions}>{tableRow}</RowContextMenu>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="currentAccountsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+          onRowDoubleClick={(row) => (mode === "lookup" ? returnAndClose(row) : view(row.id))}
+          wrapRow={wrapAccountRow}
+          renderRowActions={(row) => (
+            mode === "lookup" ? (
+              <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
+                <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
+              </Button>
+            ) : (
+              <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+            )
+          )}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Users />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No current accounts yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Current Account." : 'Click "Create New" to add your first Current Account.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              {!searched && mode !== "lookup" && (
+                <EmptyContent>
+                  <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+                </EmptyContent>
+              )}
+            </Empty>
+          }
+        />
       </div>
 
       <WorklistBar
