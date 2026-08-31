@@ -5,6 +5,7 @@ import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -141,7 +142,11 @@ const COLUMNS: ColumnDef[] = [
   ro("lotCode", "Lot Code", "text"),
   ro("assortmentExplanation", "Assortment Explanation", "text"),
   ro("lotQuantity", "Lot Quantity", "number", "lotQuantity"),
-  ro("variant1", "Variant1", "text"),
+  // Variant1 — IM_ReceiptItemVariant/IM_ItemVariant/IM_VariantItem, the existing Variant
+  // breakdown relationship (see the "Variant1" cell render below); the missing UI column, same
+  // status "color" was in before this pass. Variant2-5 and Variant1-5 Name stay read-only
+  // placeholders (ro()) — out of scope, unchanged.
+  { key: "variant1", label: "Variant1", align: "left", editable: true, kind: "text" },
   ro("variant2", "Variant2", "text"),
   ro("variant3", "Variant3", "text"),
   ro("variant4", "Variant4", "text"),
@@ -388,6 +393,15 @@ interface LineRow {
   // this line itself is persisted — see persistRow/commitDrafts). Cleared once created; never
   // sent through buildDto, never itself a persisted column.
   pendingVariants: { inventoryVariantId: number; quantity: number; netUnitPrice: number | null; orderReceiptItemVariantId: number }[];
+  // Variant1 cell — this line's OWN already-persisted IM_ReceiptItemVariant rows (from
+  // listItems()'s existing "Variant breakdown read-back" query, r.variants; see load() below),
+  // and the resolved display name for the first one (via itemVariantOptionsByInventoryId).
+  // 0 rows = no Variant1 selected yet; 1 row = the simple, inline-editable case this cell
+  // supports; >1 rows = a genuine multi-variant breakdown (built via the existing dedicated
+  // dialog elsewhere) that this single-value cell deliberately shows read-only/disabled rather
+  // than collapsing.
+  variantLines: any[];
+  variant1Name: string;
   // The raw API row this line was hydrated from (or {} for a not-yet-saved row) — every
   // read-only catalog column's dataKey is looked up in here, never a separately maintained
   // field, so there's exactly one place a saved line's extra data lives.
@@ -402,6 +416,7 @@ const emptyLine = (): LineRow => ({
   orderReceiptItemId: null, poReceiptNo: "",
   purchaseReceiptItemId: null, sourceReceiptNo: "", sourceReceiptType: null,
   colorCardId: null, color: "", pendingVariants: [],
+  variantLines: [], variant1Name: "",
   extra: {},
 });
 
@@ -421,12 +436,19 @@ function recalc(row: LineRow): LineRow {
 const isBlankLine = (row: LineRow) => !row.inventoryId && !row.code.trim();
 
 /** The subset of legacyErpApi.inventoryReceipts this grid needs — legacyErpApi.receipts(type)
- *  (Receipt Screen Replication's generic client) satisfies this shape as-is. */
+ *  (Receipt Screen Replication's generic client) satisfies this shape as-is. Variant methods are
+ *  optional only so a hypothetical future caller that never wires them still type-checks; both
+ *  real implementations (inventoryReceipts, receipts(type)) provide them. */
 export interface InventoryReceiptItemsApi {
   listItems: (id: number) => Promise<any>;
   createItem: (id: number, d: any) => Promise<any>;
   updateItem: (id: number, itemId: number, d: any) => Promise<any>;
   removeItem: (id: number, itemId: number) => Promise<any>;
+  itemVariantOptions?: (inventoryId: number) => Promise<any>;
+  listItemVariants?: (id: number, itemId: number) => Promise<any>;
+  createItemVariant?: (id: number, itemId: number, d: any) => Promise<any>;
+  updateItemVariant?: (id: number, itemId: number, variantLineId: number, d: any) => Promise<any>;
+  removeItemVariant?: (id: number, itemId: number, variantLineId: number) => Promise<any>;
 }
 
 interface Props {
@@ -488,6 +510,10 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [forexOptions, setForexOptions] = useState<any[]>([]);
   // Unit — the flat cross-set MD_UnitSetItem list, kept ONLY to resolve an already-saved line's
   // Unit display label (see hydrateUnits/importLines below), the same narrow role
@@ -525,6 +551,34 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     if (inventoryId == null) return;
     fetchItemUnits(Number(inventoryId));
   }, [fetchItemUnits]);
+  // Variant1 cell — per-item IM_ItemVariant options (Variant1Id/Variant1Name resolved server-side
+  // by the already-existing itemVariantOptions() query), cached by inventoryId exactly like
+  // itemUnitsByInventoryId above: item-master-driven, not row- or receipt-specific, so every row
+  // sharing an item shares one fetch/cache entry.
+  const [itemVariantOptionsByInventoryId, setItemVariantOptionsByInventoryId] = useState<Record<string, any[]>>({});
+  const itemVariantOptionsRef = useRef(itemVariantOptionsByInventoryId);
+  itemVariantOptionsRef.current = itemVariantOptionsByInventoryId;
+  const itemVariantOptionsFetchRef = useRef<Record<string, Promise<any[]> | undefined>>({});
+  const fetchItemVariantOptions = useCallback((inventoryId: number): Promise<any[]> => {
+    const key = String(inventoryId);
+    if (itemVariantOptionsRef.current[key]) return Promise.resolve(itemVariantOptionsRef.current[key]);
+    const inFlight = itemVariantOptionsFetchRef.current[key];
+    if (inFlight) return inFlight;
+    if (!api.itemVariantOptions) return Promise.resolve([]);
+    const p = api.itemVariantOptions(inventoryId)
+      .then((r: any) => {
+        const list = Array.isArray(r) ? r : [];
+        setItemVariantOptionsByInventoryId((prev) => ({ ...prev, [key]: list }));
+        return list;
+      })
+      .catch(() => {
+        setItemVariantOptionsByInventoryId((prev) => ({ ...prev, [key]: [] }));
+        return [];
+      })
+      .finally(() => { delete itemVariantOptionsFetchRef.current[key]; });
+    itemVariantOptionsFetchRef.current[key] = p;
+    return p;
+  }, [api]);
   // Code field's smart-search datasource — the SAME Inventory Card List aggregation
   // hydrateCodesNames already uses to resolve saved lines' Code/Name (see
   // purchase-order-line-grid.tsx's own inventoryOptions for the reference implementation),
@@ -611,6 +665,31 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     }
   };
 
+  // Variant1 display resolution — same shape/purpose as hydrateColors above: resolves each
+  // saved row's first variantLines entry (already fetched inline by listItems()) to a
+  // human-readable Variant1 name, via itemVariantOptions(inventoryId) grouped by item so rows
+  // sharing an item only trigger one fetch each. Rows with 0 or >1 variant lines are left alone
+  // (0 = nothing to resolve; >1 = the cell shows "Multiple" directly, no name needed).
+  const hydrateVariants = async (list: LineRow[]): Promise<LineRow[]> => {
+    if (!api.itemVariantOptions) return list;
+    const itemIds = Array.from(new Set(
+      list.filter((r) => r.variantLines.length === 1 && r.inventoryId != null).map((r) => r.inventoryId as number),
+    ));
+    if (!itemIds.length) return list;
+    try {
+      const results = await Promise.all(itemIds.map((id) => api.itemVariantOptions!(id).catch(() => [])));
+      const optionsByItem = new Map<number, any[]>(itemIds.map((id, i) => [id, Array.isArray(results[i]) ? results[i] : []]));
+      return list.map((row) => {
+        if (row.variantLines.length !== 1 || row.inventoryId == null) return row;
+        const options = optionsByItem.get(row.inventoryId) ?? [];
+        const match = options.find((o: any) => Number(o.id) === Number(row.variantLines[0].inventoryVariantId));
+        return match ? { ...row, variant1Name: match.variant1Name ?? "" } : row;
+      });
+    } catch {
+      return list;
+    }
+  };
+
   const fromApiRow = (r: any): LineRow => recalc({
     clientId: uid(), __rowId: r.id, inventoryId: r.inventoryId ?? null,
     code: "", name: "", stockOnHand: null, lastPurchasePrice: null,
@@ -629,8 +708,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     purchaseReceiptItemId: r.purchaseReceiptItemId ?? null,
     sourceReceiptNo: r.sourceReceiptNo ?? "",
     sourceReceiptType: r.sourceReceiptType ?? null,
-    colorCardId: r.colorCardId ?? null,
+    colorCardId: r.colorCardId ?? null, color: "",
     pendingVariants: [],
+    // r.variants — already resolved by listItems()'s existing "Variant breakdown read-back"
+    // query (inventory-receipt.service.ts), so this needs no extra fetch to arrive; only the
+    // human-readable Variant1 name still needs hydrateVariants() below.
+    variantLines: Array.isArray(r.variants) ? r.variants : [], variant1Name: "",
     extra: r,
   });
 
@@ -644,7 +727,9 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
       const withCodes = await hydrateCodesNames(list);
       const withForex = await hydrateForex(withCodes);
       const withUnits = await hydrateUnits(withForex);
-      setRows(withUnits.length ? withUnits : [emptyLine()]);
+      const withColors = await hydrateColors(withUnits);
+      const withVariants = await hydrateVariants(withColors);
+      setRows(withVariants.length ? withVariants : [emptyLine()]);
       // Prefetch each distinct item's own valid units so the Unit cell's dropdown is ready the
       // moment a saved line is opened for edit — same prefetch purchase-order-line-grid.tsx's
       // own load() already does.
@@ -660,17 +745,22 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
   useEffect(() => { load(); }, [inventoryReceiptId]);
 
+  // Decimal Parameters rounding happens HERE (not just via each cell's own EditableGridInput
+  // decimalKey, which is visual round-on-blur only) — every commit path for this grid converges
+  // on buildDto before hitting the API, so rounding the DTO value right here guarantees the
+  // persisted value is correct regardless of which commit path fired. See
+  // purchase-order-line-grid.tsx's own buildDto for the identical rationale/precedent.
   const buildDto = useCallback((row: LineRow) => ({
     inventoryId: row.inventoryId,
-    quantity: row.quantity === "" ? undefined : num(row.quantity),
+    quantity: row.quantity === "" ? undefined : round(row.quantity, "quantity"),
     unitId: row.unitId ?? undefined,
-    unitPrice: row.price === "" ? undefined : num(row.price),
+    unitPrice: row.price === "" ? undefined : round(row.price, "unit-price"),
     forexId: row.forexId ?? undefined,
     explanation: row.explanation === "" ? undefined : row.explanation,
     specialCode: row.specialCode === "" ? undefined : row.specialCode,
     // Gross Weight — sent as explicit undefined (not 0) when cleared, same "don't write a false
     // zero" convention as every other optional numeric field here.
-    grossQuantity: row.grossQuantity === "" ? undefined : num(row.grossQuantity),
+    grossQuantity: row.grossQuantity === "" ? undefined : round(row.grossQuantity, "quantity"),
     // VAT — mirrors purchase-order-line-grid.tsx's own buildDto exactly: vatIncluded/vatRate are
     // sent, plus the two computed totals (itemTotal/netItemTotal). PO never sends VatAmount
     // separately either, so this doesn't invent that here.
@@ -691,7 +781,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // Colour — IM_ReceiptItem.ColorCardId, carried across from the source PO line at import
     // time (see importLines below); undefined for every manually-added line.
     colorCardId: row.colorCardId ?? undefined,
-  }), []);
+  }), [round]);
 
   // Variant breakdown — creates each of a just-persisted line's still-pending
   // IM_ReceiptItemVariant rows (copied from the source PO line at import time — see
@@ -903,7 +993,9 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   // already orders Main Unit first) is applied as soon as it resolves. An item with no
   // configured units at all leaves Unit blank for manual selection, same as today.
   const selectItemOnRow = useCallback((clientId: string, itemPatch: Partial<LineRow> & { inventoryId: number }) => {
-    updateRow(clientId, { ...itemPatch, unitId: null, unit: "" }, false);
+    // A newly-selected Item must never inherit the previous Item's Color/Variant1 — both reset
+    // immediately, same moment Unit resets, rather than silently carrying stale values across.
+    updateRow(clientId, { ...itemPatch, unitId: null, unit: "", colorCardId: null, color: "", variantLines: [], variant1Name: "" }, false);
     fetchItemUnits(itemPatch.inventoryId).then((list) => {
       const main = list[0];
       updateRow(clientId, {
@@ -912,7 +1004,10 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         unit: main ? (main.code || main.name || "") : "",
       }, true);
     });
-  }, [updateRow, fetchItemUnits]);
+    // Prefetch the new item's Variant1 options so the cell's dropdown is ready the moment this
+    // line is opened for edit — same prefetch pattern as fetchItemUnits above.
+    fetchItemVariantOptions(itemPatch.inventoryId);
+  }, [updateRow, fetchItemUnits, fetchItemVariantOptions]);
 
   const { openFullScreen: openInventoryLookup } = useMasterLookupField(
     "inventory",
@@ -1273,6 +1368,109 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       );
                     }
 
+                    // COLOR — IM_ReceiptItem.ColorCardId (ColorCard.id, text), the exact same
+                    // field/master/widget Purchase Order's own line grid already uses for its
+                    // "Color" cell (purchase-order-line-grid.tsx) — same AutocompleteTextCell,
+                    // same colorOptions (plmApi.colors.list(), global — no item-scoped Color
+                    // relationship exists in the DB to filter by; confirmed no such FK on
+                    // IM_Item/ColorCard). Selecting an existing option sets colorCardId; typing
+                    // free text with no match creates a new ColorCard row (matches PO's own
+                    // "custom Color" behavior) so colorCardId always stays a valid FK. Selecting
+                    // a new item (selectItemOnRow) resets colorCardId/color so a new item never
+                    // inherits the previous item's Color.
+                    if (col.key === "color") {
+                      return (
+                        <TableCell key={col.key} className={cellCls(r.clientId, "color", firstBorder)}>
+                          {isActive(r.clientId, "color") && editing ? (
+                            <div className={EDITOR_WRAP}>
+                              <AutocompleteTextCell
+                                autoFocus
+                                value={r.color}
+                                options={colorOptions}
+                                disabled={readOnly}
+                                onChange={(v) => updateRow(r.clientId, { color: v })}
+                                onCancel={() => cancelEdit(r.clientId)}
+                                onCommit={async (finalValue) => {
+                                  setEditing(false);
+                                  const text = finalValue.trim();
+                                  if (!text) { updateRow(r.clientId, { colorCardId: null, color: "" }, true); return; }
+                                  const match = colorOptions.find((c) =>
+                                    (c.code || "").toLowerCase() === text.toLowerCase() || (c.name || "").toLowerCase() === text.toLowerCase());
+                                  if (match) { updateRow(r.clientId, { colorCardId: match.id, color: match.code || match.name || text }, true); return; }
+                                  try {
+                                    // Matches the existing Color Card management screen's own
+                                    // create payload shape exactly (same as PO's identical cell).
+                                    const user = getCurrentUser();
+                                    const created: any = await plmApi.colors.create({ code: text, name: text, color: "#000000", branchId: user?.branchId });
+                                    setColorOptions((prev) => [...prev, created]);
+                                    updateRow(r.clientId, { colorCardId: created.id, color: created.code || created.name || text }, true);
+                                  } catch (e: any) {
+                                    toast.error(e.message || "Failed to create color");
+                                  }
+                                }}
+                              />
+                            </div>
+                          ) : <div {...staticCellProps(r, "color", r.color || "—", "left", !r.color)} />}
+                        </TableCell>
+                      );
+                    }
+
+                    // VARIANT1 — IM_ReceiptItemVariant.InventoryVariantId (-> IM_ItemVariant ->
+                    // IM_VariantItem.ItemName for the Variant1Id dimension), the existing
+                    // "Variant breakdown" relationship (already fully built as a separate
+                    // CRUD — see the itemVariant* API methods) reused here as a simple inline
+                    // single-select for the common case: a line with 0 or 1 breakdown rows.
+                    // - 0 lines: empty, editable — picking a value creates the one row.
+                    // - 1 line: editable — picking a different value updates it.
+                    // - >1 lines (a genuine multi-variant split, built via the dedicated
+                    //   breakdown dialog elsewhere): shown as "Multiple", disabled — this
+                    //   single-value cell must never collapse/corrupt a real breakdown.
+                    // Disabled whenever there's no item, the line isn't saved yet (variant rows
+                    // need a real IM_ReceiptItem.RecId to attach to), or the item genuinely has
+                    // no IM_ItemVariant configuration (options.length === 0) — a clean, honest
+                    // empty state rather than a dead-looking-but-technically-active control.
+                    if (col.key === "variant1") {
+                      const options = r.inventoryId != null ? (itemVariantOptionsByInventoryId[String(r.inventoryId)] ?? []) : [];
+                      const hasMultiple = r.variantLines.length > 1;
+                      const currentLine = r.variantLines[0];
+                      const disabled = readOnly || !r.__rowId || r.inventoryId == null || options.length === 0 || hasMultiple || !api.createItemVariant;
+                      const displayValue = hasMultiple ? "Multiple" : (r.variant1Name || "—");
+                      return (
+                        <TableCell key={col.key} className={cellCls(r.clientId, "variant1", firstBorder)}>
+                          {isActive(r.clientId, "variant1") && editing && !disabled ? (
+                            <div className={EDITOR_WRAP}>
+                              <Select
+                                value={currentLine ? String(currentLine.inventoryVariantId) : ""}
+                                defaultOpen
+                                onOpenChange={(open) => !open && setEditing(false)}
+                                onValueChange={async (v) => {
+                                  setEditing(false);
+                                  if (!inventoryReceiptId || !r.__rowId) return;
+                                  const chosen = options.find((o: any) => String(o.id) === v);
+                                  try {
+                                    if (currentLine) {
+                                      const updated: any = await api.updateItemVariant!(inventoryReceiptId, r.__rowId, currentLine.id, { inventoryVariantId: Number(v) });
+                                      updateRow(r.clientId, { variantLines: [updated], variant1Name: chosen?.variant1Name ?? "" });
+                                    } else {
+                                      const created: any = await api.createItemVariant!(inventoryReceiptId, r.__rowId, { inventoryVariantId: Number(v), quantity: num(r.quantity) });
+                                      updateRow(r.clientId, { variantLines: [created], variant1Name: chosen?.variant1Name ?? "" });
+                                    }
+                                  } catch (e: any) {
+                                    toast.error(e.message || "Failed to save Variant1");
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className={EDITOR_CONTROL}><SelectValue placeholder="—" /></SelectTrigger>
+                                <SelectContent>
+                                  {options.map((o: any) => <SelectItem key={o.id} value={String(o.id)}>{o.variant1Name || "—"}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : <div {...staticCellProps(r, "variant1", displayValue, "left", displayValue === "—")} />}
+                        </TableCell>
+                      );
+                    }
+
                     if (col.key === "explanation") {
                       return (
                         <TableCell key={col.key} className={cellCls(r.clientId, "explanation", firstBorder)}>
@@ -1308,7 +1506,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                         <TableCell key={col.key} className={cellCls(r.clientId, "quantity", firstBorder)}>
                           {isActive(r.clientId, "quantity") && editing ? (
                             <div className={EDITOR_WRAP}>
-                              <EditableGridInput autoFocus type="number" align="right" value={r.quantity} disabled={readOnly}
+                              <EditableGridInput autoFocus type="number" align="right" value={r.quantity} disabled={readOnly} decimalKey="quantity"
                                 onChange={(v) => updateRow(r.clientId, { quantity: v })}
                                 onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                                 onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -1353,7 +1551,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                         <TableCell key={col.key} className={cellCls(r.clientId, "price", firstBorder)}>
                           {isActive(r.clientId, "price") && editing ? (
                             <div className={EDITOR_WRAP}>
-                              <EditableGridInput autoFocus type="number" align="right" value={r.price} disabled={readOnly}
+                              <EditableGridInput autoFocus type="number" align="right" value={r.price} disabled={readOnly} decimalKey="unit-price"
                                 onChange={(v) => updateRow(r.clientId, { price: v })}
                                 onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                                 onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -1388,7 +1586,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                         <TableCell key={col.key} className={cellCls(r.clientId, "grossQuantity", firstBorder)}>
                           {isActive(r.clientId, "grossQuantity") && editing ? (
                             <div className={EDITOR_WRAP}>
-                              <EditableGridInput autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly}
+                              <EditableGridInput autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly} decimalKey="quantity"
                                 onChange={(v) => updateRow(r.clientId, { grossQuantity: v })}
                                 onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                                 onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />

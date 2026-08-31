@@ -3132,6 +3132,34 @@ model ApprovalConfiguration {
   updatedBy           String?
 }
 
+// Settings -> Screen Parameters — one centralized, generic table for every screen's admin-
+// configured parameters, keyed by `screenKey` (same MenuItem.href convention as
+// ApprovalConfiguration.screenKey above, just not FK'd — a screen key is a stable string, not a
+// relation). Deliberately NOT one table per screen: screenKey+paramKey is the isolation boundary
+// (enforced by the compound unique below), so Screen A's rows can never collide with Screen B's,
+// while every screen still shares this one table/service/API. `value` is always stored as text
+// (booleans as "true"/"false", numbers as their string form) so a single nullable column covers
+// every supported type without a column-per-type schema; `options` (a JSON string array) is only
+// populated for type "select".
+model ScreenParameter {
+  id          String   @id @default(uuid())
+  screenKey   String
+  paramKey    String
+  name        String
+  description String?
+  type        String
+  value       String?
+  options     Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  createdBy   String?
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+
+  @@unique([screenKey, paramKey])
+  @@index([screenKey])
+}
+
 model ApprovalRequest {
   id            String    @id @default(uuid())
   screenKey     String

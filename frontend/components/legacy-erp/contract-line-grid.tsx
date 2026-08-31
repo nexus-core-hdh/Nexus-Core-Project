@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
@@ -200,6 +201,10 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [serviceLookupClientId, setServiceLookupClientId] = useState<string | null>(null);
   const pendingLookupClientId = useRef<string | null>(null);
 
@@ -322,24 +327,29 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
 
   useEffect(() => { load(); }, [contractId]);
 
+  // Decimal Parameters rounding happens HERE (not just via each cell's own EditableGridInput
+  // decimalKey, which is visual round-on-blur only) — every commit path for this grid converges
+  // on buildDto before hitting the API, so rounding the DTO value right here guarantees the
+  // persisted value is correct regardless of which commit path fired. See
+  // purchase-order-line-grid.tsx's own buildDto for the identical rationale/precedent.
   const buildDto = useCallback((row: LineRow) => ({
     itemType: row.itemType,
     inventoryId: row.inventoryId,
     serviceCardId: row.serviceCardId,
-    quantity: row.quantity === "" ? undefined : num(row.quantity),
-    grossQuantity: row.grossQuantity === "" ? undefined : num(row.grossQuantity),
+    quantity: row.quantity === "" ? undefined : round(row.quantity, "quantity"),
+    grossQuantity: row.grossQuantity === "" ? undefined : round(row.grossQuantity, "quantity"),
     unitId: row.unitId ?? undefined,
-    unitPrice: row.rate === "" ? undefined : num(row.rate),
+    unitPrice: row.rate === "" ? undefined : round(row.rate, "unit-price"),
     forexId: row.forexId ?? undefined,
     vatIncluded: row.vatIncluded,
     vatRate: row.vatRate === "" ? undefined : num(row.vatRate),
     itemTotal: row.price ?? undefined,
     netItemTotal: row.lineAmount ?? undefined,
-    receivedQuantity: row.receivedQuantity === "" ? undefined : num(row.receivedQuantity),
+    receivedQuantity: row.receivedQuantity === "" ? undefined : round(row.receivedQuantity, "quantity"),
     deliveryDate: row.deliveryDate || undefined,
     specialCode: row.specialCode || undefined,
     explanation: row.explanation || undefined,
-  }), []);
+  }), [round]);
 
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const persistRow = useCallback(async (clientId: string, row: LineRow) => {
@@ -721,7 +731,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "quantity", firstBorder)}>
                         {isActive(r.clientId, "quantity") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.quantity} disabled={readOnly}
+                            <EditableGridInput autoFocus type="number" align="right" value={r.quantity} disabled={readOnly} decimalKey="quantity"
                               onChange={(v) => updateRow(r.clientId, { quantity: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -736,7 +746,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "grossQuantity", firstBorder)}>
                         {isActive(r.clientId, "grossQuantity") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly}
+                            <EditableGridInput autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly} decimalKey="quantity"
                               onChange={(v) => updateRow(r.clientId, { grossQuantity: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -768,7 +778,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "rate", firstBorder)}>
                         {isActive(r.clientId, "rate") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.rate} disabled={readOnly}
+                            <EditableGridInput autoFocus type="number" align="right" value={r.rate} disabled={readOnly} decimalKey="unit-price"
                               onChange={(v) => updateRow(r.clientId, { rate: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -852,7 +862,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "received", firstBorder)}>
                         {isActive(r.clientId, "received") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.receivedQuantity} disabled={readOnly}
+                            <EditableGridInput autoFocus type="number" align="right" value={r.receivedQuantity} disabled={readOnly} decimalKey="quantity"
                               onChange={(v) => updateRow(r.clientId, { receivedQuantity: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />

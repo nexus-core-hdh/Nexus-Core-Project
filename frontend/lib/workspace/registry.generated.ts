@@ -77,6 +77,7 @@ export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/dashboard/legacy-erp/financial-receipt-master-data", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/financial-receipt-master-data/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/financial-receipts", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/financial-receipts/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/general-settings", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/general-settings/page"), { ssr: false }) },
+  { path: "/dashboard/legacy-erp/general-settings/screen-parameters", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/general-settings/screen-parameters/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/inventory-cards-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/inventory-cards-list/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/inventory-cards-new", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/inventory-cards-new/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/inventory-receipts", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/inventory-receipts/page"), { ssr: false }) },

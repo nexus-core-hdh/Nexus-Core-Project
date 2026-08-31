@@ -5,6 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
+import type { DecimalFieldKey } from "@/lib/legacy-erp/decimal-parameters";
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -49,8 +52,16 @@ const INCOTERMS = ["FOB", "CIF", "CFR", "EXW", "DDP", "FCA"];
 // Renders through the shared EditableGridInput (components/ui/editable-grid-input.tsx)
 // so this grid's cells look identical to every other input in the app instead of using
 // their own bespoke CSS.
-function GridInput({ value, onChange, align = "left", type = "text" }: { value: string | number; onChange: (v: string) => void; align?: "left" | "right"; type?: string }) {
-  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} />;
+function GridInput({
+  value, onChange, align = "left", type = "text", decimalKey,
+}: {
+  value: string | number; onChange: (v: string) => void; align?: "left" | "right"; type?: string;
+  /** Opt-in Decimal Parameters rounding — forwarded straight through to EditableGridInput.
+   *  Omitted by every existing caller today, so behavior is unchanged unless a cell explicitly
+   *  adopts it. */
+  decimalKey?: DecimalFieldKey;
+}) {
+  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} decimalKey={decimalKey} />;
 }
 
 function SectionHeaderBar({ title, total, sharePct }: { title: string; total: number; sharePct: number }) {
@@ -99,6 +110,10 @@ export default function CostingSheetDetailPage() {
   const [rawRows, setRawRows] = useState<RawRow[]>([]);
   const [laborRows, setLaborRows] = useState<LaborRow[]>([]);
   const [otherRows, setOtherRows] = useState<OtherRow[]>([]);
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [costDetails, setCostDetails] = useState<Record<string, CostDetailValue>>({});
   const [costDetailRowId, setCostDetailRowId] = useState<string | null>(null);
   const [profitBreakdownOpen, setProfitBreakdownOpen] = useState(false);
@@ -220,10 +235,22 @@ export default function CostingSheetDetailPage() {
         await plmApi.costingSheets.update(targetId, headerPayload);
       }
 
+      // Decimal Parameters rounding happens HERE (not just via each cell's own GridInput
+      // decimalKey, which is visual round-on-blur only) — this is the one place these rows are
+      // actually sent to the API. Same rationale as bom-tab.tsx's own save().
       await Promise.all([
-        plmApi.costingSheets.upsertRawMaterialLines(targetId!, rawRows.map((r) => ({ ...r, costDetail: costDetails[r.id] }))),
-        plmApi.costingSheets.upsertLaborLines(targetId!, laborRows),
-        plmApi.costingSheets.upsertOtherLines(targetId!, otherRows),
+        plmApi.costingSheets.upsertRawMaterialLines(
+          targetId!,
+          rawRows.map((r) => ({ ...r, quantity: round(r.quantity, "quantity"), unitPrice: round(r.unitPrice, "unit-price"), costDetail: costDetails[r.id] })),
+        ),
+        plmApi.costingSheets.upsertLaborLines(
+          targetId!,
+          laborRows.map((r) => ({ ...r, quantity: round(r.quantity, "quantity"), unitPrice: round(r.unitPrice, "unit-price") })),
+        ),
+        plmApi.costingSheets.upsertOtherLines(
+          targetId!,
+          otherRows.map((r) => ({ ...r, quantity: round(r.quantity, "quantity"), unitPrice: round(r.unitPrice, "unit-price") })),
+        ),
       ]);
 
       toast.success(sheetId ? "Costing sheet saved" : "Costing sheet created");
@@ -440,9 +467,9 @@ export default function CostingSheetDetailPage() {
                             <TableCell><GridInput value={r.groupName} onChange={(v) => updateRaw(r.id, { groupName: v })} /></TableCell>
                             <TableCell><GridInput value={r.inventoryCode} onChange={(v) => updateRaw(r.id, { inventoryCode: v })} /></TableCell>
                             <TableCell><GridInput value={r.inventoryName} onChange={(v) => updateRaw(r.id, { inventoryName: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.quantity} onChange={(v) => updateRaw(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => updateRaw(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput type="number" align="right" value={r.wastePct} onChange={(v) => updateRaw(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} onChange={(v) => updateRaw(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateRaw(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput value={r.forex} onChange={(v) => updateRaw(r.id, { forex: v })} /></TableCell>
                             <TableCell><GridInput value={r.unit} onChange={(v) => updateRaw(r.id, { unit: v })} /></TableCell>
                             <TableCell><GridInput value={r.explanation} onChange={(v) => updateRaw(r.id, { explanation: v })} /></TableCell>
@@ -497,11 +524,11 @@ export default function CostingSheetDetailPage() {
                             <TableCell><GridInput value={r.groupCode} onChange={(v) => updateLabor(r.id, { groupCode: v })} /></TableCell>
                             <TableCell><GridInput value={r.groupName} onChange={(v) => updateLabor(r.id, { groupName: v })} /></TableCell>
                             <TableCell><GridInput value={r.explanation} onChange={(v) => updateLabor(r.id, { explanation: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.quantity} onChange={(v) => updateLabor(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => updateLabor(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput type="number" align="right" value={r.wastePct} onChange={(v) => updateLabor(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput value={r.forex} onChange={(v) => updateLabor(r.id, { forex: v })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} onChange={(v) => updateLabor(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateLabor(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
                             <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setLaborRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>
@@ -547,10 +574,10 @@ export default function CostingSheetDetailPage() {
                             <TableCell><GridInput value={r.groupCode} onChange={(v) => updateOther(r.id, { groupCode: v })} /></TableCell>
                             <TableCell><GridInput value={r.groupName} onChange={(v) => updateOther(r.id, { groupName: v })} /></TableCell>
                             <TableCell><GridInput value={r.explanation} onChange={(v) => updateOther(r.id, { explanation: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.quantity} onChange={(v) => updateOther(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => updateOther(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput value={r.forex} onChange={(v) => updateOther(r.id, { forex: v })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(usdRate)}</TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} onChange={(v) => updateOther(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateOther(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
                             <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOtherRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>

@@ -68,6 +68,8 @@ async function main() {
     // WhatsApp
     { module: 'whatsapp', action: 'send', description: 'Send WhatsApp messages' },
     { module: 'whatsapp', action: 'configure', description: 'Configure WhatsApp' },
+    // General Settings -> Screen Parameters
+    { module: 'general-settings', action: 'manage-screen-parameters', description: 'Manage Screen Parameters configuration' },
   ];
 
   for (const p of permissionDefs) {
@@ -712,6 +714,11 @@ async function main() {
           { title: 'Unit Sets', href: '/dashboard/legacy-erp/unit-sets-list', icon: 'Ruler', isNew: true },
           { title: 'Warehouse Parameters', href: '/dashboard/legacy-erp/warehouse-parameters', icon: 'SlidersHorizontal', isNew: true },
           { title: 'General Settings', href: '/dashboard/legacy-erp/general-settings', icon: 'Settings' },
+          // Settings -> Screen Parameters — centralized, per-screen typed parameter management.
+          // Its own screenKey (this href) is deliberately excluded from the screen picker inside
+          // that page itself (see screen-parameter admin page's own filter) — configuring
+          // parameters "for" the parameter-configuration screen isn't a meaningful case.
+          { title: 'Screen Parameters', href: '/dashboard/legacy-erp/general-settings/screen-parameters', icon: 'SlidersHorizontal' },
         ],
       },
     ];

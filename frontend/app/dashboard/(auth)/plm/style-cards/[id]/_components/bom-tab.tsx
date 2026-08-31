@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 
 type BomRow = {
@@ -167,6 +168,10 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<BomRow[]>([]);
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [swatches, setSwatches] = useState<any[]>([]);
   const [processCards, setProcessCards] = useState<any[]>([]);
   const [header, setHeader] = useState({
@@ -232,9 +237,15 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
   const save = async () => {
     setSaving(true);
     try {
+      // Decimal Parameters rounding happens HERE (not just via each cell's own GridInput
+      // decimalKey, which is visual round-on-blur only) — this is the one place `rows` is
+      // actually sent to the API, so rounding right here guarantees the persisted value is
+      // correct regardless of how each cell got its current value (typed, calculated, or
+      // loaded). Same rationale as purchase-order-line-grid.tsx's own buildDto.
+      const roundedRows = rows.map((r) => ({ ...r, quantity: round(r.quantity, "quantity"), unitPrice: round(r.unitPrice, "unit-price") }));
       await Promise.all([
         plmApi.styleCards.update(styleCardId, header),
-        plmApi.styleBom.upsertLines(styleCardId, rows),
+        plmApi.styleBom.upsertLines(styleCardId, roundedRows),
       ]);
       toast.success("BOM saved");
       onReloadCard();
@@ -337,7 +348,7 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
         // rows are unaffected: still a plain manually-entered value.
         return r.lineType === "fabric"
           ? <span className="block px-2 text-right font-mono text-xs text-muted-foreground" title="Auto-calculated: (Market Length × Market Width × Market Weight) / 1550, converted for Unit (Gram or KG — 0 if Unit is blank or not one of these)">{r.quantity.toFixed(2)}</span>
-          : <GridInput type="number" align="right" value={r.quantity} onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
+          : <GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
       case "wastePct":
         return <GridInput type="number" align="right" value={r.wastePct} onChange={(v) => update(r.id, { wastePct: parseFloat(v) || 0 })} />;
       case "dyeWastagePct":
@@ -351,7 +362,7 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
         return <>{(r.quantity * (1 + totalWaste / 100)).toFixed(2)}</>;
       }
       case "unitPrice":
-        return <GridInput type="number" align="right" value={r.unitPrice} onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
       case "component":
         return <GridInput value={r.component} onChange={(v) => update(r.id, { component: v })} />;
       case "dia":

@@ -48,16 +48,21 @@ type SortKey = "receiptType" | "subcontractTypeName" | "receiptNo" | "receiptDat
 // every other sort key here is already a plain string/short code, safe for localeCompare.
 const NUMERIC_SORT_KEYS = new Set<SortKey>(["receiptTotal"]);
 
+// "all" fans a request out across every SUBCONTRACT_RECEIPT_TYPES member instead of scoping to
+// one — the actual "show ALL Subcontract Receipt records" default this screen needs. Picking a
+// specific type in the dropdown narrows back down to the original single-type behavior.
+type TypeFilter = number | "all";
+
 export default function SubcontractReceiptsListPage() {
   const router = useRouter();
-  const [receiptType, setReceiptType] = useState<number>(SUBCONTRACT_RECEIPT_TYPES[0]);
-  const cfg = getReceiptTypeConfig(receiptType);
-  const client = legacyErpApi.receipts(receiptType);
+  const [receiptType, setReceiptType] = useState<TypeFilter>("all");
+  const cfg = receiptType === "all" ? null : getReceiptTypeConfig(receiptType);
+  const typeLabel = cfg?.label ?? "Subcontract Receipt";
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string; receiptType: number } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("receiptNo");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   // One shared worklist set across the 4 Outside Process types this page serves, same convention
@@ -71,22 +76,29 @@ export default function SubcontractReceiptsListPage() {
   const [subcontractTypeFilterId, setSubcontractTypeFilterId] = useState("");
   const [subcontractTypeFilterLabel, setSubcontractTypeFilterLabel] = useState("");
 
-  const load = async (type: number, term?: string, worklistOverride?: Worklist | null, subcontractTypeOverride?: string) => {
+  // "all" resolves every SUBCONTRACT_RECEIPT_TYPES member in parallel and concatenates the
+  // results — each row already carries its OWN real ReceiptType (HEADER_COLUMNS selects it
+  // unconditionally, see inventory-receipt.service.ts), so merging four single-type responses is
+  // exactly equivalent to one query with `ReceiptType IN (11,12,133,134)`, just without touching
+  // the shared generic backend route (reused by 13 other unrelated receipt-type screens).
+  const load = async (type: TypeFilter, term?: string, worklistOverride?: Worklist | null, subcontractTypeOverride?: string) => {
     setLoading(true);
     try {
-      const typeCfg = getReceiptTypeConfig(type);
+      const types = type === "all" ? [...SUBCONTRACT_RECEIPT_TYPES] : [type];
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const subType = subcontractTypeOverride !== undefined ? subcontractTypeOverride : subcontractTypeFilterId;
       // The filter only applies to the Standard path today — a custom worklist's rows come from
       // the generic cross-source resolver (worklistFields.resolve), which has no
       // subcontractTypeId param; adding one there is a separate, bigger change than this fix.
-      const r: any = worklist
-        ? await legacyErpApi.worklistFields.resolve(typeCfg.key, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await legacyErpApi.receipts(type).list(term, subType ? Number(subType) : undefined);
-      const list = Array.isArray(r) ? r : [];
+      const results = await Promise.all(types.map((t) =>
+        worklist
+          ? legacyErpApi.worklistFields.resolve(getReceiptTypeConfig(t).key, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
+          : legacyErpApi.receipts(t).list(term, subType ? Number(subType) : undefined),
+      ));
+      const list = results.flatMap((r: any) => (Array.isArray(r) ? r : []));
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
-      toast.error(e.message || `Failed to load ${cfg.label.toLowerCase()}s`);
+      toast.error(e.message || `Failed to load ${typeLabel.toLowerCase()}s`);
       setRows([]);
     } finally {
       setLoading(false);
@@ -110,10 +122,10 @@ export default function SubcontractReceiptsListPage() {
   };
 
   // Selected dropdown type has absolute priority, same as receipt-master-data's onTableChange:
-  // switching it clears the grid and reloads fresh from the newly selected type, preserving
-  // whichever worklist (if any) is currently active.
+  // switching it clears the grid and reloads fresh from the newly selected type (or back to
+  // every type via "all"), preserving whichever worklist (if any) is currently active.
   const onTypeChange = (value: string) => {
-    const next = Number(value);
+    const next: TypeFilter = value === "all" ? "all" : Number(value);
     setReceiptType(next);
     setSearch("");
     setRows([]);
@@ -146,7 +158,11 @@ export default function SubcontractReceiptsListPage() {
       }));
     }
     return [
-      { key: "receiptType", label: "Receipt Type", sortable: true, render: () => <>{receiptType}-{cfg.label}</> },
+      // Per-row now, not the page-level filter — a row's own real ReceiptType, which matters
+      // once "all" is fanning out across all 4 types (was previously always == the single
+      // selected dropdown value, so the closure variable and the row's own value were
+      // interchangeable; no longer true in "all" mode).
+      { key: "receiptType", label: "Receipt Type", sortable: true, render: (row: any) => <>{row.receiptType}-{getReceiptTypeConfig(row.receiptType).label}</> },
       { key: "subcontractTypeName", label: "Subcontract", sortable: true, render: (row: any) => row.subcontractTypeName || <span className="text-muted-foreground">—</span> },
       {
         key: "receiptNo", label: "Receipt No", sortable: true,
@@ -166,26 +182,28 @@ export default function SubcontractReceiptsListPage() {
       },
     ] as WorklistTableColumn<any>[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeColumns, receiptType, cfg.label]);
+  }, [activeColumns]);
 
   const getRowActions = (row: any): RowAction[] => [
-    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
-    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo, receiptType: row.receiptType }), destructive: true, separatorBefore: true },
   ];
 
-  // None of the 4 Subcontract Receipt types is ever the special type-2 case, so the receiptType
-  // param is always present — same generic route/screen inventory-receipts-list already opens.
-  const typeParam = `&receiptType=${receiptType}`;
-  const view = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?id=${id}&mode=view${typeParam}`);
-  const update = (id: number) => navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?id=${id}&mode=edit${typeParam}`);
-  const createNew = () => navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?mode=create${typeParam}`);
+  // View/Update always target the ROW's own real type now (it may differ from the page-level
+  // filter in "all" mode) — same generic route/screen inventory-receipts-list already opens.
+  // Create New has no row to read a type from, so it uses the dropdown's selection, falling back
+  // to the first Subcontract Receipt type while "all" is selected (same default the page itself
+  // used to load with).
+  const view = (row: any) => navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?id=${row.id}&mode=view&receiptType=${row.receiptType}`);
+  const update = (row: any) => navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?id=${row.id}&mode=edit&receiptType=${row.receiptType}`);
+  const createNew = () => navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?mode=create&receiptType=${receiptType === "all" ? SUBCONTRACT_RECEIPT_TYPES[0] : receiptType}`);
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await client.delete(deleteTarget.id);
-      toast.success(`${cfg.label} deleted`);
+      await legacyErpApi.receipts(deleteTarget.receiptType).delete(deleteTarget.id);
+      toast.success(`${getReceiptTypeConfig(deleteTarget.receiptType).label} deleted`);
       setDeleteTarget(null);
       load(receiptType, search.trim() || undefined);
     } catch (e: any) {
@@ -225,7 +243,7 @@ export default function SubcontractReceiptsListPage() {
           <div>
             <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Subcontract Receipts</h1>
             <div className="mt-0.5 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">{cfg.label}s</p>
+              <p className="text-xs text-muted-foreground">{receiptType === "all" ? "All Types" : `${typeLabel}s`}</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
                   {rows.length} {rows.length === 1 ? "record" : "records"}
@@ -280,6 +298,7 @@ export default function SubcontractReceiptsListPage() {
               <SelectValue placeholder="Select receipt type" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
               {TYPE_OPTIONS.map((o) => (
                 <SelectItem key={o.receiptType} value={String(o.receiptType)}>{o.receiptType}-{o.label}</SelectItem>
               ))}
@@ -298,7 +317,7 @@ export default function SubcontractReceiptsListPage() {
           sortKey={sortKey}
           sortDir={sortDir}
           onSort={(key) => toggleSort(key as SortKey)}
-          onRowDoubleClick={(row) => view(row.id)}
+          onRowDoubleClick={(row) => view(row)}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}
@@ -307,9 +326,9 @@ export default function SubcontractReceiptsListPage() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">{searched ? <SearchX /> : <Factory />}</EmptyMedia>
-                <EmptyTitle>{searched ? "Record not found" : `No ${cfg.label.toLowerCase()}s yet`}</EmptyTitle>
+                <EmptyTitle>{searched ? "Record not found" : `No ${typeLabel.toLowerCase()}s yet`}</EmptyTitle>
                 <EmptyDescription>
-                  {searched ? `You can create a new ${cfg.label}.` : `Click "Create New" to add your first ${cfg.label}.`}
+                  {searched ? `You can create a new ${typeLabel}.` : `Click "Create New" to add your first ${typeLabel}.`}
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
@@ -340,7 +359,7 @@ export default function SubcontractReceiptsListPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {cfg.label}</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleteTarget ? getReceiptTypeConfig(deleteTarget.receiptType).label : typeLabel}</AlertDialogTitle>
             <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -61,6 +61,14 @@ export class ReceiptTypeController {
     return this.svc.listRelatedImportable(currentAccountId);
   }
 
+  // Variant breakdown (Color + Variant1 enhancement) — item-master-driven, not receipt-specific,
+  // so this is the exact same route/method order-type.controller.ts's own listItemVariantOptions
+  // already uses. Declared before ':id' so a request here is never swallowed by that route's
+  // ParseIntPipe, same defensive ordering as related-lines above.
+  @Get('item-variant-options/:inventoryId') listItemVariantOptions(@Param('inventoryId', ParseIntPipe) inventoryId: number) {
+    return this.svc.listItemVariantOptions(inventoryId);
+  }
+
   @Get(':id') get(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number) {
     const cfg = this.resolve(receiptType);
     return this.svc.get(id, cfg.receiptType);
@@ -173,6 +181,39 @@ export class ReceiptTypeController {
     const cfg = this.resolve(receiptType);
     await this.svc.get(id, cfg.receiptType);
     return this.svc.removeItem(itemId, Number(userId) || 1, id);
+  }
+
+  // Variant breakdown lines — same route/method shape as order-type.controller.ts's own 4
+  // routes, delegating to the already-generic (receiptType-parameterized where it matters)
+  // InventoryReceiptService methods. Purchase Receipt (type 2) has its own copy of these on
+  // /inventory-receipts; every other type only gets them through this route.
+  @Get(':id/items/:itemId/variants') listItemVariantLines(@Param('itemId', ParseIntPipe) itemId: number) {
+    return this.svc.listItemVariantLines(itemId);
+  }
+
+  @Post(':id/items/:itemId/variants') createItemVariantLine(
+    @Param('receiptType') receiptType: string,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: Record<string, any>,
+    @CurrentUser('id') userId: string,
+  ) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.createItemVariantLine(itemId, dto, Number(userId) || 1, cfg.receiptType);
+  }
+
+  @Put(':id/items/:itemId/variants/:variantLineId') updateItemVariantLine(
+    @Param('variantLineId', ParseIntPipe) variantLineId: number,
+    @Body() dto: Record<string, any>,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.svc.updateItemVariantLine(variantLineId, dto, Number(userId) || 1);
+  }
+
+  @Delete(':id/items/:itemId/variants/:variantLineId') removeItemVariantLine(
+    @Param('variantLineId', ParseIntPipe) variantLineId: number,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.svc.removeItemVariantLine(variantLineId, Number(userId) || 1);
   }
 
   // Attachments — already generic (keyed by header RecId only, no ReceiptType filter), so the

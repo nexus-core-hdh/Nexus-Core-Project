@@ -79,23 +79,30 @@ export class CuttingService {
     }
   }
 
-  async findAll(branchId?: string, status?: string, page = 1, limit = 20) {
+  async findAll(branchId?: string, status?: string, page?: number, limit?: number) {
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (status) where.status = status;
+
+    // `page`/`limit` can arrive as NaN (not just undefined) once they pass through the
+    // global ValidationPipe's implicit conversion when the query param is absent, which
+    // silently defeats the plain JS default-parameter fallback below — so they're
+    // normalized explicitly instead of relying on `page = 1, limit = 20` defaults.
+    const safePage = Number.isFinite(Number(page)) && Number(page) > 0 ? Number(page) : 1;
+    const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : 20;
 
     const [orders, total] = await Promise.all([
       this.prisma.cuttingOrder.findMany({
         where,
         include: this.orderInclude,
         orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
       }),
       this.prisma.cuttingOrder.count({ where }),
     ]);
 
-    return { data: orders, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+    return { data: orders, meta: { total, page: safePage, limit: safeLimit, pages: Math.ceil(total / safeLimit) } };
   }
 
   async findOne(id: string) {

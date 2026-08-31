@@ -1,25 +1,24 @@
 import { generateMeta } from "@/lib/utils";
 
 import CustomDateRangePicker from "@/components/custom-date-range-picker";
-import { Button } from "@/components/ui/button";
 
 import {
-  ChatWidget,
-  ExerciseMinutes,
-  LatestPayments,
-  PaymentMethodCard,
-  SubscriptionsCard,
-  TeamMembersCard,
-  TotalRevenueCard
+  BusinessGlance,
+  KpiCards,
+  OrderKpiRow,
+  QuickActions,
+  RecentActivity,
+  RecentTransactionsTable,
+  SalesOverviewChart,
+  TodaysOperations,
+  TopProductsChart,
+  WelcomeHeader
 } from "@/app/dashboard/(auth)/default/components";
-import { Download } from "lucide-react";
-import { toast } from "sonner";
 
 export async function generateMetadata() {
   return generateMeta({
-    title: "Admin Dashboard",
-    description:
-      "The admin dashboard template offers a sleek and efficient interface for monitoring important data and user interactions. Built with shadcn/ui.",
+    title: "Dashboard",
+    description: "Nexus Core Enterprise ERP — sales, purchases, inventory and business overview.",
     canonical: "/default"
   });
 }
@@ -28,28 +27,32 @@ export default function Page() {
   return (
     <div className="space-y-4">
       <div className="flex flex-row items-center justify-between">
-        <h1 className="text-xl font-bold tracking-tight lg:text-2xl">Dashboard</h1>
-        <div className="flex items-center space-x-2">
-          <CustomDateRangePicker />
-          <Button>
-            <Download />
-            <span className="hidden lg:inline">Download</span>
-          </Button>
+        <WelcomeHeader />
+        <CustomDateRangePicker />
+      </div>
+
+      <OrderKpiRow />
+
+      <KpiCards />
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div className="xl:col-span-5">
+          <SalesOverviewChart />
+        </div>
+        <div className="xl:col-span-4">
+          <TopProductsChart />
+        </div>
+        <div className="space-y-4 xl:col-span-3">
+          <QuickActions />
+          <RecentActivity />
         </div>
       </div>
-      <div className="gap-4 space-y-4 lg:grid lg:grid-cols-3 lg:space-y-0">
-        <TeamMembersCard />
-        <SubscriptionsCard />
-        <TotalRevenueCard />
-        <ChatWidget />
-        <div className="lg:col-span-2">
-          <ExerciseMinutes />
-        </div>
-        <div className="lg:col-span-2">
-          <LatestPayments />
-        </div>
-        <PaymentMethodCard />
-      </div>
+
+      <TodaysOperations />
+
+      <RecentTransactionsTable />
+
+      <BusinessGlance />
     </div>
   );
 }

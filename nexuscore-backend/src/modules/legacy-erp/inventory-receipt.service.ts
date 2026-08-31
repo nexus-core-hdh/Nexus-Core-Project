@@ -1087,8 +1087,23 @@ export class InventoryReceiptService {
     return sanitizeRawRow(rows);
   }
 
+  // Color + Variant1 enhancement — backend validation (spec section 7): a submitted
+  // InventoryVariantId must be one of the SELECTED LINE'S OWN item's IM_ItemVariant rows, never
+  // just any valid IM_ItemVariant row (which the base FK constraint alone would accept). Mirrors
+  // assertValidMasterRef's own "confirm it belongs to the right table/scope" convention elsewhere
+  // in this file, just against the real Item<->Variant relationship instead of a lookup table.
+  private async assertVariantBelongsToLineItem(inventoryReceiptItemId: number, inventoryVariantId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "IM_ReceiptItem" ri
+      JOIN "IM_ItemVariant" iv ON iv."InventoryId" = ri."InventoryId" AND iv."RecId" = ${inventoryVariantId} AND iv."IsDeleted" = 0
+      WHERE ri."RecId" = ${inventoryReceiptItemId} AND ri."IsDeleted" = 0
+    `);
+    if (!rows.length) throw new BadRequestException('Selected Variant1 does not belong to this line\'s Item.');
+  }
+
   async createItemVariantLine(inventoryReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
     if (!dto.inventoryVariantId) throw new BadRequestException('A variant is required');
+    await this.assertVariantBelongsToLineItem(inventoryReceiptItemId, Number(dto.inventoryVariantId));
     const toDb = await this.itemVariantToDb();
     const effective = { ...dto, receiptType };
     const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
@@ -1103,6 +1118,13 @@ export class InventoryReceiptService {
   }
 
   async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number) {
+    if (dto.inventoryVariantId !== undefined && dto.inventoryVariantId !== null) {
+      const lineRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT "InventoryReceiptItemId" as id FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
+      `);
+      if (!lineRows.length) throw new NotFoundException('Variant line not found');
+      await this.assertVariantBelongsToLineItem(Number(lineRows[0].id), Number(dto.inventoryVariantId));
+    }
     const toDb = await this.itemVariantToDb();
     const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) {

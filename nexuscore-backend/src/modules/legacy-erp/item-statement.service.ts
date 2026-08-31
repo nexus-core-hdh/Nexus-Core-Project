@@ -18,24 +18,32 @@ import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
 // confirmed business mapping (see DIRECTION_CLASS below) that supersedes the narrower one this
 // file previously shipped with.
 //
-// DIRECTION_CLASS — confirmed business mapping (this pass):
+// DIRECTION_CLASS — the ONE centralized, authoritative business mapping for every screen/report
+// that needs a Receipt Type's stock impact. Every consumer (running balance, warehouse balances,
+// Detailed View dimension buckets, filtered summaries) derives from this single map via
+// directionClassOf() below — never re-declare or infer a parallel mapping elsewhere.
 //   IN  (stock increase): 2 (Purchase Receipt), 11 (Outside Process Receive), 133 (Outside
-//        Process Sent Return), 134 (Outside Process Sent).
-//   OUT (stock decrease): 122 (Purchase Return), 12 (Outside Process Return), 140 (Manufacture Send).
+//        Process Sent Return).
+//   OUT (stock decrease): 122 (Purchase Return), 12 (Outside Process Return), 134 (Outside
+//        Process Sent), 140 (Manufacture Send).
 //   TRANSFER: 17 (Warehouse Transfer) — decreases IM_ReceiptItem.OutWarehouseId, increases
 //        IM_ReceiptItem.InWarehouseId (both columns exist at the LINE level, confirmed live
 //        against the actual table — not assumed), net zero company-wide.
+// CORRECTION (audit pass): 134 was previously mapped IN — corrected to OUT per the authoritative
+// mapping (Type 134 = Outside Process Sent Receipt = stock decrease, goods leaving for outside
+// processing). This was the one conflict found in this file; no other file declares a competing
+// mapping for these types (confirmed by a repo-wide search before this fix) and Inventory Card's
+// own stock formula (inventory-card.service.ts's stockSumSql, scoped to 2/122 only) is untouched.
 // Every other configured ReceiptType (16, 101, 10, 40, 132, 18, 22, 139, 120, 3 — see
-// receipt-types.config.ts) has no confirmed direction and stays UNKNOWN/excluded, exactly as
-// before this pass — nothing beyond the 6 newly-confirmed types + the pre-existing 2/122 is
-// guessed at.
+// receipt-types.config.ts) has no confirmed direction and stays UNKNOWN/excluded — nothing beyond
+// these 6 confirmed types + the pre-existing 2/122 is guessed at.
 type DirectionClass = 'IN' | 'OUT' | 'TRANSFER' | 'UNKNOWN';
 const DIRECTION_CLASS: Record<number, DirectionClass> = {
   2: 'IN', // Purchase Receipt
   122: 'OUT', // Purchase Return
   11: 'IN', // Outside Process Receive Receipt
   133: 'IN', // Outside Process Sent Return Receipt
-  134: 'IN', // Outside Process Sent Receipt
+  134: 'OUT', // Outside Process Sent Receipt
   12: 'OUT', // Outside Process Return Receipt
   140: 'OUT', // Manufacture Send Receipt
   17: 'TRANSFER', // Warehouse Transfer Receipt

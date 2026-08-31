@@ -21,6 +21,7 @@ import { FormTextField, FormSwitchField } from "@/components/forms/form-field";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { cn } from "@/lib/utils";
 import { GridInput, uid } from "./_components/grid-input";
 
@@ -93,6 +94,10 @@ export default function CustomerDefineTrimsPage() {
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("General");
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
 
   const set = (k: string, v: any) => setForm((p: any) => ({ ...p, [k]: v }));
 
@@ -265,13 +270,17 @@ export default function CustomerDefineTrimsPage() {
         toast.success("Created");
       }
 
-      // Persist grid rows: create new ones, update changed existing ones.
+      // Persist grid rows: create new ones, update changed existing ones. Decimal Parameters
+      // rounding happens HERE (not just via each cell's own GridInput decimalKey, which is
+      // visual round-on-blur only) — this is the one place each line is actually sent to the
+      // API. Same rationale as bom-tab.tsx's own save().
       for (const line of lines) {
         const body = {
           trimCode: line.trimCode, trimName: line.trimName, explanation: line.explanation,
-          orderQuantity: line.orderQuantity || undefined, unit: line.unit || undefined,
-          quantity: line.quantity || undefined, wastePct: line.wastePct || undefined,
-          forexId: line.forexId || undefined, forexPrice: line.forexPrice || undefined, unitPrice: line.unitPrice || undefined,
+          orderQuantity: line.orderQuantity ? round(line.orderQuantity, "quantity") : undefined, unit: line.unit || undefined,
+          quantity: line.quantity ? round(line.quantity, "quantity") : undefined, wastePct: line.wastePct || undefined,
+          forexId: line.forexId || undefined, forexPrice: line.forexPrice || undefined,
+          unitPrice: line.unitPrice ? round(line.unitPrice, "unit-price") : undefined,
         };
         if (!line.trimCode && !line.trimName) continue; // skip fully-blank rows
         if (line.savedId) await legacyErpApi.trimCards.updateItem(id!, line.savedId, body);
@@ -394,7 +403,7 @@ export default function CustomerDefineTrimsPage() {
       case "explanation":
         return <GridInput value={line.explanation} onChange={(v) => updateLine(line.id, { explanation: v })} />;
       case "orderQuantity":
-        return <GridInput type="number" align="right" value={line.orderQuantity} onChange={(v) => updateLine(line.id, { orderQuantity: v })} />;
+        return <GridInput type="number" align="right" value={line.orderQuantity} decimalKey="quantity" onChange={(v) => updateLine(line.id, { orderQuantity: v })} />;
       case "unit":
         return activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "unit" ? (
           <AutocompleteTextCell
@@ -418,7 +427,7 @@ export default function CustomerDefineTrimsPage() {
           />
         );
       case "quantity":
-        return <GridInput type="number" align="right" value={line.quantity} onChange={(v) => updateLine(line.id, { quantity: v })} />;
+        return <GridInput type="number" align="right" value={line.quantity} decimalKey="quantity" onChange={(v) => updateLine(line.id, { quantity: v })} />;
       case "wastePct":
         return <GridInput type="number" align="right" value={line.wastePct} onChange={(v) => updateLine(line.id, { wastePct: v })} />;
       case "forexId":
@@ -426,7 +435,7 @@ export default function CustomerDefineTrimsPage() {
       case "forexPrice":
         return <GridInput type="number" align="right" value={line.forexPrice} onChange={(v) => updateLine(line.id, { forexPrice: v })} />;
       case "unitPrice":
-        return <GridInput type="number" align="right" value={line.unitPrice} onChange={(v) => updateLine(line.id, { unitPrice: v })} />;
+        return <GridInput type="number" align="right" value={line.unitPrice} decimalKey="unit-price" onChange={(v) => updateLine(line.id, { unitPrice: v })} />;
       default:
         return null;
     }

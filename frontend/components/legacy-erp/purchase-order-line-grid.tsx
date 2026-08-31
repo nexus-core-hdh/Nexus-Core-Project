@@ -5,6 +5,8 @@ import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
+import type { DecimalFieldKey } from "@/lib/legacy-erp/decimal-parameters";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -287,6 +289,10 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   const [loading, setLoading] = useState(false);
   // Never starts empty — the screen must always open with one editable row.
   const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price/Forex Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   // Local, UI-only display filter — narrows which rows are rendered, never touches the
   // underlying `rows` state, persistence, or the always-present trailing blank row.
@@ -496,6 +502,14 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   // external deps) — lets persistRow below keep a stable identity too instead of recreating
   // a new closure, and therefore a new function reference passed to every cell, on every
   // keystroke in any other cell.
+  // Decimal Parameters rounding happens HERE, not just via each cell's own EditableGridInput
+  // decimalKey (visual round-on-blur only) — every commit path (native blur, Enter, Tab, all of
+  // which ultimately call persistRow -> buildDto, see handleEditorKeyDown below) converges on
+  // this one function, so rounding the DTO value here — right where it's converted to the
+  // number actually sent to the API — guarantees the persisted value is correct regardless of
+  // which commit path fired or any UI re-render timing, instead of depending on each call site
+  // reading already-rounded row state (which a couple of them can't reliably guarantee; see
+  // persistRow's own stale-`row`-parameter shape below).
   const buildDto = useCallback((row: LineRow) => ({
     itemType: row.itemType,
     // inventoryId/serviceCardId are sent as explicit null (not undefined) when cleared —
@@ -503,22 +517,26 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     // stale data behind (see handleTypeChange below).
     inventoryId: row.inventoryId,
     serviceCardId: row.serviceCardId,
-    quantity: row.quantity === "" ? undefined : num(row.quantity),
-    grossQuantity: row.grossQuantity === "" ? undefined : num(row.grossQuantity),
+    quantity: row.quantity === "" ? undefined : round(row.quantity, "quantity"),
+    grossQuantity: row.grossQuantity === "" ? undefined : round(row.grossQuantity, "quantity"),
     unitId: row.unitId ?? undefined,
-    unitPrice: row.rate === "" ? undefined : num(row.rate),
+    unitPrice: row.rate === "" ? undefined : round(row.rate, "unit-price"),
     forexId: row.forexId ?? undefined,
+    // forexRate has no editable cell in this grid (no column renders it) — left as a plain
+    // num() coercion, unrelated to Decimal Parameters.
     forexRate: row.forexRate === "" ? undefined : num(row.forexRate),
-    forexUnitPrice: row.currencyPrice === "" ? undefined : num(row.currencyPrice),
+    forexUnitPrice: row.currencyPrice === "" ? undefined : round(row.currencyPrice, "forex-unit-price"),
     vatIncluded: row.vatIncluded,
+    // VAT % is a tax rate, not one of the Decimal Parameters categories (that's specifically
+    // "Discount / Fix Term %") — left unrounded, unrelated to this integration.
     vatRate: row.vatRate === "" ? undefined : num(row.vatRate),
     itemTotal: row.price ?? undefined,
     netItemTotal: row.lineAmount ?? undefined,
-    receivedQuantity: row.receivedQuantity === "" ? undefined : num(row.receivedQuantity),
+    receivedQuantity: row.receivedQuantity === "" ? undefined : round(row.receivedQuantity, "quantity"),
     manufacturingOrderId: row.manufacturingOrderId,
     workOrderReceiptItemId: row.workOrderReceiptItemId === "" ? undefined : num(row.workOrderReceiptItemId),
     colorCardId: row.colorCardId,
-  }), []);
+  }), [round]);
 
   // Persists one row: creates it the first time it stops being blank, updates it on every
   // commit after that (cell edits commit on blur/select — see the cells below — so typing
@@ -1200,6 +1218,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
                           autoFocus type="number" align="right" value={r.quantity} disabled={readOnly}
+                          decimalKey="quantity"
                           onChange={(v) => updateRow(r.clientId, { quantity: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                           onKeyDown={(e) => handleEditorKeyDown(e, r)}
@@ -1221,6 +1240,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
                           autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly}
+                          decimalKey="quantity"
                           onChange={(v) => updateRow(r.clientId, { grossQuantity: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                           onKeyDown={(e) => handleEditorKeyDown(e, r)}
@@ -1274,6 +1294,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
                           autoFocus type="number" align="right" value={r.rate} disabled={readOnly}
+                          decimalKey="unit-price"
                           onChange={(v) => updateRow(r.clientId, { rate: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                           onKeyDown={(e) => handleEditorKeyDown(e, r)}
@@ -1319,6 +1340,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
                           autoFocus type="number" align="right" value={r.currencyPrice} disabled={readOnly}
+                          decimalKey="forex-unit-price"
                           onChange={(v) => updateRow(r.clientId, { currencyPrice: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                           onKeyDown={(e) => handleEditorKeyDown(e, r)}
@@ -1382,6 +1404,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
                           autoFocus type="number" align="right" value={r.receivedQuantity} disabled={readOnly}
+                          decimalKey="quantity"
                           onChange={(v) => updateRow(r.clientId, { receivedQuantity: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                           onKeyDown={(e) => handleEditorKeyDown(e, r)}

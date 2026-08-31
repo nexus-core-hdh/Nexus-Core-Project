@@ -50,6 +50,7 @@ import { StubsModule } from './modules/stubs/stubs.module';
 import { DocketManagementModule } from './modules/docket-management/docket-management.module';
 import { LegacyErpModule } from './modules/legacy-erp/legacy-erp.module';
 import { ApprovalModule } from './modules/approval/approval.module';
+import { GeneralSettingsModule } from './modules/general-settings/general-settings.module';
 
 @Module({
   imports: [
@@ -112,6 +113,7 @@ import { ApprovalModule } from './modules/approval/approval.module';
 
     // Centralized General Settings -> Approval Configuration framework
     ApprovalModule,
+    GeneralSettingsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

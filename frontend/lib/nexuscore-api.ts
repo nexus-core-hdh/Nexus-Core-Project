@@ -256,6 +256,41 @@ export const plmApi = {
   },
 };
 
+// Cutting Orders (nexuscore-backend/src/modules/cutting) — production floor cutting
+// jobs/batches, the only real "shop-floor process" tracking module in the schema today.
+export const cuttingApi = {
+  list: (q?: { branchId?: string; status?: string; page?: number; limit?: number }) => {
+    const params: Record<string, string> = {};
+    if (q?.branchId) params.branchId = q.branchId;
+    if (q?.status) params.status = q.status;
+    if (q?.page != null) params.page = String(q.page);
+    if (q?.limit != null) params.limit = String(q.limit);
+    const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : "";
+    return api.get(`/cutting-orders${qs}`);
+  },
+  get: (id: string) => api.get(`/cutting-orders/${id}`),
+};
+
+// Finance / Sales Orders (nexuscore-backend/src/modules/finance, model `Order`) — the
+// real Sales Order entity (OrderStatus/OrderType enums), company+branch scoped
+// server-side via CurrentUser. Note: frontend/lib/api.ts's `orderApi.getOrders()` calls
+// `/orders`, which does not exist (the controller is mounted at `/finance`, so the real
+// route is `/finance/orders`) — a pre-existing bug in that client, silently masked
+// everywhere it's used by a blanket `.catch(() => [])`. Rather than touch that shared
+// file (used elsewhere, out of scope here), this is a correctly-pathed client added
+// alongside the other real-data clients (cuttingApi, plmApi) already in this file.
+export const financeApi = {
+  orders: {
+    list: (q?: { status?: string; type?: string }) => {
+      const params: Record<string, string> = {};
+      if (q?.status) params.status = q.status;
+      if (q?.type) params.type = q.type;
+      const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : "";
+      return api.get(`/finance/orders${qs}`);
+    }
+  }
+};
+
 // Item Statement / Stock Control Ledger filters — mirrors item-statement.service.ts's own
 // ItemStatementFilters exactly (kept as a plain interface here, not a shared package, since
 // frontend/backend don't share a types package in this repo).
@@ -582,6 +617,16 @@ export const legacyErpApi = {
       createItem: (id: number, d: any) => api.post(`${base}/${id}/items`, d),
       updateItem: (id: number, itemId: number, d: any) => api.put(`${base}/${id}/items/${itemId}`, d),
       removeItem: (id: number, itemId: number) => api.delete(`${base}/${id}/items/${itemId}`),
+      // Variant breakdown (Color + Variant1 enhancement) — same shape as legacyErpApi.orders(type)'s
+      // own itemVariantOptions/listItemVariants/createItemVariant/updateItemVariant/removeItemVariant,
+      // now exposed generically by receipt-type.controller.ts so every non-Purchase-Receipt type
+      // (Purchase Return, Outside Process Receive, etc.) gets Variant1 support too, not just
+      // Purchase Receipt's own dedicated `inventoryReceipts` client below.
+      itemVariantOptions: (inventoryId: number) => api.get(`${base}/item-variant-options/${inventoryId}`),
+      listItemVariants: (id: number, itemId: number) => api.get(`${base}/${id}/items/${itemId}/variants`),
+      createItemVariant: (id: number, itemId: number, d: any) => api.post(`${base}/${id}/items/${itemId}/variants`, d),
+      updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`${base}/${id}/items/${itemId}/variants/${variantLineId}`, d),
+      removeItemVariant: (id: number, itemId: number, variantLineId: number) => api.delete(`${base}/${id}/items/${itemId}/variants/${variantLineId}`),
       listAttachments: (id: number, kind: "document" | "picture") => api.get(`${base}/${id}/attachments?kind=${kind}`),
       uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`${base}/${id}/attachments`, d),
       removeAttachment: (id: number, attId: number) => api.delete(`${base}/${id}/attachments/${attId}`),
@@ -731,6 +776,22 @@ export const approvalConfigApi = {
   list: () => api.get('/general-settings/approval-configurations'),
   update: (d: { screenKey: string; approvalRequired?: boolean; approvalLevel?: number; isActive?: boolean; selfApprovalAllowed?: boolean }) =>
     api.put('/general-settings/approval-configurations', d),
+};
+
+// Centralized Settings -> Screen Parameters — same "screenKey travels as a query string, never a
+// path segment" reasoning as approvalConfigApi above (a screen key is a MenuItem.href, which
+// already contains "/" and often its own "?query="). See
+// nexuscore-backend/src/modules/general-settings/.
+export const screenParametersApi = {
+  // Admin management list — every parameter for one screen, active or not.
+  list: (screenKey: string) => api.get(`/general-settings/screen-parameters?screenKey=${encodeURIComponent(screenKey)}`),
+  // The dynamic API: active parameters only, for any screen to consume by its own screenKey.
+  listActive: (screenKey: string) => api.get(`/general-settings/screen-parameters/active?screenKey=${encodeURIComponent(screenKey)}`),
+  create: (d: { screenKey: string; paramKey: string; name: string; description?: string; type: string; value?: string | null; options?: string[]; isActive?: boolean }) =>
+    api.post('/general-settings/screen-parameters', d),
+  update: (id: string, d: Partial<{ name: string; description: string | null; type: string; value: string | null; options: string[]; isActive: boolean }>) =>
+    api.put(`/general-settings/screen-parameters/${id}`, d),
+  delete: (id: string) => api.delete(`/general-settings/screen-parameters/${id}`),
 };
 
 export const approvalApi = {

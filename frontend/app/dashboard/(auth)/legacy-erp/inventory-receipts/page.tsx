@@ -96,6 +96,11 @@ export default function InventoryReceiptPage() {
   const receiptType = Number(searchParams.get("receiptType")) || 2;
   const cfg = getReceiptTypeConfig(receiptType);
   const client = receiptType === 2 ? legacyErpApi.inventoryReceipts : legacyErpApi.receipts(receiptType);
+  // Subcontract Receipts List's own "Subcontract" grid column reads SubcontractTypeId's joined
+  // name — this field is the only way a NEW record on these 4 types ever gets that column
+  // populated (an existing record with a value already round-trips it via hydrate()/save() below
+  // regardless of this flag; only the create-time INPUT was ever missing).
+  const isSubcontractReceiptType = SUBCONTRACT_RECEIPT_TYPES.includes(receiptType as any);
 
   const [codeInput, setCodeInput] = useState("");
   const [receiptId, setReceiptId] = useState<number | null>(null);
@@ -315,11 +320,10 @@ export default function InventoryReceiptPage() {
         driverName: form.driverName || undefined,
         currentAccountId: Number(form.currentAccountId), inWarehouseId: Number(form.inWarehouseId),
       };
-      // Script/Receipt Type/Subcontract Receipt no longer have form fields (removed per request),
-      // but an existing record that already has values keeps them: hydrate() still loads them
-      // into form state, so an edit-and-save round-trips them unchanged. A brand-new record on
-      // these 4 types simply never sets them (sent as null) — no longer mandatory.
-      const isSubcontractReceiptType = SUBCONTRACT_RECEIPT_TYPES.includes(receiptType as any);
+      // Subcontract Type is a real form field again (see IdentitySection below); Subcontract
+      // Receipt/Script still have none — an existing record that already has a value keeps it
+      // (hydrate() loads it into form state, so an edit-and-save round-trips it unchanged), a
+      // brand-new record on these 4 types just never sets those two.
       if (isSubcontractReceiptType) {
         dto.subcontractTypeId = form.subcontractTypeId ? Number(form.subcontractTypeId) : null;
         dto.subcontractReceiptId = form.subcontractReceiptId ? Number(form.subcontractReceiptId) : null;
@@ -605,6 +609,18 @@ export default function InventoryReceiptPage() {
                   <FieldText label="Document" value={form.documentNo} onChange={(v) => set("documentNo", v)} />
                   <FieldText label="Vehicle No" value={form.plateNumber} onChange={(v) => set("plateNumber", v)} />
                   <FieldText label="Driver Name" value={form.driverName} onChange={(v) => set("driverName", v)} />
+                  {/* Only the 4 Subcontract Receipt types have a meaningful Subcontract Type —
+                      reuses the exact same "subcontract-type" master/picker the Subcontract
+                      Receipts List's own "Subcontractation" filter already uses. */}
+                  {isSubcontractReceiptType && (
+                    <MasterAutocompleteField
+                      label="Subcontract Type"
+                      masterKey="subcontract-type"
+                      displayValue={form.subcontractTypeLabel ?? ""}
+                      onSelect={(o) => setForm((p) => ({ ...p, subcontractTypeId: String(o.id), subcontractTypeLabel: o.name }))}
+                      onClear={() => setForm((p) => ({ ...p, subcontractTypeId: "", subcontractTypeLabel: "" }))}
+                    />
+                  )}
                 </IdentitySection>
 
                 <FormSection title="Current Account & Warehouse">

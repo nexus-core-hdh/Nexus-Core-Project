@@ -9,6 +9,7 @@ import { plmApi } from "@/lib/nexuscore-api";
 import { cn } from "@/lib/utils";
 import { GridInput, uid, num } from "./grid-input";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 
 type ExpenseRow = { id: string; expenseType: string; explanation: string; quantity: number; unitPrice: number; forex: string };
@@ -39,6 +40,10 @@ export function ExpensesTab({ styleCardId }: { styleCardId: string; card: any; o
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
 
   const load = async () => {
     setLoading(true);
@@ -66,7 +71,11 @@ export function ExpensesTab({ styleCardId }: { styleCardId: string; card: any; o
   const save = async () => {
     setSaving(true);
     try {
-      await plmApi.styleExpenses.upsertLines(styleCardId, rows);
+      // Decimal Parameters rounding happens HERE (not just via each cell's own GridInput
+      // decimalKey, which is visual round-on-blur only) — this is the one place `rows` is
+      // actually sent to the API. Same rationale as bom-tab.tsx's own save().
+      const roundedRows = rows.map((r) => ({ ...r, quantity: round(r.quantity, "quantity"), unitPrice: round(r.unitPrice, "unit-price") }));
+      await plmApi.styleExpenses.upsertLines(styleCardId, roundedRows);
       toast.success("Expenses saved");
       load();
     } catch (e: any) {
@@ -101,9 +110,9 @@ export function ExpensesTab({ styleCardId }: { styleCardId: string; card: any; o
       case "explanation":
         return <GridInput value={r.explanation} onChange={(v) => update(r.id, { explanation: v })} />;
       case "quantity":
-        return <GridInput type="number" align="right" value={r.quantity} onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
       case "unitPrice":
-        return <GridInput type="number" align="right" value={r.unitPrice} onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
       case "forex":
         return <GridInput value={r.forex} onChange={(v) => update(r.id, { forex: v })} />;
       case "amount":

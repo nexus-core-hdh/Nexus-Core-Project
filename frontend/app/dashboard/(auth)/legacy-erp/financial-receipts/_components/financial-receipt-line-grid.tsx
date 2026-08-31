@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,6 +99,10 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
   const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
+  // Debit/Credit (Amount) cells below, via the shared decimalKey mechanism.
+  const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
+  useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [accountOptions, setAccountOptions] = useState<AutocompleteOption[]>([]);
   const editingClientId = useRef<string | null>(null);
 
@@ -142,14 +147,19 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [fiReceiptId]);
   useEffect(() => { if (accountOptions.length) setRows((prev) => hydrateAccounts(prev)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [accountOptions]);
 
+  // Decimal Parameters rounding happens HERE (not just via each cell's own EditableGridInput
+  // decimalKey, which is visual round-on-blur only) — every commit path for this grid converges
+  // on buildDto before hitting the API, so rounding the DTO value right here guarantees the
+  // persisted value is correct regardless of which commit path fired. See
+  // purchase-order-line-grid.tsx's own buildDto for the identical rationale/precedent.
   const buildDto = useCallback((row: LineRow) => ({
     currentAccountId: row.currentAccountId ?? undefined,
     documentNo: row.documentNo === "" ? undefined : row.documentNo,
     explanation: row.explanation === "" ? undefined : row.explanation,
     specialCode: row.specialCode === "" ? undefined : row.specialCode,
-    debit: row.debit === "" ? undefined : num(row.debit),
-    credit: row.credit === "" ? undefined : num(row.credit),
-  }), []);
+    debit: row.debit === "" ? undefined : round(row.debit, "amount"),
+    credit: row.credit === "" ? undefined : round(row.credit, "amount"),
+  }), [round]);
 
   const persistRow = useCallback(async (clientId: string, row: LineRow) => {
     if (!fiReceiptId) return;
@@ -365,6 +375,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
                     type="number" align="right"
                     value={row.debit}
                     disabled={readOnly}
+                    decimalKey="amount"
                     onChange={(v) => updateRow(row.clientId, { debit: v })}
                     onBlur={() => persistRow(row.clientId, row)}
                     className={EDITOR_CONTROL}
@@ -377,6 +388,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
                     type="number" align="right"
                     value={row.credit}
                     disabled={readOnly}
+                    decimalKey="amount"
                     onChange={(v) => updateRow(row.clientId, { credit: v })}
                     onBlur={() => persistRow(row.clientId, row)}
                     className={EDITOR_CONTROL}
