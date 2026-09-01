@@ -19,6 +19,7 @@ import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { FormSection } from "@/components/forms/form-section";
@@ -470,83 +471,79 @@ export default function InventoryReceiptPage() {
         ...(receiptId ? [{ label: form.receiptNo }] : []),
       ]} />
 
-      <div className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Truck className="h-4 w-4 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="truncate text-[15px] font-semibold leading-tight tracking-tight">
-              {titleText}
-            </h1>
-            <div className="mt-1 flex items-center gap-2">
-              {/* Do not show approval controls when Approval Required = No — the plain existing
-                  Approved/Unapproved badge stays exactly as before in that case. */}
-              {receiptId && !approvalRequired && (
-                <Badge variant={form.isApproved ? "default" : "secondary"} className="h-5 text-[11px] font-normal">
-                  {statusLabel}
-                </Badge>
-              )}
-              {receiptId && approvalRequired && (
-                <Badge
-                  variant={approvalStatus?.status === "approved" ? "default" : approvalStatus?.status === "rejected" ? "destructive" : "secondary"}
-                  className="h-5 text-[11px] font-normal"
-                >
-                  {approvalStatus?.status === "pending_approval" ? "Pending Approval"
-                    : approvalStatus?.status === "approved" ? "Approved"
-                    : approvalStatus?.status === "rejected" ? "Rejected"
-                    : approvalStatus?.status === "completed" ? "Completed"
-                    : "Draft"}
-                </Badge>
-              )}
-              {readOnly && (
-                <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
-                  <Lock className="h-2.5 w-2.5" />View Only
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <InputGroup className="h-9 w-56 shrink-0">
-            <InputGroupAddon>
-              <Search className="h-3.5 w-3.5 text-muted-foreground" />
-            </InputGroupAddon>
-            <InputGroupInput
-              placeholder="Find by Receipt No..."
-              value={codeInput}
-              onChange={(e) => setCodeInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && search()}
-              className="text-sm"
-            />
-            <InputGroupAddon align="inline-end">
-              <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={search} disabled={searching} title="Search">
-                <Search className="h-3.5 w-3.5" />
-              </Button>
-            </InputGroupAddon>
-          </InputGroup>
-          <div className="hidden h-6 w-px bg-border sm:block" />
-          <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
-          {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
-          {/* Reuses the same authorized-approver pattern as receipt-master-data/page.tsx's row
-              action — backend (approval:approve/reject permission + pending-state + self-
-              approval check) is authoritative; an unauthorized click just surfaces a toast. */}
-          {approvalRequired && approvalStatus?.status === "pending_approval" && (
-            <>
-              <div className="hidden h-6 w-px bg-border sm:block" />
-              <Button size="sm" onClick={runApproveReceipt} disabled={approving}>
-                <BadgeCheck className="h-3.5 w-3.5 mr-2" />Approve
-              </Button>
-              <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => { setRejectRemarks(""); setRejectOpen(true); }} disabled={approving}>
-                <XCircle className="h-3.5 w-3.5 mr-2" />Reject
-              </Button>
-            </>
-          )}
-          <div className="hidden h-6 w-px bg-border sm:block" />
-          <RowActionsMenu actions={universalActions} />
-        </div>
-      </div>
+      <ModuleHeader
+        icon={Truck}
+        size="sm"
+        title={titleText}
+        badges={
+          <>
+            {/* Do not show approval controls when Approval Required = No — the plain existing
+                Approved/Unapproved badge stays exactly as before in that case. */}
+            {receiptId && !approvalRequired && (
+              <Badge variant={form.isApproved ? "default" : "secondary"} className="h-5 text-[11px] font-normal">
+                {statusLabel}
+              </Badge>
+            )}
+            {receiptId && approvalRequired && (
+              <Badge
+                variant={approvalStatus?.status === "approved" ? "default" : approvalStatus?.status === "rejected" ? "destructive" : "secondary"}
+                className="h-5 text-[11px] font-normal"
+              >
+                {approvalStatus?.status === "pending_approval" ? "Pending Approval"
+                  : approvalStatus?.status === "approved" ? "Approved"
+                  : approvalStatus?.status === "rejected" ? "Rejected"
+                  : approvalStatus?.status === "completed" ? "Completed"
+                  : "Draft"}
+              </Badge>
+            )}
+            {readOnly && (
+              <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
+                <Lock className="h-2.5 w-2.5" />View Only
+              </Badge>
+            )}
+          </>
+        }
+        actions={
+          <>
+            <InputGroup className="h-9 w-56 shrink-0">
+              <InputGroupAddon>
+                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                placeholder="Find by Receipt No..."
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && search()}
+                className="text-sm"
+              />
+              <InputGroupAddon align="inline-end">
+                <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={search} disabled={searching} title="Search">
+                  <Search className="h-3.5 w-3.5" />
+                </Button>
+              </InputGroupAddon>
+            </InputGroup>
+            <div className="hidden h-6 w-px bg-border sm:block" />
+            <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
+            {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
+            {/* Reuses the same authorized-approver pattern as receipt-master-data/page.tsx's row
+                action — backend (approval:approve/reject permission + pending-state + self-
+                approval check) is authoritative; an unauthorized click just surfaces a toast. */}
+            {approvalRequired && approvalStatus?.status === "pending_approval" && (
+              <>
+                <div className="hidden h-6 w-px bg-border sm:block" />
+                <Button size="sm" onClick={runApproveReceipt} disabled={approving}>
+                  <BadgeCheck className="h-3.5 w-3.5 mr-2" />Approve
+                </Button>
+                <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => { setRejectRemarks(""); setRejectOpen(true); }} disabled={approving}>
+                  <XCircle className="h-3.5 w-3.5 mr-2" />Reject
+                </Button>
+              </>
+            )}
+            <div className="hidden h-6 w-px bg-border sm:block" />
+            <RowActionsMenu actions={universalActions} />
+          </>
+        }
+      />
 
       {approvalRequired && approvalStatus?.status === "pending_approval" && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">

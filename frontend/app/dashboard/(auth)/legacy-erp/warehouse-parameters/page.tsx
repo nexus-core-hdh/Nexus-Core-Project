@@ -14,6 +14,7 @@ import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Search, Sliders, Warehouse as WarehouseIcon, ChevronRight, Save } from "lucide-react";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 // Warehouse Parameters — Negative Stock / Critical Stock / Allow Transaction / Min-Max Stock
 // Level, scoped by BOTH module (Fabric/Trim/Yarn — same FABRIC/TRIM/YARN convention Fabric
@@ -156,23 +157,18 @@ export default function WarehouseParametersPage() {
         <span className="font-medium text-foreground">Warehouse Parameters</span>
       </div>
 
-      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Sliders className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Warehouse Parameters</h1>
-            <p className="mt-0.5 text-xs text-muted-foreground">Negative/critical stock behavior and stock levels, per module and warehouse</p>
-          </div>
-        </div>
-
-        <Tabs value={module} onValueChange={setModule}>
-          <TabsList>
-            {MODULES.map((m) => <TabsTrigger key={m.value} value={m.value}>{m.label}</TabsTrigger>)}
-          </TabsList>
-        </Tabs>
-      </div>
+      <ModuleHeader
+        icon={Sliders}
+        title="Warehouse Parameters"
+        subtitle="Negative/critical stock behavior and stock levels, per module and warehouse"
+        actions={
+          <Tabs value={module} onValueChange={setModule}>
+            <TabsList>
+              {MODULES.map((m) => <TabsTrigger key={m.value} value={m.value}>{m.label}</TabsTrigger>)}
+            </TabsList>
+          </Tabs>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_1fr]">
         {/* LEFT — warehouse list, loaded live from the existing Warehouse master, never hardcoded */}

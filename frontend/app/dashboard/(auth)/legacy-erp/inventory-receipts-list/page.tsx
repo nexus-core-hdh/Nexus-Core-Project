@@ -26,6 +26,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 type SortKey = "receiptNo" | "documentNo" | "receiptDate";
 
@@ -170,24 +171,18 @@ export default function InventoryReceiptListPage() {
         <span className="font-medium text-foreground">{cfg.label}s</span>
       </div>
 
-      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Truck className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">{cfg.label}s</h1>
-            <div className="mt-0.5 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">{cfg.label}s</p>
-              {!loading && (
-                <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <ModuleHeader
+        icon={Truck}
+        title={`${cfg.label}s`}
+        subtitle={`${cfg.label}s`}
+        badges={
+          !loading && (
+            <Badge variant="secondary" className="h-5 text-[11px] font-normal">
+              {rows.length} {rows.length === 1 ? "record" : "records"}
+            </Badge>
+          )
+        }
+      />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">

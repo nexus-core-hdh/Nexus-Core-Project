@@ -7,8 +7,10 @@ import {
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
-  SidebarMenuItem
+  SidebarMenuItem,
+  SidebarSeparator
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import {
   ActivityIcon,
   ArchiveRestoreIcon,
@@ -402,7 +404,7 @@ export const defaultNavItems: NavGroup[] = [
           { title: "Deals", href: "/dashboard/crm/deals", icon: BadgeDollarSignIcon },
         ]
       },
-      { title: "My Menu", href: "/dashboard/my-menu", icon: Star },
+      { title: "My Menu", href: "/dashboard/module-map", icon: Star },
       // {
       //   title: "Website Analytics",
       //   href: "/dashboard/website-analytics",
@@ -706,17 +708,17 @@ export const defaultNavItems: NavGroup[] = [
   },
 ];
 
-// Administration group - always shown at the end (not company-specific)
-const administrationGroup: NavGroup = {
-  title: "Administration",
-  items: [
-    {
-      title: "Pricing Plans",
-      href: "/dashboard/pages/pricing-plans",
-      icon: CreditCardIcon
-    },
-  ]
-};
+// Administration extras - not company-specific, so not stored as live menu-items data.
+// Merged into the API's own "Administration" group (added by the menu-items IA reorg) rather
+// than appended as a second same-titled group, which used to render as two separate
+// "Administration" buttons back when the API had no group of that name yet.
+const administrationExtraItems: NavItem[] = [
+  {
+    title: "Pricing Plans",
+    href: "/dashboard/pages/pricing-plans",
+    icon: CreditCardIcon
+  },
+];
 
 // Export navItems for backward compatibility with search.tsx
 export const navItems: NavGroup[] = defaultNavItems;
@@ -748,8 +750,16 @@ export function NavMain() {
             title: group.title,
             items: group.items.map(transformMenuItem),
           }));
-          // Always append Administration group at the end
-          setNavItems(filterNavGroups([...transformedMenus, administrationGroup]));
+          // Merge the Administration extras into the API's own "Administration" group if it
+          // already provided one (it does, since the menu-items IA reorg) instead of appending
+          // a second same-titled group, which used to render as a duplicate sidebar button.
+          const hasAdminGroup = transformedMenus.some((g) => g.title === "Administration");
+          const withAdminExtras = hasAdminGroup
+            ? transformedMenus.map((g) =>
+                g.title === "Administration" ? { ...g, items: [...g.items, ...administrationExtraItems] } : g
+              )
+            : [...transformedMenus, { title: "Administration", items: administrationExtraItems }];
+          setNavItems(filterNavGroups(withAdminExtras));
         } else {
           // Fallback to default nav items if API returns empty
           setNavItems(filterNavGroups(defaultNavItems));
@@ -853,6 +863,21 @@ export function NavMain() {
     return filterNavByUserSelection(filtered, selectedSidebarItems);
   }, [navItems, customEntityPages, selectedSidebarItems]);
 
+  // Whether `pathname` falls anywhere inside a group's item tree — used only to give the
+  // module trigger button (which opens the ModuleLauncher dialog, it never navigates directly)
+  // a visible "you are in here" active state. Prefix-matched (not exact) so a dynamic detail
+  // route like /dashboard/plm/style-cards/[id] still lights up "PLM" for its list screen's href.
+  const groupContainsPath = React.useCallback((items: NavItem[]): boolean => {
+    for (const item of items) {
+      if (item.href && item.href !== "#") {
+        const itemPath = item.href.split("?")[0];
+        if (pathname === itemPath || pathname.startsWith(itemPath + "/")) return true;
+      }
+      if (item.items?.length && groupContainsPath(item.items)) return true;
+    }
+    return false;
+  }, [pathname]);
+
   // My Menu is a framework-level favorites shortcut, not a browsable module —
   // pulled out to its own direct sidebar link (it's already a standalone leaf
   // in the menu data, just repositioned in the UI) instead of being buried
@@ -863,7 +888,7 @@ export function NavMain() {
       .map((nav) => ({
         ...nav,
         items: nav.items.filter((item) => {
-          if (item.href === "/dashboard/my-menu") {
+          if (item.href === "/dashboard/module-map") {
             myMenu = item;
             return false;
           }
@@ -874,6 +899,52 @@ export function NavMain() {
     return { myMenuItem: myMenu as NavItem | null, moduleGroups: groups };
   }, [enhancedNavItems]);
 
+  // Controlled per-module accent palette — restrained (icon tint + active fill/bar only, never
+  // applied to individual screens/children). Anything not listed here falls back to the
+  // theme's own --sidebar-primary (which itself tracks var(--primary), so it still respects
+  // whatever Theme Customizer preset is active) rather than an invented color. Each entry is a
+  // complete, literal className string (not assembled from fragments at runtime) so Tailwind's
+  // build-time scanner can actually see and generate these variant-prefixed utilities.
+  const ACCENT_INDIGO =
+    "data-[active=true]:bg-indigo-400/12 data-[active=true]:before:bg-indigo-400 data-[active=true]:[&>svg]:text-indigo-400 [&>svg]:text-indigo-400/55";
+  const ACCENT_EMERALD =
+    "data-[active=true]:bg-emerald-400/12 data-[active=true]:before:bg-emerald-400 data-[active=true]:[&>svg]:text-emerald-400 [&>svg]:text-emerald-400/55";
+  const ACCENT_ORANGE =
+    "data-[active=true]:bg-orange-400/12 data-[active=true]:before:bg-orange-400 data-[active=true]:[&>svg]:text-orange-400 [&>svg]:text-orange-400/55";
+  const ACCENT_SKY =
+    "data-[active=true]:bg-sky-400/12 data-[active=true]:before:bg-sky-400 data-[active=true]:[&>svg]:text-sky-400 [&>svg]:text-sky-400/55";
+  const ACCENT_ROSE =
+    "data-[active=true]:bg-rose-400/12 data-[active=true]:before:bg-rose-400 data-[active=true]:[&>svg]:text-rose-400 [&>svg]:text-rose-400/55";
+  const ACCENT_DEFAULT =
+    "data-[active=true]:bg-sidebar-primary/12 data-[active=true]:before:bg-sidebar-primary data-[active=true]:[&>svg]:text-sidebar-primary [&>svg]:text-sidebar-foreground/55";
+
+  const MODULE_ACCENT: Record<string, string> = {
+    Dashboard: ACCENT_INDIGO,
+    PLM: ACCENT_INDIGO,
+    CRM: ACCENT_EMERALD,
+    Finance: ACCENT_EMERALD,
+    Sales: ACCENT_ORANGE,
+    Production: ACCENT_ORANGE,
+    "Legacy ERP": ACCENT_SKY,
+    Inventory: ACCENT_SKY,
+    Logistics: ACCENT_SKY,
+    Quality: ACCENT_ROSE,
+  };
+
+  // Shared button treatment: quiet by default, a soft brand-tinted wash on hover, and — only
+  // for the true active row — a restrained tinted fill plus a slim left accent bar (::before)
+  // so the active module reads clearly at a glance, without a glow or a gradient block.
+  const moduleButtonClass = (title?: string) =>
+    cn(
+      "relative text-sidebar-foreground/75 transition-colors duration-150",
+      "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+      "data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground",
+      "data-[active=true]:before:absolute data-[active=true]:before:inset-y-2 data-[active=true]:before:left-0",
+      "data-[active=true]:before:w-[3px] data-[active=true]:before:rounded-full",
+      "[&>svg]:transition-colors [&>svg]:duration-150",
+      (title && MODULE_ACCENT[title]) || ACCENT_DEFAULT
+    );
+
   return (
     <>
       <SidebarGroup>
@@ -882,7 +953,7 @@ export function NavMain() {
             {myMenuItem && (
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  className="hover:text-foreground active:text-foreground hover:bg-[var(--primary)]/10 active:bg-[var(--primary)]/10"
+                  className={moduleButtonClass()}
                   isActive={pathname === myMenuItem.href}
                   tooltip={myMenuItem.title}
                   asChild>
@@ -897,18 +968,29 @@ export function NavMain() {
               </SidebarMenuItem>
             )}
 
-            {moduleGroups.map((nav) => {
+            <SidebarSeparator className="mx-0 my-1.5" />
+
+            {moduleGroups.map((nav, index) => {
               const Icon = findModuleIcon(nav.items);
+              // One quiet, unlabeled break before the trailing systemic/admin group — enough to
+              // separate "business modules" from "system" without adding a text label that would
+              // crowd an already dense module list (mirrors the My Menu / modules split above).
+              const isSystemGroup = nav.title === "Administration";
+              const prevIsSystemGroup = index > 0 && moduleGroups[index - 1].title === "Administration";
               return (
-                <SidebarMenuItem key={nav.title}>
-                  <SidebarMenuButton
-                    className="hover:text-foreground active:text-foreground hover:bg-[var(--primary)]/10 active:bg-[var(--primary)]/10"
-                    tooltip={nav.title}
-                    onClick={() => setLauncherGroupTitle(nav.title)}>
-                    {Icon && <Icon />}
-                    <span>{nav.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <React.Fragment key={nav.title}>
+                  {isSystemGroup && !prevIsSystemGroup && <SidebarSeparator className="mx-0 my-1.5" />}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      className={moduleButtonClass(nav.title)}
+                      isActive={groupContainsPath(nav.items)}
+                      tooltip={nav.title}
+                      onClick={() => setLauncherGroupTitle(nav.title)}>
+                      {Icon && <Icon />}
+                      <span>{nav.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </React.Fragment>
               );
             })}
           </SidebarMenu>
@@ -917,6 +999,7 @@ export function NavMain() {
 
       <ModuleLauncher
         groupTitle={launcherGroupTitle}
+        icon={findModuleIcon(moduleGroups.find((g) => g.title === launcherGroupTitle)?.items ?? [])}
         open={!!launcherGroupTitle}
         onOpenChange={(open) => {
           if (!open) setLauncherGroupTitle(null);

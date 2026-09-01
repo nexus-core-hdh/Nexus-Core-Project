@@ -18,6 +18,7 @@ import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import {
   FileClock, RefreshCw, Filter, RotateCcw, ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
   Package, SearchX, ListOrdered, Download, Printer,
@@ -256,32 +257,25 @@ export default function ItemStatementPage() {
     <div className="mx-auto max-w-[1700px] space-y-5 p-6 lg:p-8">
       <LegacyErpBreadcrumb trail={breadcrumbTrail} />
 
-      <div className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <FileClock className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold leading-tight tracking-tight">
-              {itemId != null ? "Item Statement" : "Stock Control / Inventory Ledger"}
-            </h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {itemId != null ? "Detailed inventory transaction history and stock position" : "Transaction history across items — filter by Item Code or Item Name"}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => load(appliedFilters, view)} title="Refresh">
-            <RefreshCw className="h-3.5 w-3.5 mr-2" />Refresh
-          </Button>
-          <Button variant="outline" size="sm" onClick={exportCsv} title="Export visible transactions to CSV">
-            <Download className="h-3.5 w-3.5 mr-2" />Export
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => window.print()} title="Print">
-            <Printer className="h-3.5 w-3.5 mr-2" />Print
-          </Button>
-        </div>
-      </div>
+      <ModuleHeader
+        icon={FileClock}
+        size="lg"
+        title={itemId != null ? "Item Statement" : "Stock Control / Inventory Ledger"}
+        subtitle={itemId != null ? "Detailed inventory transaction history and stock position" : "Transaction history across items — filter by Item Code or Item Name"}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => load(appliedFilters, view)} title="Refresh">
+              <RefreshCw className="h-3.5 w-3.5 mr-2" />Refresh
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportCsv} title="Export visible transactions to CSV">
+              <Download className="h-3.5 w-3.5 mr-2" />Export
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.print()} title="Print">
+              <Printer className="h-3.5 w-3.5 mr-2" />Print
+            </Button>
+          </>
+        }
+      />
 
       {error ? (
         <Empty>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Warehouse, ChevronRight } from "lucide-react";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField, FormSwitchField } from "@/components/forms/form-field";
@@ -15,6 +16,7 @@ import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-t
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 const emptyForm = {
   warehouseCode: "", warehouseName: "", accessCode: "", specialCode: "",
@@ -108,15 +110,7 @@ export default function WarehousesPage() {
         <span className="font-medium text-foreground">Warehouses</span>
       </div>
 
-      <div className="flex items-center gap-4 border-b pb-6">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-          <Warehouse className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Warehouses</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">Storage location master</p>
-        </div>
-      </div>
+      <ModuleHeader icon={Warehouse} title="Warehouses" subtitle="Storage location master" />
 
       <PlmCrudTable
         title=""
@@ -139,7 +133,11 @@ export default function WarehousesPage() {
                 { key: 'accessCode', label: 'Access Code', render: (r: any) => r.accessCode || <span className="text-muted-foreground">—</span> },
                 { key: 'startDate', label: 'Start Date', render: (r: any) => r.startDate ? new Date(r.startDate).toLocaleDateString() : <span className="text-muted-foreground">—</span> },
                 { key: 'endDate', label: 'End Date', render: (r: any) => r.endDate ? new Date(r.endDate).toLocaleDateString() : <span className="text-muted-foreground">—</span> },
-                { key: 'inUse', label: 'Status', render: (r: any) => <Badge variant={r.inUse ? 'default' : 'secondary'}>{r.inUse ? 'In Use' : 'Inactive'}</Badge> },
+                { key: 'inUse', label: 'Status', render: (r: any) => (
+                    <Badge variant={r.inUse ? 'default' : 'secondary'} className={cn(r.inUse && "bg-emerald-600 hover:bg-emerald-600/90 dark:bg-emerald-500")}>
+                      {r.inUse ? 'In Use' : 'Inactive'}
+                    </Badge>
+                  ) },
               ]
         }
       />

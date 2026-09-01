@@ -86,16 +86,16 @@ export function NavUser() {
             <SidebarMenuButton
               size="lg"
               suppressHydrationWarning
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
-              <Avatar className="rounded-full">
+              className="hover:bg-sidebar-accent data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+              <Avatar className="rounded-full ring-1 ring-sidebar-border">
                 {displayImage && <AvatarImage src={displayImage} alt={userName} />}
                 <AvatarFallback className="rounded-lg">{avatarFallback}</AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{userName}</span>
-                <span className="text-muted-foreground truncate text-xs">{userEmail}</span>
+                <span className="truncate font-medium text-sidebar-foreground">{userName}</span>
+                <span className="truncate text-xs text-sidebar-foreground/50">{userEmail}</span>
               </div>
-              <DotsVerticalIcon className="ml-auto size-4" />
+              <DotsVerticalIcon className="text-sidebar-foreground/40 ml-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent

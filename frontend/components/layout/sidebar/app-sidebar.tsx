@@ -14,23 +14,13 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
   useSidebar
 } from "@/components/ui/sidebar";
 import { NavMain } from "@/components/layout/sidebar/nav-main";
 import { NavUser } from "@/components/layout/sidebar/nav-user";
 import Logo from "@/components/layout/logo";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
@@ -47,25 +37,27 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
+      <SidebarHeader className="px-2 py-4">
         <SidebarMenu>
           <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton suppressHydrationWarning className="hover:text-foreground h-10 group-data-[collapsible=icon]:px-0! hover:bg-[var(--primary)]/5">
-                  <Logo />
-                  <span className="font-semibold">Nexus Core</span>
-                  
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-            </DropdownMenu>
+            <div className="flex items-center gap-3 px-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+              <div className="flex shrink-0 items-center justify-center rounded-md ring-1 ring-sidebar-border">
+                <Logo />
+              </div>
+              <div className="min-w-0 leading-tight group-data-[collapsible=icon]:hidden">
+                <p className="truncate text-[13.5px] font-bold tracking-wide text-sidebar-foreground uppercase">Nexus Core</p>
+                <p className="mt-0.5 truncate text-[10px] font-medium tracking-wider text-sidebar-foreground/50 uppercase">Enterprise ERP</p>
+              </div>
+            </div>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
+      <SidebarSeparator className="mx-0" />
       <SidebarContent>
         <NavMain />
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarSeparator className="mx-0" />
+      <SidebarFooter className="pt-2">
         <NavUser />
       </SidebarFooter>
     </Sidebar>

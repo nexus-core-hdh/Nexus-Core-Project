@@ -26,6 +26,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 // Combines Fabric Card, Yarn Card and Trim Card into one grid — a read-only aggregation via
 // legacyErpApi.inventoryCards.list() (see inventory-card.service.ts), never a data source of
@@ -231,28 +232,22 @@ export default function InventoryCardListPage() {
         <span className="font-medium text-foreground">Inventory Card List</span>
       </div>
 
-      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Boxes className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Inventory Card List</h1>
-            <div className="mt-0.5 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">
-                {mode === "lookup"
-                  ? `Double-click or press Enter to select ${sourceTypeFilter ? `a ${sourceTypeFilter === "fixedasset" ? "Fixed Asset" : sourceTypeFilter} item` : "an inventory item"}`
-                  : "Fabric, Yarn & Trim inventory in one place"}
-              </p>
-              {!loading && (
-                <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {sortedRows.length} {sortedRows.length === 1 ? "record" : "records"}
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <ModuleHeader
+        icon={Boxes}
+        title="Inventory Card List"
+        subtitle={
+          mode === "lookup"
+            ? `Double-click or press Enter to select ${sourceTypeFilter ? `a ${sourceTypeFilter === "fixedasset" ? "Fixed Asset" : sourceTypeFilter} item` : "an inventory item"}`
+            : "Fabric, Yarn & Trim inventory in one place"
+        }
+        badges={
+          !loading && (
+            <Badge variant="secondary" className="h-5 text-[11px] font-normal">
+              {sortedRows.length} {sortedRows.length === 1 ? "record" : "records"}
+            </Badge>
+          )
+        }
+      />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">

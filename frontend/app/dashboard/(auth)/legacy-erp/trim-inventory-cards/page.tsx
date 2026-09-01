@@ -26,6 +26,7 @@ import { LookupField } from "@/components/legacy-erp/lookup-field";
 import { SatelliteGridTab } from "@/components/legacy-erp/satellite-grid-tab";
 import { UnitTab } from "@/components/legacy-erp/unit-tab";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 // Trim Card — the third IM_Item-based inventory card, alongside Fabric Card and Yarn Card.
 // Deliberately built as a near-clone of Fabric Card's page shell (same Identity block, same
@@ -247,49 +248,42 @@ export default function TrimInventoryCardPage() {
         ...(itemId ? [{ label: form.inventoryCode }] : []),
       ]} />
 
-      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Ribbon className="h-5 w-5 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="truncate text-[22px] font-semibold leading-tight tracking-tight">
-              {itemId ? (form.inventoryName || "Trim Card") : "New Trim Card"}
-            </h1>
-            <div className="mt-1 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">Trim Card</p>
-              {readOnly && (
-                <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
-                  <Lock className="h-2.5 w-2.5" />View Only
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <InputGroup className="h-9 w-56 shrink-0">
-            <InputGroupAddon>
-              <Search className="h-3.5 w-3.5 text-muted-foreground" />
-            </InputGroupAddon>
-            <InputGroupInput
-              placeholder="Find by code..."
-              value={codeInput}
-              onChange={(e) => setCodeInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && search()}
-              className="text-sm"
-            />
-            <InputGroupAddon align="inline-end">
-              <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={search} disabled={searching} title="Search">
-                <Search className="h-3.5 w-3.5" />
-              </Button>
-            </InputGroupAddon>
-          </InputGroup>
-          <div className="hidden h-6 w-px bg-border sm:block" />
-          <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
-          {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
-        </div>
-      </div>
+      <ModuleHeader
+        icon={Ribbon}
+        title={itemId ? (form.inventoryName || "Trim Card") : "New Trim Card"}
+        subtitle="Trim Card"
+        badges={
+          readOnly && (
+            <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
+              <Lock className="h-2.5 w-2.5" />View Only
+            </Badge>
+          )
+        }
+        actions={
+          <>
+            <InputGroup className="h-9 w-56 shrink-0">
+              <InputGroupAddon>
+                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                placeholder="Find by code..."
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && search()}
+                className="text-sm"
+              />
+              <InputGroupAddon align="inline-end">
+                <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={search} disabled={searching} title="Search">
+                  <Search className="h-3.5 w-3.5" />
+                </Button>
+              </InputGroupAddon>
+            </InputGroup>
+            <div className="hidden h-6 w-px bg-border sm:block" />
+            <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
+            {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
+          </>
+        }
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
         <div className="rounded-xl border bg-card shadow-sm">

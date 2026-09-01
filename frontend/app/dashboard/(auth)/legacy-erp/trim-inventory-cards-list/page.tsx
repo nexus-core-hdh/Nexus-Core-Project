@@ -29,6 +29,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 // Trim Card listing — the generic IM_Item-based item master (alongside Fabric Card / Yarn
 // Card), NOT "Customer Define Trim" (that's trim-cards-list/page.tsx, backed by the completely
@@ -182,7 +183,14 @@ export default function TrimCardListPage() {
       { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span> },
       {
         key: "status", label: "Status",
-        render: (row: any) => <Badge variant={row.inUse ? "default" : "secondary"} className="text-[11px] font-normal">{row.inUse ? "Active" : "Inactive"}</Badge>,
+        render: (row: any) => (
+          <Badge
+            variant={row.inUse ? "default" : "secondary"}
+            className={cn("text-[11px] font-normal", row.inUse && "bg-emerald-600 hover:bg-emerald-600/90 dark:bg-emerald-500")}
+          >
+            {row.inUse ? "Active" : "Inactive"}
+          </Badge>
+        ),
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -223,48 +231,41 @@ export default function TrimCardListPage() {
         <span className="font-medium text-foreground">Trim Card</span>
       </div>
 
-      <div className="flex flex-col gap-4 border-b pb-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Ribbon className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Trim Card</h1>
-            <div className="mt-0.5 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">
-                {mode === "lookup" ? "Double-click or press Enter to select a Trim Card" : "Trim item master"}
-              </p>
-              {!loading && (
-                <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <InputGroup className="h-9 w-72 shrink-0">
-            <InputGroupAddon>
-              <Search className="h-3.5 w-3.5 text-muted-foreground" />
-            </InputGroupAddon>
-            <InputGroupInput
-              placeholder="Search by code or name..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && doSearch()}
-              className="text-sm"
-            />
-          </InputGroup>
-          <Button variant="outline" size="sm" onClick={refresh} title="Refresh">
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
-          <div className="hidden h-6 w-px bg-border sm:block" />
-          <Button size="sm" onClick={createNew}>
-            <Plus className="h-3.5 w-3.5 mr-2" />Add New Trim Card
-          </Button>
-        </div>
-      </div>
+      <ModuleHeader
+        icon={Ribbon}
+        title="Trim Card"
+        subtitle={mode === "lookup" ? "Double-click or press Enter to select a Trim Card" : "Trim item master"}
+        badges={
+          !loading && (
+            <Badge variant="secondary" className="h-5 text-[11px] font-normal">
+              {rows.length} {rows.length === 1 ? "record" : "records"}
+            </Badge>
+          )
+        }
+        actions={
+          <>
+            <InputGroup className="h-9 w-72 shrink-0">
+              <InputGroupAddon>
+                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                placeholder="Search by code or name..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && doSearch()}
+                className="text-sm"
+              />
+            </InputGroup>
+            <Button variant="outline" size="sm" onClick={refresh} title="Refresh">
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+            <div className="hidden h-6 w-px bg-border sm:block" />
+            <Button size="sm" onClick={createNew}>
+              <Plus className="h-3.5 w-3.5 mr-2" />Add New Trim Card
+            </Button>
+          </>
+        }
+      />
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
         <WorklistTable

@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { SearchIcon } from "lucide-react";
+import { useRouter, usePathname } from "next/navigation";
+import { SearchIcon, type LucideIcon } from "lucide-react";
+
+import { cn } from "@/lib/utils";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
@@ -77,6 +79,9 @@ interface ModuleLauncherProps {
    *  user can actually open, independent of whatever raw data the sidebar
    *  button list itself was built from. */
   groupTitle: string | null;
+  /** The module's own icon (same one shown on its sidebar trigger button) — repeated in the
+   *  dialog header purely for visual continuity between the rail and the launcher it opens. */
+  icon?: LucideIcon;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -90,8 +95,9 @@ interface ModuleLauncherProps {
  * (arrows, Enter), and instant case-insensitive filtering all come from that
  * shared, already-proven implementation rather than a bespoke one.
  */
-export function ModuleLauncher({ groupTitle, open, onOpenChange }: ModuleLauncherProps) {
+export function ModuleLauncher({ groupTitle, icon: Icon, open, onOpenChange }: ModuleLauncherProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [query, setQuery] = useState("");
   const { groups, ensureLoaded } = useGlobalScreenSearch();
 
@@ -115,11 +121,18 @@ export function ModuleLauncher({ groupTitle, open, onOpenChange }: ModuleLaunche
         dismissOnOutside
         className="top-[15%] max-h-[70vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
       >
-        <DialogHeader className="border-b px-5 py-4">
-          <DialogTitle className="text-base font-semibold">{groupTitle}</DialogTitle>
-          <DialogDescription className="sr-only">
-            Browse and open screens in the {groupTitle} module
-          </DialogDescription>
+        <DialogHeader className="flex-row items-center gap-2.5 space-y-0 border-b px-5 py-4">
+          {Icon && (
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Icon className="size-4" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <DialogTitle className="text-base font-semibold">{groupTitle}</DialogTitle>
+            <DialogDescription className="sr-only">
+              Browse and open screens in the {groupTitle} module
+            </DialogDescription>
+          </div>
         </DialogHeader>
 
         <Command className="bg-transparent">
@@ -127,23 +140,39 @@ export function ModuleLauncher({ groupTitle, open, onOpenChange }: ModuleLaunche
           <CommandList className="max-h-[55vh] px-1 py-2">
             <CommandEmpty>No matching screens found.</CommandEmpty>
             {sections.map((section) => (
-              <CommandGroup key={section.key} heading={section.title ?? undefined}>
-                {section.rows.map((row) => {
-                  const Icon = row.icon;
-                  return (
-                    <CommandItem
-                      key={row.key}
-                      value={row.title}
-                      onSelect={() => select(row)}
-                      onDoubleClick={() => select(row)}
-                    >
-                      {Icon ? <Icon /> : <SearchIcon className="opacity-40" />}
-                      <span className="flex-1 truncate">{row.title}</span>
-                      {row.isNew && <Badge variant="secondary" className="h-5 text-[10px] font-normal">New</Badge>}
-                      {row.isDataBadge && <Badge variant="outline" className="h-5 text-[10px] font-normal">{row.isDataBadge}</Badge>}
-                    </CommandItem>
-                  );
-                })}
+              <CommandGroup
+                key={section.key}
+                heading={section.title ?? undefined}
+                className="[&_[cmdk-group-heading]]:text-primary/70 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:uppercase"
+              >
+                {/* A thin left connector under a titled (submodule) section only — makes the
+                    parent-heading -> child-rows relationship visible without extra markup depth;
+                    the unlabeled "general" section (standalone screens, no submodule) stays flush. */}
+                <div className={cn(section.title && "ml-2 border-l pl-2")}>
+                  {section.rows.map((row) => {
+                    const RowIcon = row.icon;
+                    const rowPath = row.href.split("?")[0];
+                    const isActive = pathname === rowPath;
+                    return (
+                      <CommandItem
+                        key={row.key}
+                        value={row.title}
+                        onSelect={() => select(row)}
+                        onDoubleClick={() => select(row)}
+                        className={cn(isActive && "bg-primary/8 text-foreground font-medium")}
+                      >
+                        {RowIcon ? (
+                          <RowIcon className={cn("text-muted-foreground/70", isActive && "text-primary")} />
+                        ) : (
+                          <SearchIcon className="opacity-40" />
+                        )}
+                        <span className="flex-1 truncate">{row.title}</span>
+                        {row.isNew && <Badge variant="secondary" className="h-5 text-[10px] font-normal">New</Badge>}
+                        {row.isDataBadge && <Badge variant="outline" className="h-5 text-[10px] font-normal">{row.isDataBadge}</Badge>}
+                      </CommandItem>
+                    );
+                  })}
+                </div>
               </CommandGroup>
             ))}
           </CommandList>

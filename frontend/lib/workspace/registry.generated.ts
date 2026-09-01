@@ -102,6 +102,7 @@ export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/dashboard/legacy-erp/warehouses", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/warehouses/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/yarn-cards", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/yarn-cards/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/yarn-cards-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/yarn-cards-list/page"), { ssr: false }) },
+  { path: "/dashboard/module-map", Component: dynamic(() => import("@/app/dashboard/(auth)/module-map/page"), { ssr: false }) },
   { path: "/dashboard/my-menu", Component: dynamic(() => import("@/app/dashboard/(auth)/my-menu/page"), { ssr: false }) },
   { path: "/dashboard/onboarding-flow", Component: dynamic(() => import("@/app/dashboard/(auth)/onboarding-flow/page"), { ssr: false }) },
   { path: "/dashboard/pages/access-control", Component: dynamic(() => import("@/app/dashboard/(auth)/pages/access-control/page"), { ssr: false }) },

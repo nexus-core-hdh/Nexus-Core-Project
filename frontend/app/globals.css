@@ -44,14 +44,19 @@
   --chart-4: var(--base-400);
   --chart-5: var(--base-300);
   --radius: 0.5rem;
-  --sidebar: var(--base-100);
-  --sidebar-foreground: var(--base-800);
-  --sidebar-primary: var(--base-950);
-  --sidebar-primary-foreground: var(--color-white);
-  --sidebar-accent: var(--base-200);
-  --sidebar-accent-foreground: var(--base-800);
-  --sidebar-border: var(--base-200);
-  --sidebar-ring: var(--base-800);
+  /* Nexus Core sidebar is a fixed premium dark navy/indigo rail — intentionally decoupled from
+     the app-wide light/dark toggle (same values repeated in .dark below) so the main workspace
+     can switch light/dark while the rail stays constant, matching the reference. Active/accent
+     states still resolve through var(--primary) rather than a hardcoded color, so the Theme
+     Customizer's presets (Ocean Breeze, Lavender Dream, ...) keep controlling brand color. */
+  --sidebar: oklch(0.175 0.024 262);
+  --sidebar-foreground: oklch(0.86 0.012 258);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.245 0.032 262);
+  --sidebar-accent-foreground: oklch(0.97 0.006 258);
+  --sidebar-border: oklch(0.27 0.028 262);
+  --sidebar-ring: var(--primary);
 
   --display-weight: 700;
 
@@ -92,14 +97,15 @@
   --chart-3: var(--base-200);
   --chart-4: var(--base-600);
   --chart-5: var(--base-700);
-  --sidebar: var(--base-900);
-  --sidebar-foreground: var(--base-200);
-  --sidebar-primary: var(--base-50);
-  --sidebar-primary-foreground: var(--base-900);
-  --sidebar-accent: var(--base-800);
-  --sidebar-accent-foreground: var(--base-200);
-  --sidebar-border: var(--base-800);
-  --sidebar-ring: var(--base-200);
+  /* Same fixed navy rail as :root — see that block's comment. */
+  --sidebar: oklch(0.175 0.024 262);
+  --sidebar-foreground: oklch(0.86 0.012 258);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.245 0.032 262);
+  --sidebar-accent-foreground: oklch(0.97 0.006 258);
+  --sidebar-border: oklch(0.27 0.028 262);
+  --sidebar-ring: var(--primary);
 }
 
 @theme inline {

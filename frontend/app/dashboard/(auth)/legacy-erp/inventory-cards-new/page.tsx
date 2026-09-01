@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Boxes } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import FabricCardPage from "../fabric-cards/page";
 import YarnCardPage from "../yarn-cards/page";
 import TrimInventoryCardPage from "../trim-inventory-cards/page";
@@ -39,25 +40,23 @@ export default function AddInventoryCardPage() {
           { label: "Add New Inventory Card" },
         ]} />
 
-        <div className="flex items-center gap-4 border-b pb-6">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-primary/10">
-            <Boxes className="h-5 w-5 text-primary" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Add New Inventory Card</h1>
-            <p className="mt-1 text-xs text-muted-foreground">Choose an Inventory Type to load its form</p>
-          </div>
-          <div className="w-64 shrink-0">
-            <Select value={type} onValueChange={(v) => setType(v as InventoryType)}>
-              <SelectTrigger className="h-10 w-full">
-                <SelectValue placeholder="Select Inventory Type..." />
-              </SelectTrigger>
-              <SelectContent>
-                {TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <ModuleHeader
+          icon={Boxes}
+          title="Add New Inventory Card"
+          subtitle="Choose an Inventory Type to load its form"
+          actions={
+            <div className="w-64 shrink-0">
+              <Select value={type} onValueChange={(v) => setType(v as InventoryType)}>
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue placeholder="Select Inventory Type..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          }
+        />
       </div>
 
       {type === "fabric" && <FabricCardPage />}
