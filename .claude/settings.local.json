@@ -7,7 +7,14 @@
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(mkdir -p \"d:/NexusCore/frontend/app/\\(public\\)/shared/[token]\" 2>/dev/null; echo \"done\")",
       "Skill(run)",
-      "Skill(run:*)"
+      "Skill(run:*)",
+      "PowerShell(Stop-Process -Id 25468 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Process -Id 25468 -ErrorAction SilentlyContinue)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(NEXUSCORE_DATABASE_URL=\"postgresql://postgres:Admin123@localhost:5432/nexuscore_db\" npx prisma migrate status)",
+      "Bash(git fetch *)"
     ],
     "additionalDirectories": [
       "d:\\NexusCore\\frontend\\app\\(public)\\shared"
