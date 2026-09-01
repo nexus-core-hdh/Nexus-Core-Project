@@ -51,6 +51,7 @@ import { DocketManagementModule } from './modules/docket-management/docket-manag
 import { LegacyErpModule } from './modules/legacy-erp/legacy-erp.module';
 import { ApprovalModule } from './modules/approval/approval.module';
 import { GeneralSettingsModule } from './modules/general-settings/general-settings.module';
+import { UploadModule } from './modules/upload/upload.module';
 
 @Module({
   imports: [
@@ -114,6 +115,9 @@ import { GeneralSettingsModule } from './modules/general-settings/general-settin
     // Centralized General Settings -> Approval Configuration framework
     ApprovalModule,
     GeneralSettingsModule,
+
+    // Generic file upload (uploadApi.uploadSingle) — backs PLM Attachments/Picture Gallery
+    UploadModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

@@ -710,6 +710,7 @@ async function main() {
           { title: '2 - Sale Contract', href: '/dashboard/legacy-erp/contracts-list?receiptType=2', icon: 'FileText', isNew: true },
           { title: 'Financial Receipts', href: '/dashboard/legacy-erp/financial-receipt-master-data', icon: 'Landmark', isNew: true },
           { title: 'Receipt & Master Data', href: '/dashboard/legacy-erp/receipt-master-data', icon: 'Receipt', isNew: true },
+          { title: 'Item Statement', href: '/dashboard/legacy-erp/item-statement', icon: 'FileClock', isNew: true },
           { title: 'Trim Inventory Cards', href: '/dashboard/legacy-erp/trim-inventory-cards-list', icon: 'Package', isNew: true },
           { title: 'Unit Sets', href: '/dashboard/legacy-erp/unit-sets-list', icon: 'Ruler', isNew: true },
           { title: 'Warehouse Parameters', href: '/dashboard/legacy-erp/warehouse-parameters', icon: 'SlidersHorizontal', isNew: true },
@@ -721,6 +722,10 @@ async function main() {
           { title: 'Screen Parameters', href: '/dashboard/legacy-erp/general-settings/screen-parameters', icon: 'SlidersHorizontal' },
         ],
       },
+      // Finance / Projects — real existing pages (frontend/app/dashboard/(auth)/finance,
+      // .../project-management), previously built but never linked into the sidebar at all.
+      { title: 'Finance', items: [{ title: 'Dashboard', href: '/dashboard/finance', icon: 'Wallet', isNew: true }] },
+      { title: 'Projects', items: [{ title: 'Dashboard', href: '/dashboard/project-management', icon: 'ClipboardList', isNew: true }] },
     ];
 
     async function seedNodes(nodes: MenuNode[], group: string, parentId: string | null, startOrder: number) {

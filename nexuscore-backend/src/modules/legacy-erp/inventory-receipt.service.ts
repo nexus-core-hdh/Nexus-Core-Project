@@ -868,6 +868,7 @@ export class InventoryReceiptService {
     if (!dto.inventoryId) throw new BadRequestException('An inventory item is required');
     const toDb = await this.itemToDb();
     const effective: Record<string, any> = { ...dto, receiptType };
+    if (effective.colorCardId != null) await this.assertValidColorCard(String(effective.colorCardId));
     effective.unitId = await this.resolveUnitId(effective.inventoryId, effective.unitId);
     // Write-time enforcement (spec Section 3/10) — reject a unit with no configured conversion for
     // this item, rather than silently accepting an arbitrary combination.
@@ -932,6 +933,7 @@ export class InventoryReceiptService {
     const toDb = await this.itemToDb();
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
     const effective = { ...dto };
+    if (effective.colorCardId != null) await this.assertValidColorCard(String(effective.colorCardId));
     // Only touch Unit when this update actually changes Item and/or Unit — an edit to an
     // unrelated field (e.g. Explanation) must not force a normalization query. When Item
     // changes without an explicit Unit in the same payload, the current InventoryId's line is
@@ -1085,6 +1087,15 @@ export class InventoryReceiptService {
       ORDER BY "RecId"
     `);
     return sanitizeRawRow(rows);
+  }
+
+  // Color + Variant1 enhancement — backend validation: ColorCardId has no DB-level FK (it's a
+  // plain nullable text column added for this feature, not a real constrained FK — see the
+  // ColorCardId ITEM_COLUMNS comment above), so an invalid id would otherwise write silently and
+  // just fail to resolve a display name later. Reject unless it's a real ColorCard row.
+  private async assertValidColorCard(colorCardId: string) {
+    const card = await this.prisma.colorCard.findUnique({ where: { id: colorCardId }, select: { id: true } });
+    if (!card) throw new BadRequestException('Selected color does not exist');
   }
 
   // Color + Variant1 enhancement — backend validation (spec section 7): a submitted

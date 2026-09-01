@@ -3160,6 +3160,22 @@ model ScreenParameter {
   @@index([screenKey])
 }
 
+// Generic file upload storage — backs uploadApi.uploadSingle() (frontend/lib/api.ts), the
+// multipart POST /upload/single the PLM Attachments/Picture Gallery screens (Sample Cards,
+// Style Cards) have always called but which had no backend route at all until now. Same
+// "store the bytes, serve them back by id" approach every *-attachments.service.ts in
+// legacy-erp already uses (e.g. inventory-receipt-attachments.service.ts), just generic/not
+// tied to one parent entity's own table, since PLM attachments are a plain {id,name,type,url}
+// JSON array on the card itself rather than a per-entity attachments table with its own FK.
+model UploadedFile {
+  id        String   @id @default(uuid())
+  fileName  String
+  mimeType  String
+  data      Bytes
+  createdAt DateTime @default(now())
+  createdBy String?
+}
+
 model ApprovalRequest {
   id            String    @id @default(uuid())
   screenKey     String

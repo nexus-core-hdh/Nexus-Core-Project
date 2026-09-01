@@ -138,6 +138,17 @@ export function WorklistDesignModal({
     });
   };
 
+  // Display Name only — source/key (the backend field identity) are never touched here. Blank
+  // is allowed while typing; handleOk doesn't validate per-field labels (only worklist names), so
+  // an empty label just falls back to the grid header rendering "" until the user fills it back
+  // in — same tolerant pattern as the worklist name field above.
+  const updateLabelAt = (i: number, label: string) => {
+    updateActiveDraft((w) => ({
+      ...w,
+      fields: w.fields.map((f, idx) => (idx === i ? { ...f, label } : f)),
+    }));
+  };
+
   // Available Sources checkbox toggle — checked adds the field (assigning the next order
   // number), unchecked removes it from Selected Fields immediately, keeping both panels in sync.
   const toggleField = (field: WorklistField) => {
@@ -196,7 +207,13 @@ export function WorklistDesignModal({
     }
     setSaving(true);
     try {
-      await onSave(draftWorklists.map((w) => ({ ...w, name: w.name.trim() })));
+      await onSave(draftWorklists.map((w) => ({
+        ...w,
+        name: w.name.trim(),
+        // A blanked-out Display Name falls back to the humanized key rather than saving an
+        // empty grid header — same "trim then fall back" treatment as the worklist name above.
+        fields: w.fields.map((f) => ({ ...f, label: f.label.trim() || humanizeColumn(f.key) })),
+      })));
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e?.message || "Failed to save worklist");
@@ -379,9 +396,9 @@ export function WorklistDesignModal({
                       <TableHeader className="sticky top-0 z-10 bg-muted/40">
                         <TableRow className="hover:bg-muted/40">
                           <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">#</TableHead>
-                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Field Name</TableHead>
                           <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Source</TableHead>
                           <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Field</TableHead>
+                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Display Name</TableHead>
                           <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
                         </TableRow>
                       </TableHeader>
@@ -393,9 +410,17 @@ export function WorklistDesignModal({
                             className={cn("cursor-pointer", selectedRightIndex === i ? "bg-primary/10 hover:bg-primary/10" : "hover:bg-muted/40")}
                           >
                             <TableCell className="py-2 text-[12.5px] text-muted-foreground">{i + 1}</TableCell>
-                            <TableCell className="py-2 text-[12.5px] font-medium">{f.label}</TableCell>
                             <TableCell className="py-2 text-[12.5px] text-muted-foreground">{sourceLabel.get(f.source) ?? f.source}</TableCell>
                             <TableCell className="py-2 text-[12.5px] font-mono text-muted-foreground">{f.key}</TableCell>
+                            <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                              <Input
+                                value={f.label}
+                                onChange={(e) => updateLabelAt(i, e.target.value)}
+                                placeholder={f.key}
+                                aria-label={`Display name for ${f.key}`}
+                                className="h-7 text-[12.5px]"
+                              />
+                            </TableCell>
                             <TableCell className="py-2">
                               <Button
                                 variant="ghost" size="icon" className="h-6 w-6"

@@ -35,6 +35,19 @@ interface LauncherSection {
 // matter how deep the underlying menu tree goes); a root item with no
 // children is itself a row, grouped under one shared, unlabeled section so
 // standalone screens aren't lost.
+// Keeps the first row for each href and drops the rest — a "hybrid" menu node (has its own
+// href AND children, e.g. File Manager linking to the same URL as its own "Dashboard" child)
+// otherwise produces two rows for the same destination: one for itself, one recursed from the
+// child. Same URL twice in the launcher is redundant either way, not just a React key clash.
+function dedupeByHref(rows: LauncherRow[]): LauncherRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.href)) return false;
+    seen.add(row.href);
+    return true;
+  });
+}
+
 function buildSections(group: NavGroup): LauncherSection[] {
   const sections: LauncherSection[] = [];
   const general: LauncherRow[] = [];
@@ -62,14 +75,14 @@ function buildSections(group: NavGroup): LauncherSection[] {
   for (const item of group.items) {
     if (item.isComing) continue;
     if (item.items?.length) {
-      const rows = flattenRows(item.items, "");
+      const rows = dedupeByHref(flattenRows(item.items, ""));
       if (rows.length > 0) sections.push({ key: item.title, title: item.title, rows });
     } else if (item.href && item.href !== "#") {
       general.push({ key: item.href, title: item.title, href: item.href, icon: item.icon, isNew: item.isNew, isDataBadge: item.isDataBadge });
     }
   }
 
-  if (general.length > 0) sections.unshift({ key: "__general", title: null, rows: general });
+  if (general.length > 0) sections.unshift({ key: "__general", title: null, rows: dedupeByHref(general) });
   return sections;
 }
 

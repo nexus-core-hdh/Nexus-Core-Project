@@ -39,7 +39,7 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
   const [employees, setEmployees] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [sizeInput, setSizeInput] = useState("");
-  const [colorwayPick, setColorwayPick] = useState<{ id: string; colorName: string; pantoneCode?: string } | null>(null);
+  const [colorwayPick, setColorwayPick] = useState<{ id: string; colorName: string; pantoneCode?: string; color?: string } | null>(null);
   const [sizesDialogOpen, setSizesDialogOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pasteZoneRef = useRef<HTMLDivElement>(null);
@@ -48,10 +48,21 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
   // resolves), so a rapid double-click before that state update lands could otherwise fire
   // navigator.clipboard.read() twice and add the same clipboard image as two attachments.
   const clipboardBusyRef = useRef(false);
-  // Populated by the Colourway picker's fetchOptions as search results come back, so onSelect
-  // can resolve a picked swatch's colorName/pantoneCode without depending on a separately
-  // fetched (and easily stale/short) full swatch list.
-  const swatchCacheRef = useRef<Record<string, { colorName: string; pantoneCode?: string }>>({});
+  // Colourway — the full ColorCard master, fetched once so it can drive the swatch preview
+  // for BOTH the picker (dropdown + staged colorwayPick) and the already-saved colorways list
+  // below (which only stores {swatchCardId,colorName,pantoneCode}, no color hex of its own).
+  const [colorCards, setColorCards] = useState<{ id: string; code: string; name: string; color: string }[]>([]);
+  useEffect(() => {
+    // No branchId filter — matches purchase-order-line-grid.tsx's own plmApi.colors.list()
+    // call for its Color cell exactly (the already-working reference for this master).
+    plmApi.colors.list().then((r: any) => {
+      setColorCards((Array.isArray(r) ? r : []).filter((c: any) => c.inUse !== false));
+    }).catch((e: any) => {
+      toast.error(e?.message || "Failed to load Color Cards");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const colorById = new Map(colorCards.map((c) => [String(c.id), c]));
 
   useEffect(() => {
     setForm({
@@ -298,15 +309,21 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
           </div>
         </div>
         <div className="flex justify-end pt-2">
-          <Button size="sm" onClick={save} disabled={saving}><Save className="h-4 w-4 mr-1" />{saving ? "Saving..." : "Save"}</Button>
+          {/* Distinct label from the page header's own "Save" button (which only persists
+              Title/In Use) — this one is what actually persists Brand/Season/Gender/Sizes/
+              Colorways/Explanations. Same label collision existed before; naming it clearly
+              is the fix for "added a colorway, saved, but it didn't stick" reports. */}
+          <Button size="sm" onClick={save} disabled={saving} title="Saves Brand, Season, Sizes, Colorways and the rest of this tab">
+            <Save className="h-4 w-4 mr-1" />{saving ? "Saving..." : "Save General Info"}
+          </Button>
         </div>
       </div>
 
       <div className="col-span-12 lg:col-span-5 space-y-3">
         <Card>
-          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+          <CardHeader className="pb-2 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
             <CardTitle className="text-sm">Attachments</CardTitle>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Button variant="outline" size="sm" className="h-7 text-xs" disabled={uploading} onClick={() => fileInputRef.current?.click()}>
                 <Upload className="h-3.5 w-3.5 mr-1" />Add New Document
               </Button>
@@ -384,26 +401,52 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Colorways</Label>
               <div className="space-y-1 mb-1.5">
-                {form.colorways.map((c: any) => (
-                  <div key={c.swatchCardId} className="flex items-center gap-2 text-xs border rounded-md px-2 py-1">
-                    <span className="flex-1">{c.colorName}{c.pantoneCode ? ` — ${c.pantoneCode}` : ""}</span>
-                    <button onClick={() => removeColorway(c.swatchCardId)}><X className="h-3.5 w-3.5 text-muted-foreground" /></button>
-                  </div>
-                ))}
+                {form.colorways.map((c: any) => {
+                  const cached = colorById.get(String(c.swatchCardId));
+                  return (
+                    <div key={c.swatchCardId} className="flex items-center gap-2 text-xs border rounded-md px-2 py-1">
+                      <span className="h-3.5 w-3.5 shrink-0 rounded-full border" style={{ backgroundColor: cached?.color || "#e5e7eb" }} />
+                      <span className="flex-1">{c.colorName}{c.pantoneCode ? ` — ${c.pantoneCode}` : ""}</span>
+                      <button onClick={() => removeColorway(c.swatchCardId)}><X className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                    </div>
+                  );
+                })}
               </div>
               <div className="flex gap-1.5 items-start">
+                <div
+                  className="h-8 w-8 shrink-0 rounded-md border"
+                  style={{ backgroundColor: colorwayPick?.color || "transparent" }}
+                  title={colorwayPick ? colorwayPick.colorName : "No color selected"}
+                />
                 <div className="flex-1">
                   <MasterAutocompleteField label="Colourway" compact masterKey="colourway"
                     displayValue={colorwayPick ? colorwayPick.colorName + (colorwayPick.pantoneCode ? ` — ${colorwayPick.pantoneCode}` : "") : ""}
-                    fetchOptions={(t) => plmApi.swatchCards.list({ search: t, limit: "50" }).then((r: any) => {
-                      const rows = r?.data || [];
-                      rows.forEach((s: any) => { swatchCacheRef.current[String(s.id)] = { colorName: s.colorName, pantoneCode: s.pantoneCode }; });
-                      return rows.map((s: any) => ({ id: s.id, code: s.colorCode || s.pantoneCode || "", name: s.colorName + (s.pantoneCode ? ` — ${s.pantoneCode}` : "") }));
-                    })}
-                    lookupPath="/dashboard/plm/swatch-cards"
+                    fetchOptions={(t) => {
+                      const term = t.trim().toLowerCase();
+                      const matches = term
+                        ? colorCards.filter((c) => c.code?.toLowerCase().includes(term) || c.name?.toLowerCase().includes(term))
+                        : colorCards;
+                      return Promise.resolve(matches.map((c) => ({
+                        id: c.id, code: c.code,
+                        // Code is only shown when it actually adds information — many real
+                        // records have Code === Name, and "DARK DENIM — DARK DENIM" is noise.
+                        name: c.code && c.code.trim().toLowerCase() !== c.name.trim().toLowerCase() ? `${c.name} — ${c.code}` : c.name,
+                      })));
+                    }}
+                    lookupPath="/dashboard/plm/general-definitions/color-cards"
+                    renderOption={(o) => {
+                      const cached = colorById.get(String(o.id));
+                      return (
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="h-3.5 w-3.5 shrink-0 rounded-full border" style={{ backgroundColor: cached?.color || "#e5e7eb" }} />
+                          <span className="truncate">{o.name}</span>
+                        </span>
+                      );
+                    }}
                     onSelect={(o) => {
-                      const cached = swatchCacheRef.current[String(o.id)];
-                      setColorwayPick({ id: String(o.id), colorName: cached?.colorName ?? o.name, pantoneCode: cached?.pantoneCode });
+                      const cached = colorById.get(String(o.id));
+                      const code = cached?.code && cached.code.trim().toLowerCase() !== cached.name?.trim().toLowerCase() ? cached.code : undefined;
+                      setColorwayPick({ id: String(o.id), colorName: cached?.name ?? o.name, pantoneCode: code, color: cached?.color });
                     }}
                     onClear={() => setColorwayPick(null)} />
                 </div>

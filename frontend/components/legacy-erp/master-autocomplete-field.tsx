@@ -42,6 +42,10 @@ interface Props {
    *  unmatched value must never silently "stick". Defaults to today's discard-on-no-match
    *  behavior when omitted. */
   onFreeTextCommit?: (text: string) => void;
+  /** Optional custom row renderer for the dropdown — defaults to the plain `{o.name}` row.
+   *  For fields whose options need more than a name shown (e.g. Colourway's color swatch);
+   *  every other field's dropdown is unaffected since this stays undefined for them. */
+  renderOption?: (o: MasterOption) => React.ReactNode;
 }
 
 /**
@@ -58,7 +62,7 @@ interface Props {
  *    reusable "open + receive a selection back" behavior shared by every such field. Only
  *    the id/code are stored in form state; the field itself only ever displays the Name.
  */
-export function MasterAutocompleteField({ label, masterKey, displayValue, onSelect, onClear, span = "normal", fetchOptions, lookupPath, compact, onFreeTextCommit }: Props) {
+export function MasterAutocompleteField({ label, masterKey, displayValue, onSelect, onClear, span = "normal", fetchOptions, lookupPath, compact, onFreeTextCommit, renderOption }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -223,7 +227,7 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
                 i === highlight ? "bg-primary/10 text-primary" : "hover:bg-muted"
               )}
             >
-              <span className="truncate">{o.name}</span>
+              {renderOption ? renderOption(o) : <span className="truncate">{o.name}</span>}
             </button>
           ))}
         </div>
