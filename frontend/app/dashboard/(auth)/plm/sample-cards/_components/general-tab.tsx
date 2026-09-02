@@ -15,7 +15,7 @@ import { plmApi } from "@/lib/nexuscore-api";
 import { customerApi, uploadApi } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
-import { SelectSizesDialog } from "../../../_components/select-sizes-dialog";
+import { SelectSizesDialog } from "../../_components/select-sizes-dialog";
 
 // Same field set/lookups as plm/style-cards/[id]/_components/general-tab.tsx (Department via
 // plmApi.departments.list(), Production/Product Merchandiser + Designer via

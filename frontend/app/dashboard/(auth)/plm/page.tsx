@@ -16,7 +16,7 @@ import {
 
 const nav = [
   { label: "Style Cards", href: "/dashboard/plm/style-cards", icon: Shirt, color: "text-blue-500", desc: "Manage style concepts & tech packs" },
-  { label: "Sample Cards", href: "/dashboard/plm/sample-cards", icon: Package, color: "text-purple-500", desc: "Track samples through approval stages" },
+  { label: "Sample Cards", href: "/dashboard/plm/sample-cards-list", icon: Package, color: "text-purple-500", desc: "Track samples through approval stages" },
   { label: "Product Cards", href: "/dashboard/plm/product-cards", icon: Layers, color: "text-emerald-500", desc: "Product definitions & measurements" },
   { label: "Swatch Cards", href: "/dashboard/plm/swatch-cards", icon: Palette, color: "text-amber-500", desc: "Fabric & color swatch library" },
   { label: "Mood Boards", href: "/dashboard/plm/mood-boards", icon: Palette, color: "text-pink-500", desc: "Season mood & concept boards" },

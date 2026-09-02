@@ -12,7 +12,7 @@ import { Plus, Save, Trash2, ListOrdered } from "lucide-react";
 import { plmApi, legacyErpApi } from "@/lib/nexuscore-api";
 import { cn } from "@/lib/utils";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
-import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
+import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
@@ -20,6 +20,11 @@ import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 type BomRow = {
   id: string;
   lineType: string;
+  // The actual binding to the selected Fabric/Trim Card (IM_Item.RecId, via
+  // legacyErpApi.fabricCards/trimInventoryCards) — set/cleared alongside fabricCode/fabricName
+  // below, which stay the denormalized display copy. This is what a reload resolves the
+  // selection from; fabricCode/fabricName alone were text-only and not a real reference.
+  fabricInventoryId: number | null;
   fabricCode: string;
   fabricName: string;
   explanation: string;
@@ -30,6 +35,11 @@ type BomRow = {
   swatchCardId: string;
   willBeCut: boolean;
   mainFabric: boolean;
+  // The selected card's own configured Item Unit (IM_ItemUnitItemSize.RecId, resolved via
+  // legacyErpApi.lookupItemUnits — the exact per-item Unit source Purchase Order/Purchase Receipt
+  // already resolve through). Same convention as fabricInventoryId: `unit` stays the denormalized
+  // display code, this is the real FK the backend validates on save.
+  unitId: number | null;
   unit: string;
   // Market Length/Width/Weight — calculator-only inputs for the automatic Fabric quantity
   // formula (BaseGramQuantity = L * W * Weight / 1550). No backing column on StyleBomLine (see
@@ -60,8 +70,8 @@ const LINE_TYPES = [
 ];
 
 const blankRow = (lineType: string): BomRow => ({
-  id: uid(), lineType, fabricCode: "", fabricName: "", explanation: "", placement: "", process: "",
-  variant: "", rowColumn: "", swatchCardId: "", willBeCut: false, mainFabric: false, unit: "",
+  id: uid(), lineType, fabricInventoryId: null, fabricCode: "", fabricName: "", explanation: "", placement: "", process: "",
+  variant: "", rowColumn: "", swatchCardId: "", willBeCut: false, mainFabric: false, unitId: null, unit: "",
   marketLength: 0, marketWidth: 0, marketWeight: 0,
   quantity: 0, wastePct: 0, dyeWastagePct: 0, otherWastagePct: 0, unitPrice: 0, component: "",
   dia: "", gauge: "", finishWidth: "", finishRoute: "", revision: "",
@@ -136,6 +146,31 @@ const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 // Purchase Receipt grid's own FIXED_COLS.
 const FIXED_COLS: ColKey[] = ["fabricCode", "fabricName"];
 
+// Fabric-only physical-property columns: Will be Cut/Main Fabric are fabric concepts, Market
+// Length/Width/Weight feed the fabric-only auto-quantity formula (calcFabricQuantity), and
+// Dia/Gauge/Finish Width/Finish Route are fabric physical properties (populated from the
+// selected Fabric Card's own uD_FabDia/uD_FabGuage/uD_FinWidth — Trim Cards carry none of these,
+// confirmed empty in the legacy DB). None of this applies to a Trim line, so the Trim tab hides
+// them entirely instead of showing dead "—" cells for an editable text field.
+const TRIM_HIDDEN_COLS: ColKey[] = [
+  "willBeCut", "mainFabric", "marketLength", "marketWidth", "marketWeight",
+  "dia", "gauge", "finishWidth", "finishRoute",
+];
+
+// The shared column set/order/widths (Manage Columns) stays one global user preference across
+// tabs — only the Trim tab's rendered subset + the Code/Name header labels change per active
+// tab, so switching Fabric <-> Trim swaps grid column definitions without a second column config
+// or a duplicated grid component.
+function columnDefsForTab(lineType: string, columnDefs: ColumnDef[]): ColumnDef[] {
+  if (lineType !== "trim") return columnDefs;
+  return columnDefs
+    .filter((c) => !TRIM_HIDDEN_COLS.includes(c.key))
+    .map((c) =>
+      c.key === "fabricCode" ? { ...c, label: "Trim Code" } :
+      c.key === "fabricName" ? { ...c, label: "Trim Name" } : c
+    );
+}
+
 // Column resize/reorder/hide/persist mechanics now live in the shared useGridColumns hook.
 // storageKey "bomLineGrid" reproduces the exact tablePreferences keys already saved for
 // existing users (bomLineGridColumnOrder / bomLineGridHiddenColumns) so no layout is orphaned.
@@ -174,6 +209,35 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
   useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
   const [swatches, setSwatches] = useState<any[]>([]);
   const [processCards, setProcessCards] = useState<any[]>([]);
+  // Fabric/Trim Card options for the grid's own search cell — AutocompleteTextCell (not
+  // MasterAutocompleteField: that one's absolutely-positioned dropdown gets silently clipped by
+  // this table's own overflow-x-auto scroll container; AutocompleteTextCell portals its
+  // suggestion list via Radix Popover specifically to avoid that, the same component every other
+  // in-grid search cell in this app already uses, e.g. inventory-receipt-line-grid.tsx's Name
+  // cell) takes a static options array, so the full Fabric/Trim Card lists are loaded once here
+  // instead of per-keystroke.
+  const [fabricOptions, setFabricOptions] = useState<AutocompleteOption[]>([]);
+  const [trimOptions, setTrimOptions] = useState<AutocompleteOption[]>([]);
+  // Full-row cache, keyed by id, for both lists — onSelectOption only ever hands back
+  // {id,code,name}; this lets it also pull the selected card's own Width/Weight/Dia/Gauge/
+  // Finish Width into the BOM row.
+  const fabricCardCacheRef = useRef<Record<string, any>>({});
+  // Per-card configured-Unit cache — legacyErpApi.lookupItemUnits(cardId) is the exact same
+  // per-item Unit source purchase-order-line-grid.tsx's own Unit cell already resolves through
+  // (IM_ItemUnitItemSize, ordered Main Unit first server-side), reused here instead of a second
+  // Item->Unit lookup. Cached per card id since selecting the same card again shouldn't refetch.
+  const itemUnitsCacheRef = useRef<Record<string, any[]>>({});
+  const resolveMainUnit = async (cardId: number): Promise<{ id: number; code: string } | null> => {
+    const key = String(cardId);
+    let units = itemUnitsCacheRef.current[key];
+    if (!units) {
+      units = await legacyErpApi.lookupItemUnits(cardId).catch(() => []);
+      itemUnitsCacheRef.current[key] = units;
+    }
+    if (!units.length) return null;
+    const main = units.find((u: any) => u.isMainUnit) || units[0];
+    return { id: Number(main.id), code: main.code || main.name || "" };
+  };
   const [header, setHeader] = useState({
     bomRouteCode: card.bomRouteCode || "",
     bomEmbroideryRoute: card.bomEmbroideryRoute || "",
@@ -184,16 +248,18 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
   const load = async () => {
     setLoading(true);
     try {
-      const [lines, sw, pc] = await Promise.all([
+      const [lines, sw, pc, fab, trim] = await Promise.all([
         plmApi.styleBom.get(styleCardId),
         plmApi.swatchCards.list().catch(() => ({ data: [] })),
         plmApi.processCards.list().catch(() => ({ data: [] })),
+        legacyErpApi.fabricCards.list().catch(() => []),
+        legacyErpApi.trimInventoryCards.list().catch(() => []),
       ]);
       setRows((Array.isArray(lines) ? lines : []).map((l: any) => ({
-        id: l.id, lineType: l.lineType, fabricCode: l.fabricCode || "", fabricName: l.fabricName || "",
+        id: l.id, lineType: l.lineType, fabricInventoryId: l.fabricInventoryId ?? null, fabricCode: l.fabricCode || "", fabricName: l.fabricName || "",
         explanation: l.explanation || "", placement: l.placement || "", process: l.process || "",
         variant: l.variant || "", rowColumn: l.rowColumn || "", swatchCardId: l.swatchCardId || "",
-        willBeCut: !!l.willBeCut, mainFabric: !!l.mainFabric, unit: l.unit || "",
+        willBeCut: !!l.willBeCut, mainFabric: !!l.mainFabric, unitId: l.unitId ?? null, unit: l.unit || "",
         marketLength: num(l.marketLength), marketWidth: num(l.marketWidth), marketWeight: num(l.marketWeight),
         quantity: num(l.quantity),
         wastePct: num(l.wastePct), dyeWastagePct: num(l.dyeWastagePct), otherWastagePct: num(l.otherWastagePct),
@@ -202,6 +268,12 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
       })));
       setSwatches(Array.isArray(sw) ? sw : (sw as any)?.data || []);
       setProcessCards(Array.isArray(pc) ? pc : (pc as any)?.data || []);
+      const fabList = Array.isArray(fab) ? fab : [];
+      const trimList = Array.isArray(trim) ? trim : [];
+      fabList.forEach((row: any) => { fabricCardCacheRef.current[String(row.id)] = row; });
+      trimList.forEach((row: any) => { fabricCardCacheRef.current[String(row.id)] = row; });
+      setFabricOptions(fabList.map((row: any) => ({ id: String(row.id), code: row.inventoryCode, name: row.inventoryName })));
+      setTrimOptions(trimList.map((row: any) => ({ id: String(row.id), code: row.inventoryCode, name: row.inventoryName })));
     } catch (e: any) {
       toast.error(e.message || "Failed to load BOM");
     } finally {
@@ -223,8 +295,10 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
   // selection, Market Length/Width/Height, Unit) since every one of those routes through this
   // same update() — no separate effect/hook needed. Trim/Ornament/Process rows are untouched:
   // their Quantity stays the plain manually-entered value it always was.
-  const update = (id: string, patch: Partial<BomRow>) => setRows((rs) => rs.map((r) => {
-    if (r.id !== id) return r;
+  // `guard` is optional — only the async Unit-resolution callback below needs it, to skip
+  // applying a slower/stale resolution if the row's card selection has since changed again.
+  const update = (id: string, patch: Partial<BomRow>, guard?: (row: BomRow) => boolean) => setRows((rs) => rs.map((r) => {
+    if (r.id !== id || (guard && !guard(r))) return r;
     const next = { ...r, ...patch };
     if (next.lineType === "fabric") {
       next.quantity = calcFabricQuantity(next.marketLength, next.marketWidth, next.marketWeight, next.unit);
@@ -292,14 +366,58 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
           : <GridInput value={r.fabricCode} onChange={(v) => update(r.id, { fabricCode: v })} />;
       case "fabricName":
         return r.lineType === "fabric" || r.lineType === "trim" ? (
-          <MasterAutocompleteField compact label={r.lineType === "fabric" ? "Fabric" : "Trim"}
-            masterKey={r.lineType} displayValue={r.fabricName}
-            fetchOptions={(t) => (r.lineType === "fabric" ? legacyErpApi.fabricCards.list(t) : legacyErpApi.trimInventoryCards.list(t))
-              .then((rows: any[]) => (Array.isArray(rows) ? rows : []).map((row: any) => ({ id: row.id, code: row.inventoryCode, name: row.inventoryName })))}
-            lookupPath={r.lineType === "fabric" ? "/dashboard/legacy-erp/fabric-cards" : "/dashboard/legacy-erp/trim-inventory-cards"}
-            onSelect={(o) => update(r.id, { fabricCode: String(o.code ?? ""), fabricName: o.name })}
-            onClear={() => update(r.id, { fabricCode: "", fabricName: "" })}
-            onFreeTextCommit={(text) => update(r.id, { fabricName: text })}
+          <AutocompleteTextCell
+            value={r.fabricName}
+            options={r.lineType === "fabric" ? fabricOptions : trimOptions}
+            placeholder="Type to Search"
+            // This grid has no separate click-to-edit/static mode (every cell is always live),
+            // unlike the click-to-activate grids AutocompleteTextCell was built for — startOpen
+            // defaults to true there (correct for "just activated"), which here would leave the
+            // suggestion list permanently open on every row. false + the field's own onFocus-like
+            // typing still opens it via onChange below.
+            startOpen={false}
+            onChange={(v) => update(r.id, { fabricName: v })}
+            onCancel={() => {}}
+            onCommit={(finalValue) =>
+              update(r.id, finalValue.trim() ? { fabricName: finalValue } : { fabricName: "", fabricInventoryId: null, fabricCode: "", unitId: null, unit: "" })
+            }
+            onSelectOption={(o) => {
+              const cardId = Number(o.id);
+              const patch: Partial<BomRow> = {
+                fabricInventoryId: cardId, fabricCode: String(o.code ?? ""), fabricName: o.name || "",
+                // Cleared up front (not just overwritten below) so a newly selected card never
+                // keeps the previously selected card's Unit even for the instant before the
+                // async resolution below resolves — "do not retain a stale Unit" applies to a
+                // card CHANGE, not just a clear.
+                unitId: null, unit: "",
+              };
+              // Fabric Card's own Width/Weight/Dia/Gauge/Finish Width — the same fields the BOM
+              // grid's own Market Width/Market Weight/Dia/Gauge/Finish Width columns already
+              // exist for — carried onto the row so a selected card's data doesn't have to be
+              // retyped. Trim Cards carry none of these (legacy-db columns, confirmed empty),
+              // so this only ever fires anything for lineType "fabric".
+              if (r.lineType === "fabric") {
+                const src = fabricCardCacheRef.current[String(o.id)];
+                if (src) {
+                  if (src.fWidth != null) patch.marketWidth = Number(src.fWidth) || 0;
+                  if (src.fWeight != null) patch.marketWeight = Number(src.fWeight) || 0;
+                  if (src.uD_FabDia != null) patch.dia = String(src.uD_FabDia);
+                  if (src.uD_FabGuage != null) patch.gauge = String(src.uD_FabGuage);
+                  if (src.uD_FinWidth != null) patch.finishWidth = String(src.uD_FinWidth);
+                }
+              }
+              update(r.id, patch);
+              // Item -> configured Unit resolution (CRITICAL requirement) — same
+              // legacyErpApi.lookupItemUnits source/ordering (Main Unit first) Purchase Order's
+              // own Unit cell already uses; async since it's a separate network call from the
+              // synchronous card-field patch above. Guarded on cardId still matching the row's
+              // current selection so a fast card-change (or clear) in between can't have a
+              // slower, earlier resolution overwrite the newer one.
+              resolveMainUnit(cardId).then((u) => {
+                if (!u) return;
+                update(r.id, { unitId: u.id, unit: u.code }, (row) => row.fabricInventoryId === cardId);
+              });
+            }}
           />
         ) : <GridInput value={r.fabricName} onChange={(v) => update(r.id, { fabricName: v })} />;
       case "explanation":
@@ -329,7 +447,11 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
       case "mainFabric":
         return <GridCheckbox checked={r.mainFabric} onChange={(v) => update(r.id, { mainFabric: v })} />;
       case "unit":
-        return <GridInput value={r.unit} onChange={(v) => update(r.id, { unit: v })} />;
+        // Manually editing away from the card-resolved Unit text clears unitId too — otherwise a
+        // free-typed value would save alongside a now-mismatched FK from whichever card it was
+        // last auto-resolved from (same "no stale Unit" rule the card selection/clear paths
+        // above already follow).
+        return <GridInput value={r.unit} onChange={(v) => update(r.id, v === r.unit ? { unit: v } : { unit: v, unitId: null })} />;
       case "marketLength":
         return r.lineType === "fabric"
           ? <GridInput type="number" align="right" value={r.marketLength} onChange={(v) => update(r.id, { marketLength: parseFloat(v) || 0 })} />
@@ -414,17 +536,19 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
           </div>
         </div>
 
-        {LINE_TYPES.map((t) => (
+        {LINE_TYPES.map((t) => {
+          const tabColumnDefs = columnDefsForTab(t.value, displayColumnDefs);
+          return (
           <TabsContent key={t.value} value={t.value} className="pt-3">
             <div className="rounded-md border overflow-x-auto">
               <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
                 <colgroup>
-                  {displayColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+                  {tabColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
                   <col style={{ width: DEL_W }} />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
-                    {displayColumnDefs.map((col) => {
+                    {tabColumnDefs.map((col) => {
                       const fixed = FIXED_COLS.includes(col.key);
                       return (
                         <TableHead
@@ -462,7 +586,7 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
                 <TableBody>
                   {(grouped[t.value] || []).map((r) => (
                     <TableRow key={r.id} className="[&>td]:border-r [&>td]:p-0">
-                      {displayColumnDefs.map((col) => (
+                      {tabColumnDefs.map((col) => (
                         <TableCell key={col.key} className={cellClassFor(col.key)}>
                           {renderCell(r, col.key)}
                         </TableCell>
@@ -475,7 +599,8 @@ export function BomTab({ styleCardId, card, onReloadCard }: { styleCardId: strin
             </div>
             <Button variant="outline" size="sm" className="mt-1.5 h-7 text-xs" onClick={() => addRow(t.value)}><Plus className="h-3.5 w-3.5 mr-1" />Add Row</Button>
           </TabsContent>
-        ))}
+          );
+        })}
       </Tabs>
 
       <ManageColumnsModal

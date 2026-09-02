@@ -286,7 +286,7 @@ export const businessOperationsModules: MapSection = {
         {
           title: "Planning & Execution",
           items: [
-            { label: "Sampling", href: "/dashboard/plm/sample-cards" },
+            { label: "Sampling", href: "/dashboard/plm/sample-cards-list" },
             { label: "Orders", href: "/dashboard/plm/orders" },
             { label: "Tasks", href: "/dashboard/plm/tasks" },
           ],

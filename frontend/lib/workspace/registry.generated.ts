@@ -177,6 +177,7 @@ export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/dashboard/plm/reports/sample-cost", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/reports/sample-cost/page"), { ssr: false }) },
   { path: "/dashboard/plm/reports/sample-history", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/reports/sample-history/page"), { ssr: false }) },
   { path: "/dashboard/plm/sample-cards", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/sample-cards/page"), { ssr: false }) },
+  { path: "/dashboard/plm/sample-cards-list", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/sample-cards-list/page"), { ssr: false }) },
   { path: "/dashboard/plm/style-cards", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/style-cards/page"), { ssr: false }) },
   { path: "/dashboard/plm/swatch-cards", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/swatch-cards/page"), { ssr: false }) },
   { path: "/dashboard/plm/tasks", Component: dynamic(() => import("@/app/dashboard/(auth)/plm/tasks/page"), { ssr: false }) },

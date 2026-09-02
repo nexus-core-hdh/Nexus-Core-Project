@@ -3726,6 +3726,11 @@ model StyleBomLine {
   id              String  @id @default(uuid())
   styleCardId     String
   lineType        String
+  // The actual binding to the legacy Fabric/Trim Card master (IM_Item.RecId — a plain nullable
+  // Int, not a Prisma @relation, since IM_Item is a raw-SQL legacy table outside Prisma's own
+  // schema, the same convention IM_ReceiptItem.ColorCardId already uses for a different legacy
+  // master). fabricCode/fabricName remain the denormalized display copy set alongside it.
+  fabricInventoryId Int?
   fabricCode      String?
   fabricName      String?
   explanation     String?
@@ -3737,6 +3742,12 @@ model StyleBomLine {
   willBeCut       Boolean @default(false)
   mainFabric      Boolean @default(false)
   unit            String?
+  // The Unit resolved from the selected Fabric/Trim Card's own configured Item Unit
+  // (IM_ItemUnitItemSize.RecId, via LegacyMasterLookupService.listItemUnits — the same per-item
+  // Unit source Purchase Order/Purchase Receipt already resolve through, unit-conversion.util.ts).
+  // Same "plain nullable Int, not a Prisma relation" convention as fabricInventoryId above; `unit`
+  // stays the denormalized display code set alongside it.
+  unitId          Int?
   quantity        Decimal @default(0) @db.Decimal(14, 4)
   wastePct        Decimal @default(0) @db.Decimal(8, 4)
   dyeWastagePct   Decimal @default(0) @db.Decimal(8, 4)

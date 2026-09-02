@@ -35,12 +35,13 @@ export interface AutocompleteOption {
 // — "verify-me" matches "v", "ify", "me", "fy", "ABC"/"abc"/"AbC" all match identically, since
 // both the query and the candidate text are lower-cased before the same String.includes() check.
 export function AutocompleteTextCell({
-  value, options, disabled, autoFocus, showDropdownIcon, startOpen = true, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
+  value, options, disabled, autoFocus, showDropdownIcon, startOpen = true, placeholder, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
 }: {
   value: string;
   options: AutocompleteOption[];
   disabled?: boolean;
   autoFocus?: boolean;
+  placeholder?: string;
   // Purely visual — a chevron affordance so a searchable text field still reads as "this opens
   // a list" at a glance, the same way every shadcn Select in these grids already does. Opt-in
   // per field (currently just Code/"Inventory selector") rather than automatic, so it doesn't
@@ -111,6 +112,7 @@ export function AutocompleteTextCell({
           autoFocus={autoFocus}
           value={value}
           disabled={disabled}
+          placeholder={placeholder}
           onChange={(v) => { onChange(v); setOpen(true); }}
           onBlur={() => { setOpen(false); onCommit(value); }}
           onDoubleClick={onDoubleClick}

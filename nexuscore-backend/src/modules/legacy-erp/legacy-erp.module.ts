@@ -126,5 +126,11 @@ import { ApprovalModule } from '../approval/approval.module';
     DeleteDependencyService,
     ReceiptTraceabilityService,
   ],
+  // LegacyMasterLookupService.listItemUnits is the same per-item configured-Unit source Purchase
+  // Order/Purchase Receipt already resolve Unit through (unit-conversion.util.ts's
+  // resolveLineUnitId/assertValidItemUnit) — exported so StyleExtrasModule (PLM BOM) can reuse the
+  // exact same resolution/validation for its own Fabric/Trim Card -> Unit binding instead of a
+  // second copy of it.
+  exports: [LegacyMasterLookupService],
 })
 export class LegacyErpModule {}

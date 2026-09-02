@@ -583,7 +583,7 @@ export const defaultNavItems: NavGroup[] = [
         icon: Scissors,
         items: [
           { title: "Style Cards", href: "/dashboard/plm/style-cards" },
-          { title: "Sample Cards", href: "/dashboard/plm/sample-cards" },
+          { title: "Sample Cards", href: "/dashboard/plm/sample-cards-list" },
           { title: "Mood Boards", href: "/dashboard/plm/mood-boards" },
           { title: "Swatch Cards", href: "/dashboard/plm/swatch-cards" },
           { title: "Product Cards", href: "/dashboard/plm/product-cards" },

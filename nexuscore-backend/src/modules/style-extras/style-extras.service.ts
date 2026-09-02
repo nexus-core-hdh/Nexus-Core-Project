@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LegacyMasterLookupService } from '../legacy-erp/legacy-master-lookup.service';
+import { resolveLineUnitId, assertValidItemUnit } from '../legacy-erp/unit-conversion.util';
 
 const BOM_LINE_FIELDS = [
-  'lineType', 'fabricCode', 'fabricName', 'explanation', 'placement', 'process', 'variant',
+  'lineType', 'fabricInventoryId', 'fabricCode', 'fabricName', 'unitId', 'explanation', 'placement', 'process', 'variant',
   'rowColumn', 'swatchCardId', 'willBeCut', 'mainFabric', 'unit', 'quantity', 'wastePct',
   'dyeWastagePct', 'otherWastagePct', 'unitPrice', 'component', 'dia', 'gauge',
   'finishWidth', 'finishRoute', 'revision',
@@ -26,7 +28,10 @@ function pickWashCare(dto: any) {
 
 @Injectable()
 export class StyleExtrasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly masterLookupSvc: LegacyMasterLookupService,
+  ) {}
 
   private async findStyleCardOrThrow(styleCardId: string) {
     const style = await this.prisma.styleCard.findUnique({ where: { id: styleCardId } });
@@ -48,8 +53,21 @@ export class StyleExtrasService {
     await this.findStyleCardOrThrow(styleCardId);
     await this.prisma.styleBomLine.deleteMany({ where: { styleCardId } });
     if (lines?.length) {
+      // Fabric/Trim Card = IM_Item (fabricInventoryId is that Item's RecId — see bom-tab.tsx's
+      // own comment) so the exact same Item -> Unit resolution/validation Purchase Order and
+      // Purchase Receipt already enforce (unit-conversion.util.ts, reused as-is) applies here:
+      // a stale/foreign/hand-crafted unitId from the client is normalized to one of the card's
+      // own configured units rather than trusted outright. Lines with no fabricInventoryId
+      // (Ornament/Process, or a Fabric/Trim line with no card selected) pass through untouched —
+      // resolveLineUnitId/assertValidItemUnit are both no-ops when inventoryId is null.
+      const picked = await Promise.all(lines.map(async (l) => {
+        const line = pickBomLine(l);
+        line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
+        await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
+        return line;
+      }));
       await this.prisma.styleBomLine.createMany({
-        data: lines.map((l, i) => ({ ...pickBomLine(l), sortOrder: i, styleCardId })),
+        data: picked.map((line, i) => ({ ...line, sortOrder: i, styleCardId })),
       });
     }
     return this.getBomLines(styleCardId);
