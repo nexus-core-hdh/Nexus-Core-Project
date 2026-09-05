@@ -7,11 +7,22 @@ export interface WorkspaceTab {
   key: string;
   href: string;
   dirty: boolean;
-  /** Optional explicit display title, set by the screen that owns this tab
-   *  (e.g. once a record's number/name is known) — takes priority over any
-   *  menu/route-derived title. See lib/workspace/resolve-tab-title.ts and
-   *  hooks/use-workspace-tab-title.ts. Undefined means "resolve it". */
+  /** Optional explicit, already-fully-formatted display title, set by the
+   *  screen that owns this tab — an escape hatch for a screen whose title
+   *  needs a shape resolveWorkspaceTabTitle's own "{Screen} [{Record}]"
+   *  composition can't produce (e.g. Inventory Receipt's own receipt-type +
+   *  status format). Takes priority over everything else. See
+   *  lib/workspace/resolve-tab-title.ts and hooks/use-workspace-tab-title.ts.
+   *  Undefined means "resolve it". */
   title?: string;
+  /** Just the loaded record's own display identity (its Name, or Code if it
+   *  has no Name) — NOT a full title. resolveWorkspaceTabTitle combines this
+   *  with the screen's own resolved name into "{Screen} [{recordLabel}]", so
+   *  a screen only ever needs to report the one piece of data unique to it.
+   *  See hooks/use-workspace-tab-title.ts's useWorkspaceRecordLabel. Absent/
+   *  undefined on a create route falls through to the existing "New {Screen}"
+   *  resolution. */
+  recordLabel?: string;
 }
 
 interface OpenTabInput {
@@ -50,6 +61,7 @@ interface WorkspaceState extends WorkspacePersisted {
   setDirty: (key: string, dirty: boolean) => void;
   registerSaveHandler: (key: string, handler: SaveHandler | null) => void;
   setTabTitle: (key: string, title: string | undefined) => void;
+  setTabRecordLabel: (key: string, recordLabel: string | undefined) => void;
 }
 
 // Debounced so rapid tab switching / pinning doesn't fire a PATCH per click — the
@@ -196,6 +208,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const current = state.tabs.find((t) => t.key === key);
           if (!current || current.title === title) return state;
           return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, title } : t)) };
+        }),
+
+      setTabRecordLabel: (key, recordLabel) =>
+        set((state) => {
+          const current = state.tabs.find((t) => t.key === key);
+          if (!current || current.recordLabel === recordLabel) return state;
+          return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, recordLabel } : t)) };
         }),
     }),
     {

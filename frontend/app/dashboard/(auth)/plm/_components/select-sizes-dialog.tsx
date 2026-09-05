@@ -7,27 +7,41 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
 
-interface SizeGroup { id: number; code: string; name: string; inUse?: number }
+export interface SizeGroup { id: number; code: string; name: string; inUse?: number }
 
 /**
  * Size Group picker over the legacy-erp Size Set master (MA_SizeSet header / MA_SizeSetItem
  * detail — see size-set.service.ts, the same master/detail shape Unit Set already uses) — used
- * by both plm/sample-cards and plm/style-cards (both StyleCard-backed, hence living at the
- * shared plm/_components level rather than under either screen's own _components). Selecting a
- * group (e.g. "BABY") fetches that Size Set's own configured detail rows and loads ALL of them
- * onto the card's `sizes` array in one action — there is no individual per-size picking here
- * anymore; the Size Set IS the list of sizes for that group, not a menu to pick from.
- * Merges rather than fully replaces: any size already on the card that isn't one of the newly
- * selected group's own codes (a free-typed value like "2Y") is preserved untouched.
+ * by plm/sample-cards, plm/style-cards, AND legacy-erp/work-orders (StyleCard/SampleCard-backed
+ * callers live at the shared plm/_components level rather than under either screen's own
+ * _components; Work Order imports it directly from here — same master/API, no second Size Group
+ * picker). Selecting a group (e.g. "BABY") fetches that Size Set's own configured detail rows and
+ * loads ALL of them in one action — there is no individual per-size picking here anymore; the
+ * Size Set IS the list of sizes for that group, not a menu to pick from. Exactly one group can
+ * ever be applied per click (a fresh click on a different group is a full replace of the
+ * previous selection, never an addition) — matching "single selection only" wherever this is used.
+ *
+ * Default behavior (styleCardId + onSaved, no onApply) is UNCHANGED: applies straight to
+ * StyleCard.sizes via plmApi.styleCards.update(), merging with any free-typed sizes — exactly
+ * what plm/sample-cards and plm/style-cards already rely on. Passing `onApply` instead hands the
+ * resolved codes back to the caller (e.g. Work Order's own in-memory selectedSizes/availableSizes
+ * state) without writing to StyleCard at all — Work Order's own size selection must never modify
+ * the Style Card per the existing "Work Order copy, Style Card untouched" rule.
  */
 export function SelectSizesDialog({
-  open, onOpenChange, styleCardId, currentSizes, onSaved,
+  open, onOpenChange, styleCardId, currentSizes, onSaved, onApply,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  styleCardId: string;
+  styleCardId?: string;
   currentSizes: string[];
-  onSaved: () => void;
+  onSaved?: () => void;
+  /** When provided, called with the resolved group codes instead of writing to StyleCard.sizes.
+   *  Return (or resolve to) `false` to veto the change — e.g. the caller shows its own "replace
+   *  existing quantities?" confirmation and the user cancelled — in which case no success toast
+   *  fires and the dialog stays open on the current group list, letting the user try a different
+   *  one or close it themselves. Any other return value (including none) proceeds normally. */
+  onApply?: (codes: string[], group: SizeGroup) => boolean | void | Promise<boolean | void>;
 }) {
   const [groups, setGroups] = useState<SizeGroup[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,13 +75,20 @@ export function SelectSizesDialog({
         toast.error(`No sizes configured for "${group.name.trim()}" yet — add some in Sizes.`);
         return;
       }
+      if (onApply) {
+        const proceed = await onApply(groupCodes, group);
+        if (proceed === false) return;
+        toast.success(`Loaded ${groupCodes.length} size${groupCodes.length === 1 ? "" : "s"} from "${group.name.trim()}"`);
+        onOpenChange(false);
+        return;
+      }
       // The selected group's own full set replaces whatever master-sourced sizes were there
       // before; a manually-typed size that isn't one of this group's own codes is kept as-is.
       const freeTextKept = currentSizes.filter((s) => !groupCodes.includes(s));
       const nextSizes = [...freeTextKept, ...groupCodes];
-      await plmApi.styleCards.update(styleCardId, { sizes: nextSizes });
+      await plmApi.styleCards.update(styleCardId!, { sizes: nextSizes });
       toast.success(`Loaded ${groupCodes.length} size${groupCodes.length === 1 ? "" : "s"} from "${group.name.trim()}"`);
-      onSaved();
+      onSaved?.();
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e.message || "Failed to load sizes");

@@ -28,3 +28,28 @@ export function useWorkspaceTabTitle(title: string | undefined) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabKey, title, setTabTitle]);
 }
+
+/**
+ * Lets a hosted detail/edit screen report just its loaded record's own display
+ * identity (Name, or Code if it has no Name — never a raw internal id) once
+ * available. resolveWorkspaceTabTitle (lib/workspace/resolve-tab-title.ts)
+ * combines this with the screen's own resolved name into
+ * "{Screen Name} [{recordLabel}]" — the screen never needs to know or repeat
+ * its own menu title. Pass `undefined` while no record is loaded yet (a
+ * create route, or still fetching) so the tab falls back to the automatic
+ * "New {Screen Name}" resolution. Prefer this over useWorkspaceTabTitle
+ * above, which takes priority over it and is only for a screen whose title
+ * needs a shape this composition can't produce.
+ */
+export function useWorkspaceRecordLabel(recordLabel: string | undefined) {
+  const ctx = useWorkspaceTabContext();
+  const setTabRecordLabel = useWorkspaceStore((s) => s.setTabRecordLabel);
+  const tabKey = ctx?.tabKey;
+
+  useEffect(() => {
+    if (!tabKey) return;
+    setTabRecordLabel(tabKey, recordLabel);
+    return () => setTabRecordLabel(tabKey, undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabKey, recordLabel, setTabRecordLabel]);
+}

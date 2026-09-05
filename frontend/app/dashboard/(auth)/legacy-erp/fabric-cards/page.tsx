@@ -15,6 +15,7 @@ import { Search, Save, FilePlus2, Shirt, Lock } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import {
   FormTextField as FieldText,
@@ -288,6 +289,9 @@ export default function FabricCardPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Fabric Card [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(itemId ? form.inventoryCode || undefined : undefined);
 
   // Live client-side preview of the backend's own naming convention (fabric-card.service.ts's
   // buildIdentityName) — used only while form.inventoryName is still empty, i.e. a NEW/unsaved

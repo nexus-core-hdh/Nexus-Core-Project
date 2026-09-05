@@ -127,6 +127,21 @@ const TABLES: Record<string, TableLookupConfig> = {
     table: 'MD_SubcontractReceipt', codeColumn: 'SubcontractReceiptCode', nameColumn: 'SubcontractReceiptName',
     searchColumns: ['SubcontractReceiptCode', 'SubcontractReceiptName'], activeColumn: 'InUse', label: 'Subcontract Receipt',
   },
+  // Employee / Certification / Initial Cost / Project — already-existing masters (HR_Employee,
+  // MD_Certification, MA_InitialCost, FI_Project; all confirmed via live pg_catalog FK
+  // constraints on MA_WorkOrder itself: EmployeeId/CertificationId/InitialCostId/ProjectId each
+  // already FK into these exact tables). Needed for Work Order's Detail tab (Customer
+  // Represent/Certification/Initial Cost/Project No) — same "expose an existing table through
+  // the already-existing generic endpoint" reuse as every other entry above. No new table.
+  // Deliberately no activeColumn/label on any of these four — that combination is what makes an
+  // entry "manageable" (surfaced in the separate Master Lookup admin/CRUD screen elsewhere in
+  // this app); these four stay read-only search-only lookups scoped to Work Order's Detail tab,
+  // matching `cash`/`cost-center` above rather than `city`/`state`/`country`, so adding them here
+  // can't expand an unrelated admin screen's contents.
+  employee: { table: 'HR_Employee', codeColumn: 'EmployeeCode', nameColumn: 'EmployeeName', searchColumns: ['EmployeeCode', 'EmployeeName'] },
+  certification: { table: 'MD_Certification', codeColumn: 'CertificationCode', nameColumn: 'CertificationName', searchColumns: ['CertificationCode', 'CertificationName'] },
+  'initial-cost': { table: 'MA_InitialCost', codeColumn: 'Code', nameColumn: 'Name', searchColumns: ['Code', 'Name'] },
+  project: { table: 'FI_Project', codeColumn: 'ProjectCode', nameColumn: 'ProjectName', searchColumns: ['ProjectCode', 'ProjectName'] },
 };
 export type MasterLookupKey = keyof typeof TABLES;
 

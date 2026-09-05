@@ -19,6 +19,7 @@ import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField, FormSwitchField } from "@/components/forms/form-field";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
@@ -353,6 +354,9 @@ export default function CustomerDefineTrimsPage() {
 
   const isDirty = JSON.stringify({ form, lines }) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Customer Define Trim [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(trimCardId ? form.code || undefined : undefined);
 
   const gridColumnDefs = useMemo(
     () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),

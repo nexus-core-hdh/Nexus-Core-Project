@@ -62,7 +62,17 @@ export class PlmCardsService {
     if (q?.status) where.status = q.status;
     if (q?.season) where.season = q.season;
     if (q?.category) where.category = q.category;
-    if (q?.search) where.title = { contains: q.search, mode: 'insensitive' };
+    // Searches both Style Code (styleNumber) and Style Name (title) — was Name-only, the one
+    // inconsistency with every other master lookup in this codebase (Fabric/Trim/Yarn Card,
+    // Current Account, ...), all of which already search by Code or Name. Matters for this
+    // becoming a reusable Style lookup for other modules (Work Order, etc. — not wired up in
+    // this change), which need to find a style by its Code, not just its free-text Name.
+    if (q?.search) {
+      where.OR = [
+        { title: { contains: q.search, mode: 'insensitive' } },
+        { styleNumber: { contains: q.search, mode: 'insensitive' } },
+      ];
+    }
 
     const page = parseInt(q?.page || '1');
     const limit = parseInt(q?.limit || '20');

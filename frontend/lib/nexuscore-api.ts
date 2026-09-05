@@ -416,6 +416,25 @@ export const legacyErpApi = {
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/yarn-cards/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/yarn-cards/${id}/attachments/${attId}/content`,
   },
+  workOrders: {
+    list: (search?: string) => api.get(`/legacy-erp/work-orders${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/work-orders/${id}`),
+    previewNextCode: () => api.get(`/legacy-erp/work-orders/next-code`),
+    create: (d: any) => api.post('/legacy-erp/work-orders', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/work-orders/${id}`, d),
+    remove: (id: number) => api.delete(`/legacy-erp/work-orders/${id}`),
+    listItems: (id: number) => api.get(`/legacy-erp/work-orders/${id}/items`),
+    upsertItems: (id: number, lines: any[]) => api.put(`/legacy-erp/work-orders/${id}/items`, lines),
+    listItemVariants: (itemId: number) => api.get(`/legacy-erp/work-orders/items/${itemId}/variants`),
+    upsertItemVariants: (itemId: number, lines: any[]) => api.put(`/legacy-erp/work-orders/items/${itemId}/variants`, lines),
+    listTab: (id: number, tab: string) => api.get(`/legacy-erp/work-orders/${id}/${tab}`),
+    createTabRow: (id: number, tab: string, d: any) => api.post(`/legacy-erp/work-orders/${id}/${tab}`, d),
+    updateTabRow: (id: number, tab: string, lineId: number, d: any) => api.put(`/legacy-erp/work-orders/${id}/${tab}/${lineId}`, d),
+    removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/work-orders/${id}/${tab}/${lineId}`),
+    listBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process") => api.get(`/legacy-erp/work-orders/${id}/bom/${lineType}`),
+    upsertBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process", lines: any[]) => api.put(`/legacy-erp/work-orders/${id}/bom/${lineType}`, lines),
+    transferBomFromStyleCard: (id: number, styleCardId: string) => api.post(`/legacy-erp/work-orders/${id}/bom/transfer-from-style-card`, { styleCardId }),
+  },
   fabricCards: {
     list: (search?: string) => api.get(`/legacy-erp/fabric-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
     get: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}`),
@@ -432,6 +451,8 @@ export const legacyErpApi = {
     uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/fabric-cards/${id}/attachments`, d),
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/fabric-cards/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/fabric-cards/${id}/attachments/${attId}/content`,
+    getYarnRecipe: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}/yarn-recipe`),
+    upsertYarnRecipe: (id: number, lines: any[]) => api.put(`/legacy-erp/fabric-cards/${id}/yarn-recipe`, lines),
   },
   purchaseOrders: {
     list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected") => {
@@ -739,9 +760,13 @@ export const legacyErpApi = {
     key: "category" | "group" | "mark" | "model" | "variant-type" | "tax" | "withholding-type" | "warehouse"
       | "fabric" | "process" | "finish-gsm" | "dye-type" | "composition" | "forex" | "unit"
       | "service" | "manufacturing-order" | "size-parameter" | "city" | "state" | "country"
-      | "cash" | "cost-center" | "subcontract-type" | "subcontract-receipt",
+      | "cash" | "cost-center" | "subcontract-type" | "subcontract-receipt"
+      | "employee" | "certification" | "initial-cost" | "project",
     search?: string,
   ) => api.get(`/legacy-erp/lookup/tables/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  // Resolve one stored FK id back to its display Code/Name — for loading an EXISTING record
+  // (e.g. Work Order Detail tab) where lookupTable() above only supports typeahead search.
+  lookupTableGet: (key: string, id: number) => api.get(`/legacy-erp/lookup/tables/${key}/${id}`),
   // Purchase Order per-line Unit dropdown, scoped to the selected Item's own configured units
   // (IM_ItemUnitItemSize) — not the flat cross-item `unit` lookup above.
   lookupItemUnits: (inventoryId: number) => api.get(`/legacy-erp/lookup/tables/item-units/${inventoryId}`),

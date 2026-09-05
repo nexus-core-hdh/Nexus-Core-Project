@@ -15,6 +15,7 @@ import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { cn } from "@/lib/utils";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import {
   FormTextField as FieldText,
@@ -212,6 +213,9 @@ export default function CurrentAccountCardPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Current Account [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(accountId ? form.currentAccountCode || undefined : undefined);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">

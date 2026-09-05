@@ -17,7 +17,7 @@ import { Search, Save, FilePlus2, Shirt, Lock, Sparkles, Pencil, Ruler } from "l
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
-import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { FormGrid } from "@/components/forms/form-grid";
@@ -157,10 +157,12 @@ export default function SampleCardMasterDetailPage() {
   const isDirty = !readOnly && JSON.stringify(header) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
 
-  // Puts the same title shown in the in-page H1 below onto the actual Workspace tab — a no-op
-  // outside the workspace tab stack (rendered standalone), see use-workspace-tab-title.ts.
   const titleText = recordId ? (header.title || "Sample Card") : "New Sample Card";
-  useWorkspaceTabTitle(titleText);
+  // Reports this record's own display identity (Name, falling back to its Code) onto the
+  // Workspace tab — resolveWorkspaceTabTitle composes it into "Sample Card [<this>]" itself, the
+  // same way every other screen's record label works; a no-op outside the workspace tab stack
+  // (rendered standalone). See use-workspace-tab-title.ts's useWorkspaceRecordLabel.
+  useWorkspaceRecordLabel(recordId ? (header.title || header.styleNumber || undefined) : undefined);
 
   const reloadCard = () => { if (recordId) load(recordId); };
 

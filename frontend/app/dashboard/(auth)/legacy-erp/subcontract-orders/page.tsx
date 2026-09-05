@@ -21,6 +21,7 @@ import { Search, Save, FilePlus2, Factory, Lock, Trash2, Plus, BadgeCheck, XCirc
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
@@ -289,6 +290,9 @@ export default function SubcontractOrderPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Subcontract Order [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(orderId ? form.receiptNo || undefined : undefined);
 
   // Universal Action Menu -> Return/related-receipt submenu — Outside Process Receive Receipt
   // (and any further return/connection receipts) tracing back to this order (see

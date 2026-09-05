@@ -45,6 +45,14 @@ interface PendingPo {
   lines: PendingLine[];
 }
 
+// Module-level (not a default parameter) so it's one stable function reference across every
+// render/instance — a default parameter value is re-created every render, which fed the
+// `fetchPending` effect below a "changed" dependency on every render and looped indefinitely
+// whenever a caller didn't pass its own `fetchPending` (default parameter and inline caller
+// functions are equally unstable; see inventory-receipts/page.tsx's own fix for the same bug on
+// its custom `fetchPending`).
+const defaultFetchPending = (id: number) => legacyErpApi.purchaseOrders.listPending(id);
+
 const fmtQty = (n: number) => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const fmtPrice = (n: number | null) => (n == null ? "—" : Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const fmtDate = (d: string) => (d ? new Date(d).toLocaleDateString() : "—");
@@ -67,7 +75,7 @@ interface Props {
 
 export function PendingOrdersDialog({
   open, onOpenChange, currentAccountId, alreadyImportedIds, onConfirm,
-  fetchPending = (id) => legacyErpApi.purchaseOrders.listPending(id),
+  fetchPending = defaultFetchPending,
   sourceLabel = "Purchase Order",
 }: Props) {
   const [loading, setLoading] = useState(false);

@@ -14,6 +14,7 @@ import { Search, Save, FilePlus2, Landmark, Lock, BadgeCheck } from "lucide-reac
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText, FieldLabel } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
@@ -194,6 +195,9 @@ export default function FinancialReceiptPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Financial Receipt [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(receiptId ? form.receiptNo || undefined : undefined);
 
   const saveRequired = (label: string) => (
     <Empty className="py-10">

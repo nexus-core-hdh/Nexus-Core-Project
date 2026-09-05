@@ -15,6 +15,7 @@ import { Search, Save, FilePlus2, Ribbon, Lock } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import {
   FormTextField as FieldText,
@@ -216,6 +217,9 @@ export default function TrimInventoryCardPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Trim Card [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(itemId ? form.inventoryCode || undefined : undefined);
 
   const lookupField = (key: LookupKey, label: string, formKey: string, span: "normal" | "wide" = "normal") => (
     <LookupField

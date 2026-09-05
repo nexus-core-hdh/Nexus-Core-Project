@@ -55,6 +55,22 @@ const SATELLITES: Record<string, SatelliteConfig> = {
     table: 'IM_ItemAttribute', fkColumn: 'InventoryId',
     columns: ['AttributeSetId', 'AttributeSetItemId', 'InUse'],
   },
+  // Work Order's own tabs — already-existing legacy child tables (MA_WorkOrder's own real,
+  // pre-existing satellites, confirmed via information_schema, 0 rows — first writer), reusing
+  // this exact same config-driven CRUD instead of three near-identical new services
+  // (work-order.controller.ts's own :id/:tab routes, same shape as Fabric/Yarn Card's).
+  'work-order-explanation': {
+    table: 'MA_WorkOrderExplanation', fkColumn: 'WorkOrderId',
+    columns: ['ExplanationType', 'ExplanationText', 'InUse'],
+  },
+  'work-order-activities': {
+    table: 'MA_WorkOrderActivity', fkColumn: 'WorkOrderId',
+    columns: ['EmployeeId', 'ActivityDate', 'ActivityType', 'Explanation', 'Quantity', 'ForexId', 'ForexUnitPrice', 'UnitPrice'],
+  },
+  'work-order-expenses': {
+    table: 'MA_WorkOrderExpense', fkColumn: 'WorkOrderId',
+    columns: ['PeriodYear', 'PeriodMonth', 'ExpenseType', 'ExpenseId', 'Explanation', 'Amount', 'ForexId', 'ForexAmount', 'ForexRate', 'InUse'],
+  },
 };
 
 const camel = (col: string) => col[0].toLowerCase() + col.slice(1);
@@ -65,7 +81,7 @@ export class YarnCardSatellitesService {
 
   private config(tab: string): SatelliteConfig {
     const cfg = SATELLITES[tab];
-    if (!cfg) throw new BadRequestException(`Unknown yarn card tab "${tab}"`);
+    if (!cfg) throw new BadRequestException(`Unknown tab "${tab}"`);
     return cfg;
   }
 

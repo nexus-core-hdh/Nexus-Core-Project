@@ -679,6 +679,10 @@ async function main() {
           { title: 'Inventory Card List', href: '/dashboard/legacy-erp/inventory-cards-list', icon: 'Boxes', isNew: true },
           { title: '1 - Purchase Order', href: '/dashboard/legacy-erp/purchase-orders-list', icon: 'ShoppingCart', isNew: true },
           { title: '3 - Subcontract Order', href: '/dashboard/legacy-erp/subcontract-orders-list', icon: 'Factory', isNew: true },
+          // Work Order — MA_WorkOrder/MA_WorkOrderItem/MA_WorkOrderItemVariant, an already-
+          // existing, already-migrated legacy manufacturing table family (161/100/21 real
+          // columns, 0 rows — first writer). Not a new table.
+          { title: 'Work Order', href: '/dashboard/legacy-erp/work-orders-list', icon: 'ClipboardList', isNew: true },
           // Curated subset of the existing "Inventory Receipts" 18-leaf submenu below (the four
           // "Outside Process" types — see frontend's SUBCONTRACT_RECEIPT_TYPES) surfaced as its
           // own nav entry with an in-page type dropdown, instead of 4 more individual leaves —

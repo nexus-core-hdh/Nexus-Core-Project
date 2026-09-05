@@ -30,6 +30,13 @@ export const HEADER_COLUMNS = [
   'UD_FabGSM', 'UD_FabDyeType',
   // General tab — Composition / Yarn Count 1-4 (all pre-existing IM_Item columns)
   'UD_FabComposition', 'UD_FabYarnCount', 'UD_FabYarnCount1', 'UD_FabYarnCount2', 'UD_FabYarnCount3',
+  // Yarn Ratio 1-4 — the %-share each of the 4 Yarn Counts above contributes to this Fabric's
+  // composition (e.g. "40 cotton 60 polyester" in the auto-generated name is Yarn Count 1/2 at
+  // Ratio 1/2 = 40/60). Pre-existing `character varying` IM_Item columns (confirmed via
+  // information_schema — note the inconsistent legacy casing per column, preserved exactly as it
+  // is in the DB), never previously exposed by this service. Consumed by PLM BOM's own Yarn
+  // consumption breakdown (Fabric Quantity x Ratio%) — see bom-tab.tsx.
+  'UD_FyarnRatio1', 'UD_FYarnRatio2', 'UD_FYarnRatio3', 'UD_YarnRatio4',
   // VAT Rates / Taxes
   'VatId', 'RetailVatId', 'WholeSaleVatId', 'RetailReturnVatId', 'WholeSaleReturnVatId', 'TaxId',
   // Withholding

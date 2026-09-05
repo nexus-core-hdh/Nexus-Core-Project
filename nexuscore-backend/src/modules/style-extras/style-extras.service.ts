@@ -13,6 +13,11 @@ const BOM_LINE_FIELDS = [
 function pickBomLine(l: any) {
   const out: any = {};
   for (const f of BOM_LINE_FIELDS) if (l[f] !== undefined) out[f] = l[f];
+  // swatchCardId is a real FK to SwatchCard (nullable) — the BOM grid's "Choose Color" cell
+  // sends "" (its own <select> empty-option value), not null, when no color is picked. "" isn't
+  // a valid SwatchCard.id, so Postgres rejects it as a foreign key violation on insert; only an
+  // actual NULL satisfies "no color selected".
+  if (out.swatchCardId === '') out.swatchCardId = null;
   return out;
 }
 

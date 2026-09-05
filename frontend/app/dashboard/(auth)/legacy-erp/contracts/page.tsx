@@ -14,6 +14,7 @@ import { Search, Save, FilePlus2, FileSignature, Lock, BadgeCheck } from "lucide
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
@@ -198,6 +199,11 @@ export default function ContractPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Query-driven screen (receiptType selects the contract type/cfg.label at runtime, e.g. "Sales
+  // Contract") — the static menu registry only knows the generic "Contracts" entry, so this needs
+  // the same full explicit-title override inventory-receipts/page.tsx already uses for the same
+  // reason, not the generic record-label composition.
+  useWorkspaceTabTitle(contractId ? `${cfg.label} [${form.receiptNo}]` : `New ${cfg.label}`);
 
   return (
     <div className="mx-auto max-w-[1700px] space-y-6 p-6 lg:p-8">

@@ -3767,6 +3767,37 @@ model StyleBomLine {
   @@index([styleCardId])
 }
 
+// Fabric Card Yarn Recipe — the detailed, multi-row yarn composition for a Fabric Card. The
+// legacy IM_Item columns (UD_FabYarnCount1-4 / UD_FyarnRatio1-4) only ever support a fixed 4
+// slots with no room for Explanation/Variant/Process/Waste%/Dye Wastage% per yarn, so they can't
+// be extended into this; this table is the new, richer authoritative source once it has rows for
+// a given Fabric Card (the legacy 4-slot fields are left exactly as they are, untouched, not
+// synced — this table simply supersedes them for any consumer, e.g. PLM BOM's own Yarn
+// consumption breakdown, once populated).
+model FabricYarnRecipeLine {
+  id                String  @id @default(uuid())
+  // The Fabric Card this recipe belongs to (IM_Item.RecId — a plain nullable Int, not a Prisma
+  // relation, since IM_Item is a raw-SQL legacy table outside Prisma's own schema; same
+  // convention StyleBomLine.fabricInventoryId already uses).
+  fabricInventoryId Int
+  // The selected Yarn Card for this row (IM_Item.RecId, same convention). yarnCode/yarnName stay
+  // the denormalized display copy set alongside it, same as fabricCode/fabricName on StyleBomLine.
+  yarnInventoryId   Int?
+  yarnCode          String?
+  yarnName          String?
+  explanation       String?
+  variant1          String?
+  variant2          String?
+  process           String?
+  knittedInVariants String?
+  percentage        Decimal @default(0) @db.Decimal(8, 4)
+  wastePct          Decimal @default(0) @db.Decimal(8, 4)
+  dyeWastagePct     Decimal @default(0) @db.Decimal(8, 4)
+  sortOrder         Int     @default(0)
+
+  @@index([fabricInventoryId])
+}
+
 model StyleWashCare {
   id               String  @id @default(uuid())
   styleCardId      String  @unique

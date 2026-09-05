@@ -21,6 +21,7 @@ import { LegacyMasterLookupController } from './legacy-master-lookup.controller'
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { FabricCardController } from './fabric-card.controller';
 import { FabricCardService } from './fabric-card.service';
+import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 import { MasterLookupController } from './master-lookup.controller';
 import { TrimInventoryCardController } from './trim-inventory-card.controller';
 import { TrimInventoryCardService } from './trim-inventory-card.service';
@@ -51,6 +52,8 @@ import { ContractService } from './contract.service';
 import { ContractAttachmentsService } from './contract-attachments.service';
 import { ItemStatementController } from './item-statement.controller';
 import { ItemStatementService } from './item-statement.service';
+import { WorkOrderController } from './work-order.controller';
+import { WorkOrderService } from './work-order.service';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { ApprovalModule } from '../approval/approval.module';
@@ -93,6 +96,7 @@ import { ApprovalModule } from '../approval/approval.module';
     FiReceiptController,
     ContractController,
     ItemStatementController,
+    WorkOrderController,
   ],
   providers: [
     WarehouseService,
@@ -107,6 +111,7 @@ import { ApprovalModule } from '../approval/approval.module';
     YarnCardAttachmentsService,
     LegacyMasterLookupService,
     FabricCardService,
+    FabricYarnRecipeService,
     TrimInventoryCardService,
     InventoryCardService,
     PurchaseOrderService,
@@ -123,6 +128,7 @@ import { ApprovalModule } from '../approval/approval.module';
     ContractService,
     ContractAttachmentsService,
     ItemStatementService,
+    WorkOrderService,
     DeleteDependencyService,
     ReceiptTraceabilityService,
   ],

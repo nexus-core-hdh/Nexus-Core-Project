@@ -8,6 +8,7 @@ import { FabricCardService } from './fabric-card.service';
 // / fabric-card-attachments.service.ts copies, per the "reuse existing services" requirement.
 import { YarnCardSatellitesService } from './yarn-card-satellites.service';
 import { YarnCardAttachmentsService } from './yarn-card-attachments.service';
+import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Fabric Cards')
@@ -17,6 +18,7 @@ export class FabricCardController {
     private readonly svc: FabricCardService,
     private readonly satellites: YarnCardSatellitesService,
     private readonly attachments: YarnCardAttachmentsService,
+    private readonly yarnRecipe: FabricYarnRecipeService,
   ) {}
 
   @Get() list(@Query('search') search?: string) {
@@ -83,6 +85,16 @@ export class FabricCardController {
     @CurrentUser('id') userId: string,
   ) {
     return this.attachments.remove(id, attId, Number(userId) || 1);
+  }
+
+  // Yarn Recipe Detail — declared before the generic :id/:tab catch-all below (same reason the
+  // attachment routes above are), otherwise it would parse "yarn-recipe" as a satellite tab name.
+  @Get(':id/yarn-recipe') getYarnRecipe(@Param('id', ParseIntPipe) id: number) {
+    return this.yarnRecipe.getRecipe(id);
+  }
+
+  @Put(':id/yarn-recipe') upsertYarnRecipe(@Param('id', ParseIntPipe) id: number, @Body() lines: any[]) {
+    return this.yarnRecipe.upsertRecipe(id, lines);
   }
 
   // Satellite tabs: prices, warehouse-parameters, barcode, unit, explanation, attributes

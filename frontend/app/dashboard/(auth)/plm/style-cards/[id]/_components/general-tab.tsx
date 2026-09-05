@@ -43,7 +43,11 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
   const [saving, setSaving] = useState(false);
   const [departments, setDepartments] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
+  // Customer — the resolved Name for the currently stored customerId, sourced from the already-
+  // included `card.customer` relation (getStyleCard's own include), same "id stored, Name shown"
+  // convention as Designer/Representative below. Updated locally on selection so the field
+  // reflects a new pick immediately, without waiting for a reload.
+  const [customerLabel, setCustomerLabel] = useState("");
   const [sizeInput, setSizeInput] = useState("");
   const [colorwayPick, setColorwayPick] = useState<{ id: string; colorName: string; pantoneCode?: string; color?: string } | null>(null);
   const [sizesDialogOpen, setSizesDialogOpen] = useState(false);
@@ -85,19 +89,18 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
       colorways: Array.isArray(card.colorways) ? card.colorways : [],
       attachments: Array.isArray(card.attachments) ? card.attachments : [],
     });
+    setCustomerLabel(card.customer?.name || "");
   }, [card]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [deps, emps, custs] = await Promise.all([
+        const [deps, emps] = await Promise.all([
           plmApi.departments.list(),
           plmApi.employees.list(),
-          customerApi.getCustomers().catch(() => []),
         ]);
         setDepartments(Array.isArray(deps) ? deps : deps?.data || []);
         setEmployees(Array.isArray(emps) ? emps : emps?.data || []);
-        setCustomers(Array.isArray(custs) ? custs : custs?.data || []);
       } catch {
         // lookups are best-effort; form still works with free text
       }
@@ -184,13 +187,25 @@ export function GeneralTab({ styleCardId, card, onReloadCard }: { styleCardId: s
         </Section>
 
         <Section title="Customer Info">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Customer</Label>
-            <Select value={form.customerId} onValueChange={(v) => set({ customerId: v })}>
-              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select customer" /></SelectTrigger>
-              <SelectContent>{customers.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
+          {/* Customer — was a plain <Select> populated from one unfiltered full-table fetch,
+              the only lookup on this tab not using the shared searchable-lookup pattern every
+              other field here (Brand/Season/Gender/Designer/Representative/Colourway) already
+              uses. Reuses customerApi.getCustomers (the existing Finance Customer CRUD's own
+              search-capable list — no new Customer API) and the existing CRM Customer list
+              screen for F2/the search icon, instead of the generic Master Lookup screen. */}
+          <MasterAutocompleteField
+            label="Customer"
+            masterKey="customer"
+            displayValue={customerLabel}
+            fetchOptions={(t) =>
+              customerApi.getCustomers({ search: t }).then((r: any) =>
+                (Array.isArray(r) ? r : r?.data || []).map((c: any) => ({ id: c.id, name: c.name }))
+              )
+            }
+            lookupPath="/dashboard/crm/customers"
+            onSelect={(o) => { set({ customerId: String(o.id) }); setCustomerLabel(o.name); }}
+            onClear={() => { set({ customerId: "" }); setCustomerLabel(""); }}
+          />
           <div />
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Customer Style No</Label>

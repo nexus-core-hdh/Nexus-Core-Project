@@ -22,6 +22,7 @@ import { Search, Save, FilePlus2, ShoppingCart, Lock, Trash2, Plus, BadgeCheck, 
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
@@ -293,6 +294,9 @@ export default function PurchaseOrderPage() {
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   useWorkspaceDirty(isDirty, async () => { await save(); });
+  // Same identifier the breadcrumb trail below already shows as the current record segment —
+  // resolveWorkspaceTabTitle composes it into "Purchase Order [<this>]" on the Workspace tab.
+  useWorkspaceRecordLabel(poId ? form.receiptNo || undefined : undefined);
 
   // Universal Action Menu -> Return/Purchase Receipt submenu — Purchase Receipt / Received
   // Connection Receipt / Purchase Return rows tracing back to this PO (see

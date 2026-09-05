@@ -78,24 +78,32 @@ function findOwningEntry(key: string, entryByHref: Map<string, ScreenEntry>): Sc
  * Central screen-title resolution for the Workspace tab bar — the single
  * place a tab's route/query gets turned into the human-readable label shown
  * on screen. Priority order:
- *   1. An explicit title carried on the tab itself (set via openTab/
- *      setTabTitle, e.g. useWorkspaceTabTitle) — the screen that owns the tab
- *      knows its own title best, when it chooses to provide one.
+ *   1. An explicit, already-fully-formatted title carried on the tab itself
+ *      (set via openTab/setTabTitle, e.g. useWorkspaceTabTitle) — an escape
+ *      hatch for the rare screen whose title needs a shape this resolver's
+ *      own composition below can't produce.
  *   2. An exact match in the live menu index — covers every screen that is
- *      itself a sidebar entry (the majority of the app).
+ *      itself a sidebar entry (the majority of the app, e.g. list screens).
  *   3. The "owning" list screen's menu title (Legacy ERP's list+form
- *      convention, or any registered ancestor route), singularized and
- *      prefixed for New/Edit from the `mode` query param — covers
+ *      convention, or any registered ancestor route), singularized, for
  *      detail/create/edit form screens that aren't themselves menu items.
+ *      From there:
+ *        3a. A loaded record (tab.recordLabel, via useWorkspaceRecordLabel)
+ *            composes "{Screen} [{recordLabel}]" — a screen only ever
+ *            reports its own record's Name/Code, never the screen's title.
+ *        3b. No record yet (a create route, or still loading) falls back to
+ *            "New {Screen}"/"Edit {Screen}" from the `mode` query param.
  *   4. A humanized version of the route's final segment — always readable,
  *      never a raw "/dashboard/..." path, even with zero menu presence.
  *
  * Works for every module (Legacy ERP, PLM, Settings, Finance, BPM, ...)
  * without a per-screen title map: new screens get a correct label the moment
- * they're linked from the menu, and a clean fallback even before that.
+ * they're linked from the menu, get "{Screen} [{Record}]" for free the
+ * moment they report a record via useWorkspaceRecordLabel, and a clean
+ * fallback even before either.
  */
 export function resolveWorkspaceTabTitle(
-  tab: { key: string; href: string; title?: string },
+  tab: { key: string; href: string; title?: string; recordLabel?: string },
   entryByHref: Map<string, ScreenEntry>
 ): ResolvedTabTitle {
   if (tab.title) {
@@ -110,6 +118,9 @@ export function resolveWorkspaceTabTitle(
   const owner = findOwningEntry(tab.key, entryByHref);
   if (owner) {
     const base = singularize(owner.title);
+    if (tab.recordLabel) {
+      return { title: `${base} [${tab.recordLabel}]`, icon: owner.icon };
+    }
     const mode = resolveMode(tab.href);
     const prefix = mode ? MODE_PREFIXES[mode.toLowerCase()] : undefined;
     return { title: prefix ? `${prefix}${base}` : base, icon: owner.icon };

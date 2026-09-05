@@ -30,7 +30,7 @@ export function DecimalParametersTab() {
   const [decimals, setDecimals] = useState<DecimalsForm>(
     Object.fromEntries(DECIMAL_FIELD_DEFS.map((f) => [f.key, String(f.defaultDecimals)])) as DecimalsForm,
   );
-  const [roundingMode, setRoundingMode] = useState<RoundingMode>("standard");
+  const [roundingMode, setRoundingMode] = useState<RoundingMode>("none");
   const [unitPriceOverride, setUnitPriceOverride] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<DecimalFieldKey, string>>>({});
   const [loading, setLoading] = useState(true);

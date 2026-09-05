@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -97,6 +97,15 @@ export default function InventoryReceiptPage() {
   const receiptType = Number(searchParams.get("receiptType")) || 2;
   const cfg = getReceiptTypeConfig(receiptType);
   const client = receiptType === 2 ? legacyErpApi.inventoryReceipts : legacyErpApi.receipts(receiptType);
+  // Referentially stable across renders (recreated only when receiptType actually changes) —
+  // PendingOrdersDialog passed a fresh inline function here on every render into its own
+  // `useEffect([open, currentAccountId, fetchPending])`, which saw a "changed" dependency every
+  // time, re-ran, called setState, re-rendered this page, and created another new function —
+  // "Maximum update depth exceeded" while the dialog was open.
+  const pendingOrdersFetcher = useMemo(
+    () => (receiptType === 11 ? (id: number) => legacyErpApi.orders(3).listPending(id, 11) : undefined),
+    [receiptType]
+  );
   // Subcontract Receipts List's own "Subcontract" grid column reads SubcontractTypeId's joined
   // name — this field is the only way a NEW record on these 4 types ever gets that column
   // populated (an existing record with a value already round-trips it via hydrate()/save() below
@@ -702,11 +711,7 @@ export default function InventoryReceiptPage() {
           currentAccountId={form.currentAccountId ? Number(form.currentAccountId) : null}
           alreadyImportedIds={alreadyImportedIds}
           onConfirm={importPendingLines}
-          fetchPending={
-            receiptType === 11
-              ? (id) => legacyErpApi.orders(3).listPending(id, 11)
-              : undefined
-          }
+          fetchPending={pendingOrdersFetcher}
           sourceLabel={receiptType === 11 ? "Subcontract Order" : undefined}
         />
       )}

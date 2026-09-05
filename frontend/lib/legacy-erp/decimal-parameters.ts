@@ -24,23 +24,25 @@ export type DecimalFieldKey =
   | "recipe-percent"
   | "salary";
 
+// Defaults match the reference legacy screen's own "Decimal" parameter tab exactly (Quantity/
+// Unit Price/Cost Unit Price/Forex Unit Price/Forex Rate/Amount/Forex Amount/Recipe % at 4,
+// Discount-Fix Term %/Variant Qty/Salary at 2) — corrected from this app's own earlier
+// placeholder guesses for Amount/Forex Amount/Variant Quantity/Recipe %, which didn't match that
+// reference. Still only ever a form pre-fill/display fallback (see roundDecimalValue's own
+// comment) — no live calculation changes until an admin actually visits Settings and saves.
 export const DECIMAL_FIELD_DEFS: { key: DecimalFieldKey; label: string; defaultDecimals: number }[] = [
   { key: "quantity", label: "Quantity", defaultDecimals: 4 },
   { key: "unit-price", label: "Unit Price", defaultDecimals: 4 },
   { key: "cost-unit-price", label: "Cost Unit Price", defaultDecimals: 4 },
-  { key: "amount", label: "Amount", defaultDecimals: 2 },
+  { key: "amount", label: "Amount", defaultDecimals: 4 },
   { key: "discount-percent", label: "Discount / Fix Term %", defaultDecimals: 2 },
   { key: "forex-unit-price", label: "Forex Unit Price", defaultDecimals: 4 },
-  { key: "forex-amount", label: "Forex Amount", defaultDecimals: 2 },
+  { key: "forex-amount", label: "Forex Amount", defaultDecimals: 4 },
   { key: "forex-rate", label: "Forex Rate", defaultDecimals: 4 },
-  { key: "variant-quantity", label: "Variant Quantity", defaultDecimals: 4 },
-  { key: "recipe-percent", label: "Recipe %", defaultDecimals: 2 },
+  { key: "variant-quantity", label: "Variant Quantity", defaultDecimals: 2 },
+  { key: "recipe-percent", label: "Recipe %", defaultDecimals: 4 },
   { key: "salary", label: "Salary", defaultDecimals: 2 },
 ];
-// Every default above matches this codebase's own existing hardcoded precision (see e.g.
-// purchase-order-line-grid.tsx / inventory-receipt-line-grid.tsx's local `fmtCell`/`fmt2`
-// helpers: quantity- and rate-like fields already display max 4 decimals, money totals already
-// display exactly 2) — so an unconfigured install computes byte-identical output to today.
 
 export type RoundingMode = "none" | "round-up" | "round-down" | "standard";
 
@@ -68,11 +70,13 @@ export interface DecimalParametersConfig {
 }
 
 // The "existing behavior when Decimal Parameters are not configured" baseline: nothing
-// configured for any field, standard rounding mode (irrelevant until a field IS configured), no
-// Unit Price override. Every consumer (store, admin form) starts from this.
+// configured for any field, Rounding = None (matching the reference screen's own default —
+// irrelevant until a field IS configured, since roundDecimalValue() never applies a rounding mode
+// to an unconfigured field regardless), no Unit Price override. Every consumer (store, admin
+// form) starts from this.
 export const DEFAULT_DECIMAL_CONFIG: DecimalParametersConfig = {
   decimals: {},
-  roundingMode: "standard",
+  roundingMode: "none",
   unitPriceNoDecimalOverride: false,
 };
 
