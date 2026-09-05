@@ -3278,13 +3278,13 @@ model ProcessCard {
   id           String   @id @default(uuid())
   name         String
   code         String   @unique
-  departmentId String
+  departmentId String?
   description  String?
   standardTime Decimal? @db.Decimal(8, 2)
   resourceType String?
   isActive     Boolean  @default(true)
 
-  department    DepartmentCard      @relation(fields: [departmentId], references: [id])
+  department    DepartmentCard?     @relation(fields: [departmentId], references: [id])
   studyLines    StudyTemplateLine[]
   criticalPaths CriticalPathTask[]
   activityTypes ActivityTypeCard[]
@@ -3748,6 +3748,15 @@ model StyleBomLine {
   // Same "plain nullable Int, not a Prisma relation" convention as fabricInventoryId above; `unit`
   // stays the denormalized display code set alongside it.
   unitId          Int?
+  // Fabric BOM row's own auto-quantity calculator inputs (Area m² = Width * Length / 10,000,
+  // then Quantity = Area * Weight/m² — see bom-tab.tsx's calcFabricQuantity). Previously
+  // calculator-only/never persisted here (no columns existed) — quantity (below) was the only
+  // value saved. Added so the raw Length/Width/Weight a user enters survive Save -> Reload
+  // instead of resetting to 0, matching the equivalent real columns Work Order's own BOM
+  // persistence (MA_RecipeItem.MarkerWidth/MarkerLength/M2Weight) already has.
+  marketLength    Decimal? @db.Decimal(10, 4)
+  marketWidth     Decimal? @db.Decimal(10, 4)
+  marketWeight    Decimal? @db.Decimal(10, 4)
   quantity        Decimal @default(0) @db.Decimal(14, 4)
   wastePct        Decimal @default(0) @db.Decimal(8, 4)
   dyeWastagePct   Decimal @default(0) @db.Decimal(8, 4)

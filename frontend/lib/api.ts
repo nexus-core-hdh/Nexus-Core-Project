@@ -30,6 +30,10 @@ async function apiRequest(endpoint: string, options?: RequestInit) {
   const fetchOptions: RequestInit = {
     method,
     headers,
+    // Same fix as nexuscore-api.ts's own request() — these responses carry no Cache-Control
+    // header, so the browser's default fetch caching can otherwise serve a stale GET after a
+    // mutation. GETs through this client must always hit the network too.
+    cache: 'no-store',
   };
 
   // Only include body for methods that support it

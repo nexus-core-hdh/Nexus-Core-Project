@@ -327,6 +327,63 @@ export class PlmCardsService {
     });
   }
 
+  // "Create Style Card" from a Sample Card — creates a genuinely NEW, independent StyleCard
+  // (fresh id, fresh nextNumber()-generated styleNumber — the SAME generator createStyleCard()
+  // already uses, never the Sample's own sampleNumber). sampleCard.styleCardId is deliberately
+  // never written by this method, so repeated calls always produce another independent new
+  // Style Card and the source Sample Card's own fields are provably unchanged afterward.
+  //
+  // Source is EXCLUSIVELY the Sample Card's OWN columns — confirmed by an exhaustive audit of
+  // every Prisma model AND raw legacy table in this database (schema.prisma + a live
+  // information_schema search for anything sample-related) that SampleCard has NO bomLines/
+  // washCare/expenseLines/measurementChart/marker relations or columns anywhere, on any table.
+  // An EARLIER version of this method fell back to reading sample.styleCardId's LINKED
+  // StyleCard's own BOM/WashCare/ExpenseLines when present — that was wrong: styleCardId is an
+  // existing, preserved field with its own historical/workflow meaning (which pre-existing
+  // Style Card this sample happens to reference), but treating its target's data as if it were
+  // the Sample's own would silently copy unrelated Style Card data into "the sample's copy" and
+  // violates the requested ownership model. Removed; not used as a data source here anymore.
+  //
+  // Field mapping (only genuine SampleCard-owned columns — nothing invented, nothing borrowed
+  // from a linked Style Card):
+  //   Sample.title            -> StyleCard.title
+  //   Sample.description      -> StyleCard.description
+  //   Sample.season           -> StyleCard.season
+  //   Sample.year             -> StyleCard.year
+  //   Sample.size (1 string)  -> StyleCard.sizes (Json array, best-effort single-element wrap)
+  //   Sample.colorway (1 str) -> StyleCard.colorways (Json array, best-effort single-element wrap)
+  //   Sample.attachments      -> StyleCard.attachments (same Json shape on both models; a Postgres
+  //                              Json column copy is already an independent value, not a shared
+  //                              reference, so no separate attachment-ownership model is needed)
+  // Categories with NO EXISTING SAMPLE STORAGE anywhere in this database (verified, not
+  // assumed) — left unmapped, no schema invented: BOM (Fabric/Trim/Ornament/Process), Marker
+  // Length/Width/Weight, Wash & Care, Expenses/Costing, Measurements, Route, Customer,
+  // Department, Brand, Master Size, Gender, Category, Access/Special Code, Garment Wash/Dye.
+  async createStyleCardFromSample(sampleCardId: string, createdBy: string) {
+    const sample = await this.prisma.sampleCard.findUnique({ where: { id: sampleCardId } });
+    if (!sample) throw new NotFoundException('SampleCard not found');
+
+    const styleNumber = await this.nextNumber('SC', 'styleCard', 'styleNumber');
+
+    const newStyle = await this.prisma.styleCard.create({
+      data: {
+        styleNumber,
+        title: sample.title,
+        description: sample.description ?? undefined,
+        season: sample.season ?? undefined,
+        year: sample.year ?? undefined,
+        sizes: sample.size ? [sample.size] : undefined,
+        colorways: sample.colorway ? [{ name: sample.colorway }] : undefined,
+        attachments: (sample.attachments as any) ?? undefined,
+        branchId: sample.branchId,
+        createdBy,
+      },
+    });
+
+    await this.autoCreateDocket('style_card', newStyle.id, `Docket — ${newStyle.styleNumber}`, sample.branchId, createdBy);
+    return this.getStyleCard(newStyle.id);
+  }
+
   // ── Swatch Cards ──────────────────────────────────────────────────────────────
   async listSwatchCards(branchId: string, q?: Record<string, string>) {
     const where: any = { branchId };

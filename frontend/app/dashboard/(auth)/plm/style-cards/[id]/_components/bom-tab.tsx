@@ -48,11 +48,11 @@ type BomRow = {
   // display code, this is the real FK the backend validates on save.
   unitId: number | null;
   unit: string;
-  // Market Length/Width/Weight — calculator-only inputs for the automatic Fabric quantity
-  // formula (Area m² = Width * Length / 10,000; Quantity g = Area * Weight/m²). No backing
-  // column on StyleBomLine (see style-extras.service.ts's BOM_LINE_FIELDS whitelist), so — same
-  // as the requirement's own "display and save only the final converted Quantity" — these three
-  // are never sent to the backend, only the Quantity they produce is.
+  // Market Length/Width/Weight — inputs for the automatic Fabric quantity formula (Area m² =
+  // Width * Length / 10,000; Quantity g = Area * Weight/m²). Persisted on StyleBomLine
+  // (marketLength/marketWidth/marketWeight, see style-extras.service.ts's BOM_LINE_FIELDS
+  // whitelist) alongside the Quantity they produce, so a reload can show the same inputs the
+  // user typed, not just the derived result.
   marketLength: number;
   marketWidth: number;
   marketWeight: number;

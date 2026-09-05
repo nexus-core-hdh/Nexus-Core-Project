@@ -8,6 +8,13 @@ async function request<T = any>(path: string, init?: RequestInit): Promise<T> {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
+    // Every response from this API is dynamic, per-user data with no Cache-Control header of its
+    // own (confirmed live — Express's default `etag` middleware adds an ETag but nothing tells
+    // the browser the response is non-cacheable). Without this, the browser's default fetch
+    // caching can serve a stale GET response — e.g. re-fetching a record's BOM right after
+    // saving a new line and getting back the pre-save body — exactly the "save works, DB is
+    // correct, but reopening shows stale data" class of bug. GETs must always hit the network.
+    cache: 'no-store',
     ...init,
   });
 
@@ -165,6 +172,10 @@ export const plmApi = {
     updateStatus: (id: string, status: string, notes?: string) => api.patch(plm(`/sample-cards/${id}/status`), { status, notes }),
     getHistory: (id: string) => api.get(plm(`/sample-cards/${id}/history`)),
     duplicate: (id: string) => api.post(plm(`/sample-cards/${id}/duplicate`)),
+    // Creates a NEW, independent StyleCard from this Sample Card (own id/code, own copied child
+    // rows) — never links back to or modifies this Sample Card. See plm-cards.service.ts's
+    // createStyleCardFromSample() for the exact field mapping.
+    createStyleCard: (id: string) => api.post(plm(`/sample-cards/${id}/create-style-card`)),
   },
   swatchCards: {
     list: (q?: any) => api.get(plm('/swatch-cards', q)),

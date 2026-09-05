@@ -18,14 +18,11 @@ import { toast } from "sonner";
 import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, Shirt, SearchX, ChevronRight } from "lucide-react";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 
-// Sample Cards List — the legacy-ERP-style master list for the same StyleCard records
-// plm/sample-cards (the detail/editor screen, one static route reading ?id=&mode= — the
-// same Workspace tab convention every legacy-erp List+Detail pair already uses, e.g.
-// yarn-cards-list -> yarn-cards) manages. Moved here from plm/sample-cards itself so that
-// route is free for the detail screen — see plm/sample-cards/page.tsx's own header comment.
-// Same data, same backend (plm-cards.service.ts's listStyleCards()/deleteStyleCard()) as
-// plm/style-cards' own list, just with this screen's own Code/Name/In-Use conventions.
-type SortKey = "styleNumber" | "title" | "season";
+// Sample Cards List — the REAL SampleCard master (plmApi.sampleCards, backed by the Prisma
+// SampleCard model/table) — Sample Card and Style Card are two separate, independent record
+// types (see plm-cards.service.ts's own comment on createStyleCardFromSample). This screen
+// previously listed StyleCard records by mistake; fixed to list actual Sample Cards.
+type SortKey = "sampleNumber" | "title" | "season";
 
 export default function SampleCardMasterListPage() {
   const router = useRouter();
@@ -34,13 +31,13 @@ export default function SampleCardMasterListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; code: string } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("styleNumber");
+  const [sortKey, setSortKey] = useState<SortKey>("sampleNumber");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const load = async (term?: string) => {
     setLoading(true);
     try {
-      const r: any = await plmApi.styleCards.list({ limit: "200", ...(term ? { search: term } : {}) });
+      const r: any = await plmApi.sampleCards.list({ limit: "200", ...(term ? { search: term } : {}) });
       const list = Array.isArray(r) ? r : (r?.data ?? []);
       setRows(list);
     } catch (e: any) {
@@ -57,10 +54,6 @@ export default function SampleCardMasterListPage() {
   const doSearch = () => load(search.trim() || undefined);
   const refresh = () => { setSearch(""); load(); };
 
-  // Query-param navigation into the detail screen's own single static route (?id=&mode=) —
-  // the same shape every other module's List page already uses (see
-  // inventory-receipts-list/page.tsx's identical view/update/createNew), so navigateOrOpenTab
-  // opens/reuses the Workspace tab correctly instead of a plain in-place navigation.
   const view = (id: string) => navigateOrOpenTab(router, `/dashboard/plm/sample-cards?id=${id}&mode=view`);
   const update = (id: string) => navigateOrOpenTab(router, `/dashboard/plm/sample-cards?id=${id}&mode=edit`);
   const createNew = () => navigateOrOpenTab(router, `/dashboard/plm/sample-cards?mode=create`);
@@ -68,7 +61,7 @@ export default function SampleCardMasterListPage() {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await plmApi.styleCards.delete(deleteTarget.id);
+      await plmApi.sampleCards.delete(deleteTarget.id);
       toast.success("Sample card deleted");
       setDeleteTarget(null);
       load(search.trim() || undefined);
@@ -107,7 +100,7 @@ export default function SampleCardMasterListPage() {
           <div>
             <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Sample Cards</h1>
             <div className="mt-0.5 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">Garment sampling master records</p>
+              <p className="text-xs text-muted-foreground">Garment sampling records — independent of Style Cards</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
                   {rows.length} {rows.length === 1 ? "record" : "records"}
@@ -146,21 +139,23 @@ export default function SampleCardMasterListPage() {
           <Table>
             <TableHeader>
               <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
-                <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("styleNumber")}>Code</TableHead>
+                <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("sampleNumber")}>Code</TableHead>
                 <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("title")}>Name</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Sample Type</TableHead>
                 <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("season")}>Season</TableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">In Use</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Linked Style</TableHead>
                 <TableHead className="h-10 w-14 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: 7 }).map((_, j) => <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               ) : rows.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={5} className="py-12">
+                  <TableCell colSpan={7} className="py-12">
                     <Empty>
                       <EmptyHeader>
                         <EmptyMedia variant="icon">{searched ? <SearchX /> : <Shirt />}</EmptyMedia>
@@ -179,21 +174,21 @@ export default function SampleCardMasterListPage() {
                 const rowActions: RowAction[] = [
                   { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
                   { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
-                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.styleNumber }), destructive: true, separatorBefore: true },
+                  { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.sampleNumber }), destructive: true, separatorBefore: true },
                 ];
                 return (
                 <RowContextMenu key={row.id} actions={rowActions}>
                 <TableRow className="group cursor-pointer hover:bg-muted/40" onDoubleClick={() => view(row.id)}>
                   <TableCell className="py-3">
-                    <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.styleNumber}</span>
+                    <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.sampleNumber}</span>
                   </TableCell>
                   <TableCell className="py-3">{row.title}</TableCell>
+                  <TableCell className="py-3 text-muted-foreground">{row.sampleType?.name || "—"}</TableCell>
                   <TableCell className="py-3">{row.season || <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell className="py-3">
-                    <Badge variant={row.inUse === false ? "secondary" : "default"} className="h-5 text-[11px] font-normal">
-                      {row.inUse === false ? "No" : "Yes"}
-                    </Badge>
+                    <Badge variant="secondary" className="h-5 text-[11px] font-normal capitalize">{row.status}</Badge>
                   </TableCell>
+                  <TableCell className="py-3 text-muted-foreground">{row.styleCard?.styleNumber || "—"}</TableCell>
                   <TableCell className="py-3 text-right">
                     <RowActionsMenu actions={rowActions} className="opacity-60 group-hover:opacity-100 transition-opacity" />
                   </TableCell>
@@ -210,7 +205,7 @@ export default function SampleCardMasterListPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Sample Card</AlertDialogTitle>
-            <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
+            <AlertDialogDescription>Are you sure you want to delete this record? This does not affect any linked Style Card.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>No</AlertDialogCancel>

@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { menuItemsApi, permissionSettingsApi } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
-import { transformMenuItem, type NavGroup, type NavItem } from "@/components/layout/sidebar/nav-main";
+import { transformMenuItem, mergeAdministrationExtras, type NavGroup, type NavItem } from "@/components/layout/sidebar/nav-main";
 import { flattenMenuTree, type ScreenEntry } from "@/lib/search/screen-index";
 
 // Matches the normalization `usePermissionCheck`/`usePermission` apply before
@@ -137,9 +137,13 @@ export const useScreenIndexStore = create<ScreenIndexState>((set, get) => ({
       }
 
       const menuData = await menuItemsApi.getMenuItems(user.companyId || undefined, user.branchId || undefined);
-      const groups: NavGroup[] = Array.isArray(menuData)
+      const transformedMenus: NavGroup[] = Array.isArray(menuData)
         ? menuData.map((group: any) => ({ title: group.title, items: group.items.map(transformMenuItem) }))
         : [];
+      // Same merge NavMain applies to its own sidebar state — without this, the sidebar's
+      // "Administration" button (client-only extras included) and this store's Module
+      // Launcher/Global Screen Search data (extras excluded) silently disagreed.
+      const groups = mergeAdministrationExtras(transformedMenus);
 
       set({ rawEntries: flattenMenuTree(groups), rawGroups: groups, rawLoaded: true });
     } catch (error) {

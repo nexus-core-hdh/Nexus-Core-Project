@@ -97,7 +97,18 @@ async function main() {
     },
     update: {},
   });
-  console.log(`✓ Role: ${adminRole.name}`);
+  // Keep Admin's permission set in sync with `permissionDefs` above on every seed run, not just
+  // on first creation — the `update: {}` on the upsert above intentionally leaves an EXISTING
+  // Admin role's other fields untouched, but that also meant a permission added to permissionDefs
+  // after Admin already existed (e.g. general-settings:manage-screen-parameters) never actually
+  // reached the Admin role: re-seeding created the new Permission row but had no code path that
+  // granted it to Admin. `createMany ... skipDuplicates` only adds what's missing, so this is
+  // safe to run every time and never touches non-Admin roles' own grants.
+  await prisma.rolePermission.createMany({
+    data: allPermissions.map((p) => ({ roleId: adminRole.id, permissionId: p.id })),
+    skipDuplicates: true,
+  });
+  console.log(`✓ Role: ${adminRole.name} (${allPermissions.length} permissions synced)`);
 
   // Assign admin role to admin user
   await prisma.userRole.upsert({

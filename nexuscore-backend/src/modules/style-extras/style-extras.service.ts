@@ -8,6 +8,12 @@ const BOM_LINE_FIELDS = [
   'rowColumn', 'swatchCardId', 'willBeCut', 'mainFabric', 'unit', 'quantity', 'wastePct',
   'dyeWastagePct', 'otherWastagePct', 'unitPrice', 'component', 'dia', 'gauge',
   'finishWidth', 'finishRoute', 'revision',
+  // Real StyleBomLine columns (added — see the model's own comment). Previously absent from this
+  // whitelist, which is the actual root cause of the reported bug: bom-tab.tsx's save() already
+  // sent these 3 values in every row's payload, but pickBomLine() below silently drops any key
+  // not listed here before the row ever reaches Prisma, so they were never persisted regardless
+  // of what the frontend sent — always reloading back as 0.
+  'marketLength', 'marketWidth', 'marketWeight',
 ];
 
 function pickBomLine(l: any) {

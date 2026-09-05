@@ -34,7 +34,7 @@ export default function ProcessCardsPage() {
   useEffect(() => { load(); }, []);
 
   const save = async () => {
-    if (!form.name || !form.code || !form.departmentId) return toast.error("Name, code, and department required");
+    if (!form.name || !form.code) return toast.error("Name and code required");
     setSaving(true);
     try {
       const payload = { ...form, standardTime: form.standardTime ? parseFloat(form.standardTime) : undefined };
@@ -65,10 +65,13 @@ export default function ProcessCardsPage() {
           <div className="space-y-3">
             <div><Label>Name *</Label><Input value={form.name} onChange={(e) => setForm((p: any) => ({ ...p, name: e.target.value }))} /></div>
             <div><Label>Code *</Label><Input value={form.code} onChange={(e) => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} /></div>
-            <div><Label>Department *</Label>
-              <Select value={form.departmentId} onValueChange={(v) => setForm((p: any) => ({ ...p, departmentId: v }))}>
+            <div><Label>Department</Label>
+              <Select value={form.departmentId || "__none__"} onValueChange={(v) => setForm((p: any) => ({ ...p, departmentId: v === "__none__" ? "" : v }))}>
                 <SelectTrigger><SelectValue placeholder="Select department" /></SelectTrigger>
-                <SelectContent>{depts.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {depts.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                </SelectContent>
               </Select>
             </div>
             <div><Label>Standard Time (min)</Label><Input type="number" value={form.standardTime} onChange={(e) => setForm((p: any) => ({ ...p, standardTime: e.target.value }))} /></div>

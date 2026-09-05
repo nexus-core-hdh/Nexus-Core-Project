@@ -616,7 +616,7 @@ export const defaultNavItems: NavGroup[] = [
           { title: "Size Cards", href: "/dashboard/plm/general-definitions/size-cards" },
           { title: "Company Cards", href: "/dashboard/plm/general-definitions/company-cards" },
           { title: "Sample Task Types", href: "/dashboard/plm/general-definitions/sample-task-types" },
-          { title: "Route Cards", href: "/dashboard/plm/general-definitions/route-cards" },
+          { title: "Route Definitions", href: "/dashboard/plm/general-definitions/route-cards" },
         ]
       },
       {
@@ -718,7 +718,35 @@ const administrationExtraItems: NavItem[] = [
     href: "/dashboard/pages/pricing-plans",
     icon: CreditCardIcon
   },
+  // Not a second Decimal Parameters screen — the actual config UI still lives at Legacy ERP ->
+  // General Settings -> Screen Parameters (click its "Decimal" tab); this is just an
+  // easier-to-find shortcut. Deliberately no ?tab=decimal query string here even though the page
+  // supports it: screen-index-store's own permission-path normalizer (normalizeResourcePath)
+  // doesn't strip query strings, so a query-bearing href would silently fail every non-admin
+  // user's permission check for this row and vanish from the launcher for them.
+  {
+    title: "Decimal Parameters",
+    href: "/dashboard/legacy-erp/general-settings/screen-parameters",
+    icon: Sliders,
+  },
 ];
+
+// Merge the Administration extras into the API's own "Administration" group if it already
+// provided one, instead of appending a second same-titled group (which used to render as a
+// duplicate sidebar button). Exported so screen-index-store.ts's own raw-menu load can apply the
+// EXACT same merge — without this, the sidebar's "Administration" button (built from this
+// component's own state, extras included) and the Module Launcher/Global Screen Search it opens
+// (built from screen-index-store's independently-fetched groups, extras NOT included) silently
+// disagreed: the button showed "Decimal Parameters"/"Pricing Plans", but searching for them in
+// the launcher always found nothing, since that store never ran this merge at all.
+export function mergeAdministrationExtras(transformedMenus: NavGroup[]): NavGroup[] {
+  const hasAdminGroup = transformedMenus.some((g) => g.title === "Administration");
+  return hasAdminGroup
+    ? transformedMenus.map((g) =>
+        g.title === "Administration" ? { ...g, items: [...g.items, ...administrationExtraItems] } : g
+      )
+    : [...transformedMenus, { title: "Administration", items: administrationExtraItems }];
+}
 
 // Export navItems for backward compatibility with search.tsx
 export const navItems: NavGroup[] = defaultNavItems;
@@ -750,16 +778,7 @@ export function NavMain() {
             title: group.title,
             items: group.items.map(transformMenuItem),
           }));
-          // Merge the Administration extras into the API's own "Administration" group if it
-          // already provided one (it does, since the menu-items IA reorg) instead of appending
-          // a second same-titled group, which used to render as a duplicate sidebar button.
-          const hasAdminGroup = transformedMenus.some((g) => g.title === "Administration");
-          const withAdminExtras = hasAdminGroup
-            ? transformedMenus.map((g) =>
-                g.title === "Administration" ? { ...g, items: [...g.items, ...administrationExtraItems] } : g
-              )
-            : [...transformedMenus, { title: "Administration", items: administrationExtraItems }];
-          setNavItems(filterNavGroups(withAdminExtras));
+          setNavItems(filterNavGroups(mergeAdministrationExtras(transformedMenus)));
         } else {
           // Fallback to default nav items if API returns empty
           setNavItems(filterNavGroups(defaultNavItems));

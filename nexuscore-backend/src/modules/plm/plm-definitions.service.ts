@@ -1,5 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+
+// Translates a Prisma unique-constraint violation (P2002) into a clean, user-facing message
+// instead of letting the raw Prisma error object (full stack trace, internal file paths) reach
+// the frontend toast as-is — same intent as the ConflictException work-order.service.ts already
+// throws for its own WorkOrderNo uniqueness check, just applied via catch here since this path
+// goes straight through Prisma with no pre-check of its own.
+function rethrowFriendlyUniqueError(e: any, message: string): never {
+  if (e?.code === 'P2002') throw new ConflictException(message);
+  throw e;
+}
 
 @Injectable()
 export class PlmDefinitionsService {
@@ -156,11 +166,21 @@ export class PlmDefinitionsService {
       orderBy: { name: 'asc' },
     });
   }
+  // Department is optional (departmentId is a nullable FK) — "" (the Select's own empty-option
+  // value) must become a real NULL, not a literal empty-string FK value, which Postgres would
+  // reject as a foreign key violation the same way an empty swatchCardId once did elsewhere.
+  private normalizeProcessCardDto(dto: any) {
+    return dto.departmentId === '' ? { ...dto, departmentId: null } : dto;
+  }
   async createProcessCard(dto: any) {
-    return this.prisma.processCard.create({
-      data: dto,
-      include: { department: { select: { id: true, name: true } } },
-    });
+    try {
+      return await this.prisma.processCard.create({
+        data: this.normalizeProcessCardDto(dto),
+        include: { department: { select: { id: true, name: true } } },
+      });
+    } catch (e: any) {
+      rethrowFriendlyUniqueError(e, 'A process already exists with this code.');
+    }
   }
   async getProcessCard(id: string) {
     const r = await this.prisma.processCard.findUnique({
@@ -172,7 +192,11 @@ export class PlmDefinitionsService {
   }
   async updateProcessCard(id: string, dto: any) {
     await this.getProcessCard(id);
-    return this.prisma.processCard.update({ where: { id }, data: dto });
+    try {
+      return await this.prisma.processCard.update({ where: { id }, data: this.normalizeProcessCardDto(dto) });
+    } catch (e: any) {
+      rethrowFriendlyUniqueError(e, 'A process already exists with this code.');
+    }
   }
   async deleteProcessCard(id: string) {
     await this.getProcessCard(id);
@@ -509,7 +533,11 @@ export class PlmDefinitionsService {
     });
   }
   async createRouteCard(dto: any) {
-    return this.prisma.routeCard.create({ data: dto });
+    try {
+      return await this.prisma.routeCard.create({ data: dto });
+    } catch (e: any) {
+      rethrowFriendlyUniqueError(e, 'A route already exists with this code.');
+    }
   }
   async getRouteCard(id: string) {
     const r = await this.prisma.routeCard.findUnique({
@@ -521,7 +549,11 @@ export class PlmDefinitionsService {
   }
   async updateRouteCard(id: string, dto: any) {
     await this.getRouteCard(id);
-    return this.prisma.routeCard.update({ where: { id }, data: dto });
+    try {
+      return await this.prisma.routeCard.update({ where: { id }, data: dto });
+    } catch (e: any) {
+      rethrowFriendlyUniqueError(e, 'A route already exists with this code.');
+    }
   }
   async deleteRouteCard(id: string) {
     await this.getRouteCard(id);

@@ -16,6 +16,7 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { screenParametersApi } from "@/lib/nexuscore-api";
 import { useGlobalScreenSearch } from "@/hooks/use-global-screen-search";
+import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { DecimalParametersTab } from "./_components/decimal-parameters-tab";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,10 @@ function ValueBadge({ row }: { row: ParamRow }) {
 export default function ScreenParametersPage() {
   const { entries, ensureLoaded } = useGlobalScreenSearch();
   useEffect(() => { ensureLoaded(); }, [ensureLoaded]);
+  // Lets a caller (e.g. the Administration sidebar's own "Decimal Parameters" shortcut) deep-link
+  // straight to the Decimal tab via ?tab=decimal instead of always landing on Screen Parameters.
+  const searchParams = useWorkspaceSearchParams();
+  const initialTab = searchParams.get("tab") === "decimal" ? "decimal" : "screen";
 
   // This page's own screen (and its "General Settings" sibling) are excluded from the picker —
   // configuring parameters "for" the parameter-configuration screen isn't a meaningful case.
@@ -215,7 +220,7 @@ export default function ScreenParametersPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="screen" className="w-full gap-5">
+      <Tabs defaultValue={initialTab} className="w-full gap-5">
         <TabsList>
           <TabsTrigger value="screen">Screen Parameters</TabsTrigger>
           <TabsTrigger value="decimal">Decimal</TabsTrigger>
