@@ -50,6 +50,12 @@ export class StyleExtrasService {
     return style;
   }
 
+  private async findSampleCardOrThrow(sampleCardId: string) {
+    const sample = await this.prisma.sampleCard.findUnique({ where: { id: sampleCardId } });
+    if (!sample) throw new NotFoundException('Sample card not found');
+    return sample;
+  }
+
   // ── BOM Lines ────────────────────────────────────────────────────────────────
 
   async getBomLines(styleCardId: string) {
@@ -84,6 +90,33 @@ export class StyleExtrasService {
     return this.getBomLines(styleCardId);
   }
 
+  // ── Sample Card BOM Lines — exact mirror of Style Card's above, own SampleBomLine table ─────
+
+  async getSampleBomLines(sampleCardId: string) {
+    return this.prisma.sampleBomLine.findMany({
+      where: { sampleCardId },
+      include: { swatchCard: { select: { id: true, colorName: true, colorCode: true, pantoneCode: true } } },
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  async upsertSampleBomLines(sampleCardId: string, lines: any[]) {
+    await this.findSampleCardOrThrow(sampleCardId);
+    await this.prisma.sampleBomLine.deleteMany({ where: { sampleCardId } });
+    if (lines?.length) {
+      const picked = await Promise.all(lines.map(async (l) => {
+        const line = pickBomLine(l);
+        line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
+        await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
+        return line;
+      }));
+      await this.prisma.sampleBomLine.createMany({
+        data: picked.map((line, i) => ({ ...line, sortOrder: i, sampleCardId })),
+      });
+    }
+    return this.getSampleBomLines(sampleCardId);
+  }
+
   // ── Wash & Care ──────────────────────────────────────────────────────────────
 
   async getWashCare(styleCardId: string) {
@@ -96,6 +129,22 @@ export class StyleExtrasService {
     return this.prisma.styleWashCare.upsert({
       where: { styleCardId },
       create: { ...data, styleCardId },
+      update: data,
+    });
+  }
+
+  // ── Sample Card Wash & Care — exact mirror of Style Card's above, own SampleWashCare table ──
+
+  async getSampleWashCare(sampleCardId: string) {
+    return this.prisma.sampleWashCare.findUnique({ where: { sampleCardId } });
+  }
+
+  async upsertSampleWashCare(sampleCardId: string, dto: any) {
+    await this.findSampleCardOrThrow(sampleCardId);
+    const data = pickWashCare(dto || {});
+    return this.prisma.sampleWashCare.upsert({
+      where: { sampleCardId },
+      create: { ...data, sampleCardId },
       update: data,
     });
   }

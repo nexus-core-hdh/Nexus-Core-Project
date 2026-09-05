@@ -10,7 +10,10 @@ import { toast } from "sonner";
 import { ExternalLink, Save } from "lucide-react";
 import { plmApi } from "@/lib/nexuscore-api";
 
-export function MeasurementChartTab({ styleCardId, card, onReloadCard }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// Link-only tab (the MeasurementChart/lines master is shared/global, never owned by the card) —
+// reused wholesale for Sample Card's own independent `measurementChartId` column via the
+// optional `sampleCardId` prop.
+export function MeasurementChartTab({ styleCardId, sampleCardId, card, onReloadCard }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const [charts, setCharts] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string>(card.measurementChartId || "");
   const [chart, setChart] = useState<any>(card.measurementChart || null);
@@ -39,7 +42,8 @@ export function MeasurementChartTab({ styleCardId, card, onReloadCard }: { style
   const save = async () => {
     setSaving(true);
     try {
-      await plmApi.styleCards.update(styleCardId, { measurementChartId: selectedId || null });
+      if (sampleCardId) await plmApi.sampleCards.update(sampleCardId, { measurementChartId: selectedId || null });
+      else await plmApi.styleCards.update(styleCardId!, { measurementChartId: selectedId || null });
       toast.success("Measurement chart linked");
       onReloadCard();
     } catch (e: any) {

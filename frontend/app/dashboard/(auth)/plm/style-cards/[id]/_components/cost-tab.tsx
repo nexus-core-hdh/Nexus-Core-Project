@@ -12,7 +12,10 @@ import { plmApi } from "@/lib/nexuscore-api";
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
 const fmt2 = (n: any) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function CostTab({ styleCardId }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// Reused wholesale for Sample Card via the optional `sampleCardId` prop — CostingSheet already
+// had a nullable styleCardId with no cascade; sampleCardId is a sibling nullable tag the same
+// shape. The sheet/lines model and its own full-page editor are unchanged either way.
+export function CostTab({ styleCardId, sampleCardId }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const router = useRouter();
   const [sheets, setSheets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,7 +24,7 @@ export function CostTab({ styleCardId }: { styleCardId: string; card: any; onRel
   const load = async () => {
     setLoading(true);
     try {
-      const list = await plmApi.styleCards.getCostingSheets(styleCardId);
+      const list = sampleCardId ? await plmApi.sampleCards.getCostingSheets(sampleCardId) : await plmApi.styleCards.getCostingSheets(styleCardId!);
       setSheets(Array.isArray(list) ? list : []);
     } catch (e: any) {
       toast.error(e.message || "Failed to load costing sheets");
@@ -30,12 +33,12 @@ export function CostTab({ styleCardId }: { styleCardId: string; card: any; onRel
     }
   };
 
-  useEffect(() => { load(); }, [styleCardId]);
+  useEffect(() => { load(); }, [styleCardId, sampleCardId]);
 
   const issue = async () => {
     setIssuing(true);
     try {
-      const created: any = await plmApi.styleCards.issueCostingSheet(styleCardId);
+      const created: any = sampleCardId ? await plmApi.sampleCards.issueCostingSheet(sampleCardId) : await plmApi.styleCards.issueCostingSheet(styleCardId!);
       router.push(`/dashboard/plm/costing-sheets/${created.id}`);
     } catch (e: any) {
       toast.error(e.message || "Failed to issue costing sheet");
@@ -49,7 +52,7 @@ export function CostTab({ styleCardId }: { styleCardId: string; card: any; onRel
   return (
     <div>
       <div className="flex justify-end mb-2">
-        <Button size="sm" onClick={issue} disabled={issuing}>{issuing ? "Issuing..." : "Issue Style Costing Sheet"}</Button>
+        <Button size="sm" onClick={issue} disabled={issuing}>{issuing ? "Issuing..." : `Issue ${sampleCardId ? "Sample" : "Style"} Costing Sheet`}</Button>
       </div>
       <div className="rounded-md border overflow-x-auto">
         <Table>

@@ -11,7 +11,11 @@ import { plmApi } from "@/lib/nexuscore-api";
 
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
 
-export function OrderInfoTab({ styleCardId }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// Reused wholesale for Sample Card via the optional `sampleCardId` prop — PlmOrder.styleCardId
+// was relaxed to nullable and a sibling nullable sampleCardId added (an order belongs to
+// exactly one of the two). This tab never edits an order itself, only lists/creates + links out
+// to the order's own full-page editor, unchanged either way.
+export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const router = useRouter();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,7 +24,7 @@ export function OrderInfoTab({ styleCardId }: { styleCardId: string; card: any; 
   const load = async () => {
     setLoading(true);
     try {
-      const list = await plmApi.styleCards.getOrders(styleCardId);
+      const list = sampleCardId ? await plmApi.sampleCards.getOrders(sampleCardId) : await plmApi.styleCards.getOrders(styleCardId!);
       setOrders(Array.isArray(list) ? list : []);
     } catch (e: any) {
       toast.error(e.message || "Failed to load orders");
@@ -29,12 +33,12 @@ export function OrderInfoTab({ styleCardId }: { styleCardId: string; card: any; 
     }
   };
 
-  useEffect(() => { load(); }, [styleCardId]);
+  useEffect(() => { load(); }, [styleCardId, sampleCardId]);
 
   const openOrderForm = async () => {
     setCreating(true);
     try {
-      const created: any = await plmApi.orders.create({ styleCardId, quantity: 0 });
+      const created: any = await plmApi.orders.create(sampleCardId ? { sampleCardId, quantity: 0 } : { styleCardId, quantity: 0 });
       router.push(`/dashboard/plm/orders/${created.id}`);
     } catch (e: any) {
       toast.error(e.message || "Failed to create order");

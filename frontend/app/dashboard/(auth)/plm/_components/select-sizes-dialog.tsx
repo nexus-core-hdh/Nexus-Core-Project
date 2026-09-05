@@ -29,11 +29,14 @@ export interface SizeGroup { id: number; code: string; name: string; inUse?: num
  * the Style Card per the existing "Work Order copy, Style Card untouched" rule.
  */
 export function SelectSizesDialog({
-  open, onOpenChange, styleCardId, currentSizes, onSaved, onApply,
+  open, onOpenChange, styleCardId, sampleCardId, currentSizes, onSaved, onApply,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   styleCardId?: string;
+  /** Applies to SampleCard.sizes instead of StyleCard.sizes — same "replace with this group's
+   *  full set, keep any free-typed sizes" behavior either way. */
+  sampleCardId?: string;
   currentSizes: string[];
   onSaved?: () => void;
   /** When provided, called with the resolved group codes instead of writing to StyleCard.sizes.
@@ -86,7 +89,8 @@ export function SelectSizesDialog({
       // before; a manually-typed size that isn't one of this group's own codes is kept as-is.
       const freeTextKept = currentSizes.filter((s) => !groupCodes.includes(s));
       const nextSizes = [...freeTextKept, ...groupCodes];
-      await plmApi.styleCards.update(styleCardId!, { sizes: nextSizes });
+      if (sampleCardId) await plmApi.sampleCards.update(sampleCardId, { sizes: nextSizes });
+      else await plmApi.styleCards.update(styleCardId!, { sizes: nextSizes });
       toast.success(`Loaded ${groupCodes.length} size${groupCodes.length === 1 ? "" : "s"} from "${group.name.trim()}"`);
       onSaved?.();
       onOpenChange(false);

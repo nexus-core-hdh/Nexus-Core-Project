@@ -2223,8 +2223,9 @@ model Customer {
   branch     Branch?           @relation(fields: [branchId], references: [id], onDelete: Cascade)
   orders     Order[]
   payments   CustomerPayment[]
-  returns    OrderReturn[]
-  styleCards StyleCard[]
+  returns     OrderReturn[]
+  styleCards  StyleCard[]
+  sampleCards SampleCard[]
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
@@ -3216,7 +3217,8 @@ model DesignDetailType {
   description String?
   isActive    Boolean @default(true)
 
-  styleCards StyleCardDetail[]
+  styleCards  StyleCardDetail[]
+  sampleCards SampleCardDetail[]
 }
 
 model MeasurementDefinition {
@@ -3243,8 +3245,9 @@ model MeasurementChart {
   branchId    String?
   createdAt   DateTime @default(now())
 
-  lines      MeasurementChartLine[]
-  styleCards StyleCard[]
+  lines       MeasurementChartLine[]
+  styleCards  StyleCard[]
+  sampleCards SampleCard[]
 }
 
 model MeasurementChartLine {
@@ -3271,6 +3274,7 @@ model DepartmentCard {
   employees    EmployeeCard[]
   processCards ProcessCard[]
   styleCards   StyleCard[]
+  sampleCards  SampleCard[]
   activityTypes ActivityTypeCard[]
 }
 
@@ -3312,6 +3316,8 @@ model EmployeeCard {
   styleCardsAsProductMerchandiser    StyleCard[] @relation("StyleProductMerchandiser")
   styleCardsAsDesigner               StyleCard[] @relation("StyleDesigner")
   styleCardsAsRepresentative         StyleCard[] @relation("StyleRepresentative")
+  sampleCardsAsDesigner              SampleCard[] @relation("SampleDesigner")
+  sampleCardsAsRepresentative        SampleCard[] @relation("SampleRepresentative")
 }
 
 model ResourceCard {
@@ -3476,6 +3482,10 @@ model RouteCard {
   createdAt   DateTime @default(now())
 
   lines RouteCardLine[]
+  // Route-name-only pickers on Style Card BOM header / Sample Card — see StyleCard.bomRouteCardId
+  // and SampleCard.routeCardId. No Route Processes are read/copied through either relation.
+  styleCardsBomRoute StyleCard[]  @relation("StyleCardBomRoute")
+  sampleCardsRoute   SampleCard[] @relation("SampleCardRoute")
 }
 
 model RouteCardLine {
@@ -3499,6 +3509,9 @@ model StudyTemplateCard {
   name          String
   styleCardId   String?
   productCardId String?
+  // Sample Card's own independent Study tag, coexisting with styleCardId/productCardId above
+  // exactly the same way those two already coexist on one model.
+  sampleCardId  String?
   description   String?
   totalTime     Decimal? @db.Decimal(10, 2)
   isActive      Boolean  @default(true)
@@ -3506,8 +3519,9 @@ model StudyTemplateCard {
   createdBy     String
   createdAt     DateTime @default(now())
 
-  lines     StudyTemplateLine[]
-  styleCard StyleCard?          @relation(fields: [styleCardId], references: [id])
+  lines      StudyTemplateLine[]
+  styleCard  StyleCard?          @relation(fields: [styleCardId], references: [id])
+  sampleCard SampleCard?         @relation(fields: [sampleCardId], references: [id])
 }
 
 model StudyTemplateLine {
@@ -3531,6 +3545,9 @@ model CostingSheet {
   costingNo             String    @unique
   costingDate           DateTime?
   styleCardId           String?
+  // Sample Card's own independent Cost tag, coexisting with styleCardId above (a costing sheet
+  // belongs to exactly one of the two, never both).
+  sampleCardId          String?
   styleId               String?
   styleCode             String?
   styleName             String?
@@ -3565,9 +3582,11 @@ model CostingSheet {
   laborLines       CostingLaborLine[]
   otherLines       CostingOtherLine[]
   styleCard        StyleCard?               @relation(fields: [styleCardId], references: [id])
+  sampleCard       SampleCard?              @relation(fields: [sampleCardId], references: [id])
 
   @@index([branchId])
   @@index([styleCardId])
+  @@index([sampleCardId])
 }
 
 model CostingRawMaterialLine {
@@ -3700,6 +3719,9 @@ model StyleCard {
   bomEmbroideryRoute String?
   bomCmtPrice        Decimal? @db.Decimal(12, 2)
   bomRunningQuantity Decimal? @db.Decimal(14, 2)
+  // BOM tab "Route" picker — an existing RouteCard selected by name, id stored here. Distinct
+  // from the free-text bomRouteCode above; does not read/copy RouteCardLine (Route Processes).
+  bomRouteCardId     String?
 
   moodBoard              MoodBoard?          @relation(fields: [moodBoardId], references: [id])
   measurementChart       MeasurementChart?   @relation(fields: [measurementChartId], references: [id])
@@ -3709,6 +3731,7 @@ model StyleCard {
   productMerchandiser    EmployeeCard?       @relation("StyleProductMerchandiser", fields: [productMerchandiserId], references: [id])
   designer               EmployeeCard?       @relation("StyleDesigner", fields: [designerId], references: [id])
   representative         EmployeeCard?       @relation("StyleRepresentative", fields: [representativeId], references: [id])
+  bomRouteCard           RouteCard?          @relation("StyleCardBomRoute", fields: [bomRouteCardId], references: [id])
   details                StyleCardDetail[]
   sampleCards            SampleCard[]
   productCards           ProductCard[]
@@ -3848,6 +3871,75 @@ model StyleCardDetail {
   designDetailType DesignDetailType @relation(fields: [designDetailTypeId], references: [id])
 }
 
+// ── PLM — Sample Card independent tab-parity models ────────────────────────────
+// Exact mirrors of the StyleCard equivalents above (StyleCardDetail/StyleWashCare/StyleBomLine)
+// — genuinely SampleCard-owned data, never linked to or copied from a Style Card.
+
+model SampleCardDetail {
+  id                 String  @id @default(uuid())
+  sampleCardId       String
+  designDetailTypeId String
+  description        String?
+  imageUrl           String?
+  notes              String?
+
+  sampleCard       SampleCard       @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)
+  designDetailType DesignDetailType @relation(fields: [designDetailTypeId], references: [id])
+}
+
+model SampleWashCare {
+  id               String  @id @default(uuid())
+  sampleCardId     String  @unique
+  washing          String?
+  bleaching        String?
+  tumbleDrying     String?
+  naturalDrying    String?
+  ironing          String?
+  chemicalCleaning String?
+  wetCleaning      String?
+
+  sampleCard SampleCard @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)
+}
+
+model SampleBomLine {
+  id                String  @id @default(uuid())
+  sampleCardId      String
+  lineType          String
+  fabricInventoryId Int?
+  fabricCode        String?
+  fabricName        String?
+  explanation       String?
+  placement         String?
+  process           String?
+  variant           String?
+  rowColumn         String?
+  swatchCardId      String?
+  willBeCut         Boolean @default(false)
+  mainFabric        Boolean @default(false)
+  unit              String?
+  unitId            Int?
+  marketLength      Decimal? @db.Decimal(10, 4)
+  marketWidth       Decimal? @db.Decimal(10, 4)
+  marketWeight      Decimal? @db.Decimal(10, 4)
+  quantity          Decimal @default(0) @db.Decimal(14, 4)
+  wastePct          Decimal @default(0) @db.Decimal(8, 4)
+  dyeWastagePct     Decimal @default(0) @db.Decimal(8, 4)
+  otherWastagePct   Decimal @default(0) @db.Decimal(8, 4)
+  unitPrice         Decimal @default(0) @db.Decimal(14, 4)
+  component         String?
+  dia               String?
+  gauge             String?
+  finishWidth       String?
+  finishRoute       String?
+  revision          String?
+  sortOrder         Int     @default(0)
+
+  sampleCard SampleCard  @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)
+  swatchCard SwatchCard? @relation(fields: [swatchCardId], references: [id])
+
+  @@index([sampleCardId])
+}
+
 // ── PLM — Swatches & Products ─────────────────────────────────────────────────
 
 model SwatchCard {
@@ -3873,8 +3965,9 @@ model SwatchCard {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  productCards ProductCardSwatch[]
-  bomLines     StyleBomLine[]
+  productCards   ProductCardSwatch[]
+  bomLines       StyleBomLine[]
+  sampleBomLines SampleBomLine[]
 }
 
 model ProductCard {
@@ -3959,9 +4052,52 @@ model SampleCard {
   createdBy    String
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  // "Route" picker — an existing RouteCard selected by name, id stored here. Does not read/copy
+  // RouteCardLine (Route Processes); independent of StyleCard's own bomRouteCardId.
+  routeCardId  String?
+  // Independent tab-parity fields (mirrors the equivalent StyleCard field/relation exactly) —
+  // own SampleCard-owned data, never linked to any Style Card.
+  explanations       String?
+  measurementChartId String?
+  // General tab parity with Style Card's own general-tab.tsx — same field set/lookups
+  // (DepartmentCard/Customer/EmployeeCard-Designer/EmployeeCard-Representative), own
+  // SampleCard-owned values. gender/category (top-level on StyleCard) added here too since
+  // Style Card's General tab renders them alongside Brand/Season/Department/Group Code.
+  gender             String?
+  category           String?
+  brand              String?
+  departmentId       String?
+  groupCode          String?
+  customerId         String?
+  customerStyleNo    String?
+  contactPerson      String?
+  accessCode         String?
+  specialCode        String?
+  designerId         String?
+  representativeId   String?
+  garmentWash        String?
+  garmentDye         String?
+  // Master Size / Sizes / Colorways — the same array-based Colorway/Sizes Set functionality
+  // Style Card's General tab uses (SelectSizesDialog + swatch-picker Colorways), replacing the
+  // flat `colorway`/`size` text fields above (left in place, unused, rather than dropped).
+  masterSize         String?
+  sizes              Json?
+  colorways          Json?
 
   sampleType StyleSampleType     @relation(fields: [sampleTypeId], references: [id])
   styleCard  StyleCard?          @relation(fields: [styleCardId], references: [id])
+  routeCard  RouteCard?          @relation("SampleCardRoute", fields: [routeCardId], references: [id])
+  measurementChart MeasurementChart? @relation(fields: [measurementChartId], references: [id])
+  department       DepartmentCard?   @relation(fields: [departmentId], references: [id])
+  customer         Customer?         @relation(fields: [customerId], references: [id])
+  designer         EmployeeCard?     @relation("SampleDesigner", fields: [designerId], references: [id])
+  representative   EmployeeCard?     @relation("SampleRepresentative", fields: [representativeId], references: [id])
+  details    SampleCardDetail[]
+  washCare   SampleWashCare?
+  bomLines   SampleBomLine[]
+  studyTemplates StudyTemplateCard[]
+  costingSheets  CostingSheet[]
+  orders     PlmOrder[]
   history    SampleCardHistory[]
 }
 
@@ -3999,7 +4135,13 @@ model PlmTemplate {
 model PlmOrder {
   id              String    @id @default(uuid())
   orderNumber     String    @unique
-  styleCardId     String
+  // Relaxed from required to optional so an Order can belong to a Sample Card instead of a
+  // Style Card (sampleCardId below) — existing rows keep their value; every read site already
+  // treats this as filterable/optional (where/include/create passthrough), none assumed non-null.
+  styleCardId     String?
+  // Sample Card's own independent Order Info tag, coexisting with styleCardId above (an order
+  // belongs to exactly one of the two, never both).
+  sampleCardId    String?
   productCardId   String?
   buyerName       String?
   quantity        Int
@@ -4019,7 +4161,8 @@ model PlmOrder {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  styleCard  StyleCard        @relation(fields: [styleCardId], references: [id])
+  styleCard  StyleCard?       @relation(fields: [styleCardId], references: [id])
+  sampleCard SampleCard?      @relation(fields: [sampleCardId], references: [id])
   sampleType StyleSampleType? @relation(fields: [sampleTypeId], references: [id])
   tasks      PlmTask[]
   orderType  String           @default("local")

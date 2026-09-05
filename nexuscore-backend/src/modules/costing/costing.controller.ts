@@ -22,4 +22,7 @@ export class CostingController {
 
   @Get('style-cards/:id/costing-sheets') listForStyleCard(@Param('id') id: string) { return this.svc.listForStyleCard(id); }
   @Post('style-cards/:id/issue-costing-sheet') issueForStyleCard(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.issueForStyleCard(id, dto, u.branchId, u.id); }
+
+  @Get('sample-cards/:id/costing-sheets') listForSampleCard(@Param('id') id: string) { return this.svc.listForSampleCard(id); }
+  @Post('sample-cards/:id/issue-costing-sheet') issueForSampleCard(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.issueForSampleCard(id, dto, u.branchId, u.id); }
 }

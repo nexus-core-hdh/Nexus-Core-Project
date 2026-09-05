@@ -13,20 +13,27 @@ import { getCurrentUser } from "@/lib/auth";
 // "do not create duplicate image storage". Add/remove here only ever touches image entries;
 // non-image attachments added elsewhere are left untouched and simply don't appear in this
 // grid. Same upload/clipboard-paste mechanism as Attachments tab.
-export function PictureGalleryTab({ styleCardId, card, onReloadCard }: { styleCardId: string; card: any; onReloadCard: () => void }) {
-  const [attachments, setAttachments] = useState<any[]>(Array.isArray(card.attachments) ? card.attachments : []);
+//
+// Sample Card reuses this component via the optional `sampleCardId` prop, but SampleCard
+// already has a genuinely separate `images` column alongside its own `attachments` (unlike
+// Style Card, which only has one column split by filter) — so the Sample Card path reads/
+// writes `images` directly instead of filtering `attachments`, avoiding redundant storage.
+export function PictureGalleryTab({ styleCardId, sampleCardId, card, onReloadCard }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
+  const sourceField = sampleCardId ? "images" : "attachments";
+  const [attachments, setAttachments] = useState<any[]>(Array.isArray(card[sourceField]) ? card[sourceField] : []);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setAttachments(Array.isArray(card.attachments) ? card.attachments : []); }, [card]);
+  useEffect(() => { setAttachments(Array.isArray(card[sourceField]) ? card[sourceField] : []); }, [card, sourceField]);
 
   const isImage = (a: any) => String(a.type || "").startsWith("image/");
-  const images = attachments.filter(isImage);
+  const images = sampleCardId ? attachments : attachments.filter(isImage);
 
   const persist = async (next: any[]) => {
     setAttachments(next);
     try {
-      await plmApi.styleCards.update(styleCardId, { attachments: next });
+      if (sampleCardId) await plmApi.sampleCards.update(sampleCardId, { images: next });
+      else await plmApi.styleCards.update(styleCardId!, { attachments: next });
       onReloadCard();
     } catch (e: any) {
       toast.error(e.message || "Failed to save picture gallery");

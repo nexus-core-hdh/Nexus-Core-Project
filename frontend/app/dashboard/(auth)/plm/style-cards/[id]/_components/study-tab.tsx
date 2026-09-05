@@ -36,7 +36,10 @@ const DEFAULT_WIDTHS: Record<ColKey, number> = { sequence: 70, processCardId: 18
 const MIN_WIDTHS: Record<ColKey, number> = { sequence: 60, processCardId: 140, standardTime: 100, resourceCardId: 120, employeeCardId: 120, notes: 120 };
 const DEL_W = 40;
 
-export function StudyTab({ styleCardId, card }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// Reused wholesale for Sample Card via the optional `sampleCardId` prop — StudyTemplateCard
+// already carries two independent optional tag FKs (styleCardId/productCardId) coexisting on
+// one model; sampleCardId is a third, same shape. The template/lines themselves are unchanged.
+export function StudyTab({ styleCardId, sampleCardId, card }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const [templates, setTemplates] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [lines, setLines] = useState<StudyLine[]>([]);
@@ -52,7 +55,7 @@ export function StudyTab({ styleCardId, card }: { styleCardId: string; card: any
     setLoading(true);
     try {
       const [tpls, pc, rc, ec] = await Promise.all([
-        plmApi.studyTemplates.list({ styleCardId }),
+        plmApi.studyTemplates.list(sampleCardId ? { sampleCardId } : { styleCardId }),
         plmApi.processCards.list().catch(() => ({ data: [] })),
         plmApi.resources.list().catch(() => ({ data: [] })),
         plmApi.employees.list().catch(() => ({ data: [] })),
@@ -79,14 +82,16 @@ export function StudyTab({ styleCardId, card }: { styleCardId: string; card: any
     })));
   };
 
-  useEffect(() => { load(); }, [styleCardId]);
+  useEffect(() => { load(); }, [styleCardId, sampleCardId]);
 
   const createTemplate = async () => {
     if (!newName.trim()) return toast.error("Name required");
     setCreating(true);
     try {
       const user = getCurrentUser();
-      const tpl: any = await plmApi.studyTemplates.create({ name: newName, styleCardId, branchId: user?.branchId });
+      const tpl: any = await plmApi.studyTemplates.create(
+        sampleCardId ? { name: newName, sampleCardId, branchId: user?.branchId } : { name: newName, styleCardId, branchId: user?.branchId },
+      );
       toast.success("Study template created");
       setNewName("");
       await load();
@@ -121,7 +126,7 @@ export function StudyTab({ styleCardId, card }: { styleCardId: string; card: any
     [],
   );
   const gridColumns = useGridColumns<ColKey>({
-    storageKey: "styleCardStudyGrid",
+    storageKey: sampleCardId ? "sampleCardStudyGrid" : "styleCardStudyGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
   });

@@ -35,8 +35,10 @@ const DEL_W = 40;
 // already-existing Prisma model + already-existing backend endpoints
 // (plmApi.styleCards.getDetails/addDetail/upsertDetails, see plm-cards.service.ts) that simply
 // had no frontend tab rendering them anywhere yet. No new schema, no new backend route — only
-// this UI was missing.
-export function AttributesTab({ styleCardId, card }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// this UI was missing. Sample Card reuses this component wholesale via the optional
+// `sampleCardId` prop, backed by its own independent SampleCardDetail table (same global
+// DesignDetailType lookup, never linked to Style Card's own rows).
+export function AttributesTab({ styleCardId, sampleCardId, card }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [types, setTypes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +48,7 @@ export function AttributesTab({ styleCardId, card }: { styleCardId: string; card
     setLoading(true);
     try {
       const [details, dts]: [any, any] = await Promise.all([
-        plmApi.styleCards.getDetails(styleCardId),
+        sampleCardId ? plmApi.sampleCards.getDetails(sampleCardId) : plmApi.styleCards.getDetails(styleCardId!),
         plmApi.designDetailTypes.list(),
       ]);
       const list = Array.isArray(details) ? details : details?.data || [];
@@ -59,7 +61,7 @@ export function AttributesTab({ styleCardId, card }: { styleCardId: string; card
     }
   };
 
-  useEffect(() => { load(); }, [styleCardId]);
+  useEffect(() => { load(); }, [styleCardId, sampleCardId]);
 
   const update = (id: string, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const addRow = () => setRows((rs) => [...rs, { id: uid(), designDetailTypeId: types[0]?.id || "", description: "", imageUrl: "", notes: "" }]);
@@ -69,7 +71,9 @@ export function AttributesTab({ styleCardId, card }: { styleCardId: string; card
     if (rows.some((r) => !r.designDetailTypeId)) return toast.error("Every row needs a Detail Type");
     setSaving(true);
     try {
-      await plmApi.styleCards.upsertDetails(styleCardId, rows.map(({ designDetailTypeId, description, imageUrl, notes }) => ({ designDetailTypeId, description, imageUrl, notes })));
+      const details = rows.map(({ designDetailTypeId, description, imageUrl, notes }) => ({ designDetailTypeId, description, imageUrl, notes }));
+      if (sampleCardId) await plmApi.sampleCards.upsertDetails(sampleCardId, details);
+      else await plmApi.styleCards.upsertDetails(styleCardId!, details);
       toast.success("Attributes saved");
       load();
     } catch (e: any) {
@@ -84,7 +88,7 @@ export function AttributesTab({ styleCardId, card }: { styleCardId: string; card
     [],
   );
   const gridColumns = useGridColumns<ColKey>({
-    storageKey: "styleCardAttributesGrid",
+    storageKey: sampleCardId ? "sampleCardAttributesGrid" : "styleCardAttributesGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
   });

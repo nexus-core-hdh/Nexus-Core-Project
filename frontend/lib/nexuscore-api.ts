@@ -162,6 +162,16 @@ export const plmApi = {
     get: (styleCardId: string) => api.get(plm(`/style-cards/${styleCardId}/expense-lines`)),
     upsertLines: (styleCardId: string, lines: any[]) => api.put(plm(`/style-cards/${styleCardId}/expense-lines`), lines),
   },
+  // Sample Card's own independent BOM/Wash & Care — exact mirror of styleBom/styleWashCare
+  // above, own SampleBomLine/SampleWashCare tables, never linked to any Style Card.
+  sampleBom: {
+    get: (sampleCardId: string) => api.get(plm(`/sample-cards/${sampleCardId}/bom-lines`)),
+    upsertLines: (sampleCardId: string, lines: any[]) => api.put(plm(`/sample-cards/${sampleCardId}/bom-lines`), lines),
+  },
+  sampleWashCare: {
+    get: (sampleCardId: string) => api.get(plm(`/sample-cards/${sampleCardId}/wash-care`)),
+    upsert: (sampleCardId: string, data: any) => api.put(plm(`/sample-cards/${sampleCardId}/wash-care`), data),
+  },
   sampleCards: {
     list: (q?: any) => api.get(plm('/sample-cards', q)),
     create: (d: any) => api.post(plm('/sample-cards'), d),
@@ -176,6 +186,11 @@ export const plmApi = {
     // rows) — never links back to or modifies this Sample Card. See plm-cards.service.ts's
     // createStyleCardFromSample() for the exact field mapping.
     createStyleCard: (id: string) => api.post(plm(`/sample-cards/${id}/create-style-card`)),
+    getDetails: (id: string) => api.get(plm(`/sample-cards/${id}/details`)),
+    upsertDetails: (id: string, details: any[]) => api.put(plm(`/sample-cards/${id}/details`), details),
+    getOrders: (id: string) => api.get(plm(`/sample-cards/${id}/orders`)),
+    getCostingSheets: (id: string) => api.get(plm(`/sample-cards/${id}/costing-sheets`)),
+    issueCostingSheet: (id: string, d?: any) => api.post(plm(`/sample-cards/${id}/issue-costing-sheet`), d || {}),
   },
   swatchCards: {
     list: (q?: any) => api.get(plm('/swatch-cards', q)),

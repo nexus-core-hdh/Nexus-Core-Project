@@ -28,7 +28,9 @@ const FIELDS: { key: keyof typeof WASH_CARE_OPTIONS; label: string }[] = [
   { key: "wetCleaning", label: "Wet Cleaning" },
 ];
 
-export function WashCareTab({ styleCardId }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// Reused wholesale for Sample Card via the optional `sampleCardId` prop, backed by its own
+// independent SampleWashCare table (plmApi.sampleWashCare, exact mirror of styleWashCare).
+export function WashCareTab({ styleCardId, sampleCardId }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -37,7 +39,7 @@ export function WashCareTab({ styleCardId }: { styleCardId: string; card: any; o
     (async () => {
       setLoading(true);
       try {
-        const r = await plmApi.styleWashCare.get(styleCardId);
+        const r = sampleCardId ? await plmApi.sampleWashCare.get(sampleCardId) : await plmApi.styleWashCare.get(styleCardId!);
         const next: Record<string, string> = {};
         FIELDS.forEach((f) => { next[f.key] = r?.[f.key] || ""; });
         setForm(next);
@@ -49,12 +51,13 @@ export function WashCareTab({ styleCardId }: { styleCardId: string; card: any; o
         setLoading(false);
       }
     })();
-  }, [styleCardId]);
+  }, [styleCardId, sampleCardId]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await plmApi.styleWashCare.upsert(styleCardId, form);
+      if (sampleCardId) await plmApi.sampleWashCare.upsert(sampleCardId, form);
+      else await plmApi.styleWashCare.upsert(styleCardId!, form);
       toast.success("Wash & Care saved");
     } catch (e: any) {
       toast.error(e.message || "Failed to save");

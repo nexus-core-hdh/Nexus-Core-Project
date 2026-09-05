@@ -334,13 +334,21 @@ interface WorkOrderBomAdapter {
   toolbarExtra?: React.ReactNode;
 }
 
-export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
-  styleCardId?: string; card?: any; onReloadCard?: () => void;
+export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrder }: {
+  styleCardId?: string;
+  /** Presence (and no workOrder) switches persistence to SampleBomLine — exact mirror of
+   *  StyleBomLine, own table, never linked to any Style Card's BOM. The header strip below
+   *  (Route Code/Embroidery Route/CMT Price/Running Quantity — genuine StyleCard-only scalar
+   *  columns) has no Sample Card equivalent and is hidden in this mode; Sample Card's own
+   *  "Route" picker lives on its General tab instead, not here. */
+  sampleCardId?: string;
+  card?: any; onReloadCard?: () => void;
   /** Presence switches persistence from StyleBomLine to MA_Recipe/MA_RecipeItem — see the block
    *  comment above this function for the exact field-mapping gaps. */
   workOrder?: WorkOrderBomAdapter;
 }) {
   const isWorkOrderMode = workOrder != null;
+  const isSampleMode = !isWorkOrderMode && sampleCardId != null;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<BomRow[]>([]);
@@ -416,20 +424,30 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
     bomEmbroideryRoute: card?.bomEmbroideryRoute || "",
     bomCmtPrice: card?.bomCmtPrice ?? 0,
     bomRunningQuantity: card?.bomRunningQuantity ?? 0,
+    // "Route" — an existing RouteCard selected by name, id stored here. Distinct from the
+    // free-text Route Code/Embroidery Route above; no Route Processes involved.
+    bomRouteCardId: card?.bomRouteCardId || "",
   });
+  // Route master (RouteCard) — loaded once in load() below, alongside Swatch/Process/Fabric/
+  // Trim. Name-only picker: the <select>'s own visible text is always the Route's `name`, never
+  // its id or code.
+  const [routeCards, setRouteCards] = useState<any[]>([]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [lines, sw, pc, fab, trim] = await Promise.all([
+      const [lines, sw, pc, fab, trim, routes] = await Promise.all([
         isWorkOrderMode
           ? Promise.all(BOM_LINE_TYPE_VALUES.map((lt) => legacyErpApi.workOrders.listBom(workOrder!.workOrderId, lt).catch(() => [])))
               .then((byType) => byType.flatMap((rowsOfType: any[], i) => (rowsOfType || []).map((l: any) => ({ ...l, lineType: BOM_LINE_TYPE_VALUES[i] }))))
+          : isSampleMode
+          ? plmApi.sampleBom.get(sampleCardId!)
           : plmApi.styleBom.get(styleCardId!),
         plmApi.swatchCards.list().catch(() => ({ data: [] })),
         plmApi.processCards.list().catch(() => ({ data: [] })),
         legacyErpApi.fabricCards.list().catch(() => []),
         legacyErpApi.trimInventoryCards.list().catch(() => []),
+        plmApi.routeCards.list().catch(() => []),
       ]);
       const fabList = Array.isArray(fab) ? fab : [];
       const trimList = Array.isArray(trim) ? trim : [];
@@ -469,6 +487,7 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
       setRows(loadedRows);
       setSwatches(Array.isArray(sw) ? sw : (sw as any)?.data || []);
       setProcessCards(Array.isArray(pc) ? pc : (pc as any)?.data || []);
+      setRouteCards(Array.isArray(routes) ? routes : (routes as any)?.data || []);
       setFabricOptions(fabList.map((row: any) => ({ id: String(row.id), code: row.inventoryCode, name: row.inventoryName })));
       setTrimOptions(trimList.map((row: any) => ({ id: String(row.id), code: row.inventoryCode, name: row.inventoryName })));
       // Populate the Unit dropdown for every already-saved row that already has a selected card —
@@ -483,7 +502,7 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
     }
   };
 
-  useEffect(() => { load(); }, [styleCardId, workOrder?.workOrderId]);
+  useEffect(() => { load(); }, [styleCardId, sampleCardId, workOrder?.workOrderId]);
   // Work Order mode only — MA_RecipeItem has no denormalized Unit text column, so a reloaded
   // row's own `unit` starts blank; once ensureItemUnits resolves that row's card's configured
   // Units (see load()'s own bulk ensureItemUnits(id) calls), patch the display text in from the
@@ -503,6 +522,7 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
       bomEmbroideryRoute: card?.bomEmbroideryRoute || "",
       bomCmtPrice: card?.bomCmtPrice ?? 0,
       bomRunningQuantity: card?.bomRunningQuantity ?? 0,
+      bomRouteCardId: card?.bomRouteCardId || "",
     });
   }, [card]);
 
@@ -617,9 +637,15 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
           }));
           await legacyErpApi.workOrders.upsertBom(workOrder!.workOrderId, lt, linesOfType);
         }
+      } else if (isSampleMode) {
+        // No header strip in this mode (see the prop comment above) — just the lines themselves.
+        await plmApi.sampleBom.upsertLines(sampleCardId!, roundedRows);
       } else {
         await Promise.all([
-          plmApi.styleCards.update(styleCardId!, header),
+          // bomRouteCardId must be sent as an explicit null (not "", and not simply omitted) to
+          // actually clear the FK on the server — "" would fail the RouteCard foreign key
+          // constraint, and omitting the key entirely would leave the previous value untouched.
+          plmApi.styleCards.update(styleCardId!, { ...header, bomRouteCardId: header.bomRouteCardId || null }),
           plmApi.styleBom.upsertLines(styleCardId!, roundedRows),
         ]);
       }
@@ -650,7 +676,7 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
   // Same useGridColumns hook/tablePreferences infrastructure either way — not a second
   // column-manager implementation.
   const gridColumns = useGridColumns<ColKey>({
-    storageKey: isWorkOrderMode ? "workOrderBomGrid" : "bomLineGrid",
+    storageKey: isWorkOrderMode ? "workOrderBomGrid" : isSampleMode ? "sampleBomLineGrid" : "bomLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
   });
@@ -894,8 +920,22 @@ export function BomTab({ styleCardId, card, onReloadCard, workOrder }: {
 
   return (
     <div className="space-y-3">
-      {!isWorkOrderMode && (
-        <div className="rounded-md border p-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+      {!isWorkOrderMode && !isSampleMode && (
+        <div className="rounded-md border p-3 grid grid-cols-2 md:grid-cols-5 gap-3">
+          {/* Existing RouteCard master, selected by name only — id stored on bomRouteCardId.
+              Distinct from the free-text Route Code/Embroidery Route fields beside it; does not
+              load or display that Route's Processes (RouteCardLine) — a separate future task. */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Route</Label>
+            <select
+              value={header.bomRouteCardId}
+              onChange={(e) => setHeader((h) => ({ ...h, bomRouteCardId: e.target.value }))}
+              className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <option value="">—</option>
+              {routeCards.map((rc) => <option key={rc.id} value={rc.id}>{rc.name}</option>)}
+            </select>
+          </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Route Code</Label>
             <Input className="h-8 text-sm" value={header.bomRouteCode} onChange={(e) => setHeader((h) => ({ ...h, bomRouteCode: e.target.value }))} />

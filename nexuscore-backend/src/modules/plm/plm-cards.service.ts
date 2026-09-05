@@ -127,6 +127,9 @@ export class PlmCardsService {
         productMerchandiser: true,
         designer: true,
         representative: true,
+        // BOM tab "Route" picker — name-only display, id stored on bomRouteCardId. Deliberately
+        // no RouteCardLine/process include here — Route Processes are a separate future task.
+        bomRouteCard: { select: { id: true, name: true } },
         washCare: true,
         details: { include: { designDetailType: true } },
         sampleCards: { select: { id: true, sampleNumber: true, title: true, status: true } },
@@ -152,7 +155,7 @@ export class PlmCardsService {
     return this.prisma.styleCard.update({
       where: { id },
       data: dto,
-      include: { moodBoard: { select: { id: true, title: true } } },
+      include: { moodBoard: { select: { id: true, title: true } }, bomRouteCard: { select: { id: true, name: true } } },
     });
   }
 
@@ -250,6 +253,8 @@ export class PlmCardsService {
       include: {
         sampleType: { select: { id: true, name: true, code: true } },
         styleCard: { select: { id: true, styleNumber: true, title: true } },
+        routeCard: { select: { id: true, name: true } },
+        department: true, customer: true, designer: true, representative: true,
       },
     });
     await this.autoCreateDocket('sample_card', card.id, `Docket — ${card.sampleNumber}`, branchId, createdBy);
@@ -262,6 +267,14 @@ export class PlmCardsService {
       include: {
         sampleType: true,
         styleCard: { select: { id: true, styleNumber: true, title: true } },
+        // "Route" picker — name-only display, id stored on routeCardId. Deliberately no
+        // RouteCardLine/process include here — Route Processes are a separate future task.
+        routeCard: { select: { id: true, name: true } },
+        // Measurement Chart tab — link-only, same convention as StyleCard's own getStyleCard
+        // (the chart itself is a shared master, not owned by SampleCard).
+        measurementChart: true,
+        // General tab parity with Style Card's own getStyleCard include.
+        department: true, customer: true, designer: true, representative: true,
         history: { orderBy: { createdAt: 'desc' } },
       },
     });
@@ -274,7 +287,13 @@ export class PlmCardsService {
     return this.prisma.sampleCard.update({
       where: { id },
       data: dto,
-      include: { sampleType: true, styleCard: { select: { id: true, styleNumber: true, title: true } } },
+      include: {
+        sampleType: true,
+        styleCard: { select: { id: true, styleNumber: true, title: true } },
+        routeCard: { select: { id: true, name: true } },
+        measurementChart: true,
+        department: true, customer: true, designer: true, representative: true,
+      },
     });
   }
 
@@ -300,6 +319,35 @@ export class PlmCardsService {
   async getSampleCardHistory(id: string) {
     return this.prisma.sampleCardHistory.findMany({
       where: { sampleCardId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // Attributes tab — exact mirror of getStyleCardDetails/upsertStyleCardDetails above, own
+  // SampleCardDetail table, same global DesignDetailType lookup, same delete-all-then-createMany
+  // convention (no per-row id preserved across saves, same as the Style Card equivalent).
+  async getSampleCardDetails(id: string) {
+    return this.prisma.sampleCardDetail.findMany({
+      where: { sampleCardId: id },
+      include: { designDetailType: true },
+    });
+  }
+
+  async upsertSampleCardDetails(id: string, details: any[]) {
+    await this.getSampleCard(id);
+    await this.prisma.sampleCardDetail.deleteMany({ where: { sampleCardId: id } });
+    return this.prisma.sampleCardDetail.createMany({
+      data: details.map((d) => ({ ...d, sampleCardId: id })),
+    });
+  }
+
+  // Order Info tab — exact mirror of getStyleCardOrders above. Orders created against a Sample
+  // Card set sampleCardId (not styleCardId) — see PlmOperationsService.createOrder, unchanged;
+  // the DTO's own sampleCardId/styleCardId key decides which this row belongs to.
+  async getSampleCardOrders(id: string) {
+    return this.prisma.plmOrder.findMany({
+      where: { sampleCardId: id },
+      include: { sampleType: true },
       orderBy: { createdAt: 'desc' },
     });
   }

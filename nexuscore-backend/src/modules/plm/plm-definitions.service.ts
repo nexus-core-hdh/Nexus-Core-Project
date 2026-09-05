@@ -265,9 +265,9 @@ export class PlmDefinitionsService {
   }
 
   // ── Study Template Cards ──────────────────────────────────────────────────────
-  async listStudyTemplates(branchId?: string, styleCardId?: string) {
+  async listStudyTemplates(branchId?: string, styleCardId?: string, sampleCardId?: string) {
     return this.prisma.studyTemplateCard.findMany({
-      where: { ...(branchId ? { branchId } : {}), ...(styleCardId ? { styleCardId } : {}) },
+      where: { ...(branchId ? { branchId } : {}), ...(styleCardId ? { styleCardId } : {}), ...(sampleCardId ? { sampleCardId } : {}) },
       include: {
         lines: { include: { processCard: { select: { id: true, name: true } } }, orderBy: { sequence: 'asc' } },
       },

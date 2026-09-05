@@ -44,6 +44,9 @@ export class PlmCardsController {
   @Get('sample-cards/:id/history') getSampleCardHistory(@Param('id') id: string) { return this.svc.getSampleCardHistory(id); }
   @Post('sample-cards/:id/duplicate') duplicateSampleCard(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.duplicateSampleCard(id, u.id); }
   @Post('sample-cards/:id/create-style-card') createStyleCardFromSample(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.createStyleCardFromSample(id, u.id); }
+  @Get('sample-cards/:id/details') getSampleCardDetails(@Param('id') id: string) { return this.svc.getSampleCardDetails(id); }
+  @Put('sample-cards/:id/details') upsertSampleCardDetails(@Param('id') id: string, @Body() details: any[]) { return this.svc.upsertSampleCardDetails(id, details); }
+  @Get('sample-cards/:id/orders') getSampleCardOrders(@Param('id') id: string) { return this.svc.getSampleCardOrders(id); }
 
   // Swatch Cards
   @Get('swatch-cards') listSwatchCards(@CurrentUser() u: any, @Query() q: any) { return this.svc.listSwatchCards(u.branchId, q); }

@@ -58,7 +58,7 @@ function computeTotals(sheet: {
 }
 
 const HEADER_FIELDS = [
-  'costingNo', 'costingDate', 'styleCardId', 'styleId', 'styleCode', 'styleName', 'accountCode', 'accountName',
+  'costingNo', 'costingDate', 'styleCardId', 'sampleCardId', 'styleId', 'styleCode', 'styleName', 'accountCode', 'accountName',
   'category', 'brand', 'pkrRate', 'foreignCurrency', 'foreignRate', 'secondForeignCurrency', 'secondForeignRate',
   'quotedPriceForex', 'quotedPrice',
   'orderQuantity', 'shippingTerms', 'paymentTerms', 'overheadPct', 'wastePct', 'gSuppliesPct',
@@ -205,6 +205,39 @@ export class CostingService {
         styleCardId,
         styleCode: style.styleNumber,
         styleName: style.title,
+        branchId,
+        createdBy,
+      },
+    });
+  }
+
+  // Exact mirror of listForStyleCard/issueForStyleCard above, own sampleCardId column — the
+  // sheet itself is the same CostingSheet/lines model either way, just tagged to a Sample Card
+  // instead of a Style Card.
+  async listForSampleCard(sampleCardId: string) {
+    const sheets = await this.prisma.costingSheet.findMany({
+      where: { sampleCardId },
+      include: {
+        rawMaterialLines: { orderBy: { sortOrder: 'asc' } },
+        laborLines: { orderBy: { sortOrder: 'asc' } },
+        otherLines: { orderBy: { sortOrder: 'asc' } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return sheets.map((sheet) => ({ ...sheet, totals: computeTotals(sheet) }));
+  }
+
+  async issueForSampleCard(sampleCardId: string, dto: any, branchId: string, createdBy: string) {
+    const sample = await this.prisma.sampleCard.findUnique({ where: { id: sampleCardId } });
+    if (!sample) throw new NotFoundException('Sample card not found');
+    const costingNo = dto?.costingNo || `CS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 90000) + 10000)}`;
+    return this.prisma.costingSheet.create({
+      data: {
+        ...pickHeader(dto || {}),
+        costingNo,
+        sampleCardId,
+        styleCode: sample.sampleNumber,
+        styleName: sample.title,
         branchId,
         createdBy,
       },

@@ -9,8 +9,10 @@ import { plmApi } from "@/lib/nexuscore-api";
 
 // The existing single StyleCard.explanations free-text field, moved out of General into its
 // own tab to match the reference screenshot's tab list — same field/data, same save path
-// (plmApi.styleCards.update), no schema change.
-export function ExplanationTab({ styleCardId, card, onReloadCard }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// (plmApi.styleCards.update), no schema change. Reused wholesale for Sample Card's own
+// independent `explanations` column (SampleCard.explanations) via the optional `sampleCardId`
+// prop — whichever id is provided decides the save target; the two never mix.
+export function ExplanationTab({ styleCardId, sampleCardId, card, onReloadCard }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const [text, setText] = useState(card.explanations || "");
   const [saving, setSaving] = useState(false);
 
@@ -19,7 +21,8 @@ export function ExplanationTab({ styleCardId, card, onReloadCard }: { styleCardI
   const save = async () => {
     setSaving(true);
     try {
-      await plmApi.styleCards.update(styleCardId, { explanations: text });
+      if (sampleCardId) await plmApi.sampleCards.update(sampleCardId, { explanations: text });
+      else await plmApi.styleCards.update(styleCardId!, { explanations: text });
       toast.success("Saved");
       onReloadCard();
     } catch (e: any) {

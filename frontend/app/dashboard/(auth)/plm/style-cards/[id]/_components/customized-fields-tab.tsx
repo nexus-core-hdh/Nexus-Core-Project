@@ -10,9 +10,13 @@ import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { entitiesApi } from "@/lib/nexuscore-api";
 
-const ENTITY = "StyleCard";
-
-export function CustomizedFieldsTab({ styleCardId }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// Entity-agnostic already (CustomField/CustomFieldValue tag by a plain `entity` string, not a
+// real FK) — Sample Card reuses this component wholesale via the optional `sampleCardId` prop,
+// just under its own "SampleCard" entity tag so its fields/values are defined and stored
+// separately from Style Card's.
+export function CustomizedFieldsTab({ styleCardId, sampleCardId }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
+  const ENTITY = sampleCardId ? "SampleCard" : "StyleCard";
+  const entityId = (sampleCardId || styleCardId)!;
   const [fields, setFields] = useState<any[]>([]);
   const [values, setValues] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
@@ -23,7 +27,7 @@ export function CustomizedFieldsTab({ styleCardId }: { styleCardId: string; card
     try {
       const [defs, vals] = await Promise.all([
         entitiesApi.getCustomFields(ENTITY),
-        entitiesApi.getCustomFieldValues(ENTITY, styleCardId),
+        entitiesApi.getCustomFieldValues(ENTITY, entityId),
       ]);
       const defList = Array.isArray(defs) ? defs : [];
       setFields(defList);
@@ -37,7 +41,7 @@ export function CustomizedFieldsTab({ styleCardId }: { styleCardId: string; card
     }
   };
 
-  useEffect(() => { load(); }, [styleCardId]);
+  useEffect(() => { load(); }, [entityId]);
 
   const setValue = (fieldId: string, v: any) => setValues((s) => ({ ...s, [fieldId]: v }));
 
@@ -45,7 +49,7 @@ export function CustomizedFieldsTab({ styleCardId }: { styleCardId: string; card
     setSaving(true);
     try {
       const payload = fields.map((f) => ({ customFieldId: f.id, value: values[f.id] ?? null }));
-      await entitiesApi.upsertCustomFieldValues(ENTITY, styleCardId, payload);
+      await entitiesApi.upsertCustomFieldValues(ENTITY, entityId, payload);
       toast.success("Custom fields saved");
     } catch (e: any) {
       toast.error(e.message || "Failed to save custom fields");
@@ -59,7 +63,7 @@ export function CustomizedFieldsTab({ styleCardId }: { styleCardId: string; card
   if (!fields.length) {
     return (
       <div className="rounded-md border p-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-        <p className="text-sm">No customized fields configured for Style Cards yet.</p>
+        <p className="text-sm">No customized fields configured for {ENTITY === "SampleCard" ? "Sample" : "Style"} Cards yet.</p>
         <p className="text-xs">Define fields in Custom Fields admin with entity &quot;{ENTITY}&quot;.</p>
       </div>
     );

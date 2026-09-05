@@ -67,7 +67,7 @@ export class PlmDefinitionsController {
   @Delete('resource-cards/:id') deleteResource(@Param('id') id: string) { return this.svc.deleteResource(id); }
 
   // Study Templates
-  @Get('study-templates') listStudyTemplates(@CurrentUser() u: any, @Query('branchId') b?: string, @Query('styleCardId') s?: string) { return this.svc.listStudyTemplates(b || u.branchId, s); }
+  @Get('study-templates') listStudyTemplates(@CurrentUser() u: any, @Query('branchId') b?: string, @Query('styleCardId') s?: string, @Query('sampleCardId') sm?: string) { return this.svc.listStudyTemplates(b || u.branchId, s, sm); }
   @Post('study-templates') @ApiOperation({ summary: 'Create study template' }) createStudyTemplate(@Body() dto: any, @CurrentUser() u: any) { return this.svc.createStudyTemplate(dto, u.id); }
   @Get('study-templates/:id') getStudyTemplate(@Param('id') id: string) { return this.svc.getStudyTemplate(id); }
   @Put('study-templates/:id') updateStudyTemplate(@Param('id') id: string, @Body() dto: any) { return this.svc.updateStudyTemplate(id, dto); }

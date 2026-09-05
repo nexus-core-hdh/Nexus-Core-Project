@@ -13,8 +13,10 @@ import { getCurrentUser } from "@/lib/auth";
 // already built for plm/sample-cards' General tab (uploadApi.uploadSingle + the clipboard
 // image-extraction technique from components/ui/custom/minimal-tiptap's file-handler
 // extension) — same StyleCard.attachments Json array, no new storage. Picture Gallery (its own
-// tab) reads/writes this same array, filtered to images only.
-export function AttachmentsTab({ styleCardId, card, onReloadCard }: { styleCardId: string; card: any; onReloadCard: () => void }) {
+// tab) reads/writes this same array, filtered to images only. Sample Card reuses this component
+// wholesale via the optional `sampleCardId` prop — SampleCard already has its own genuinely
+// independent `attachments` column (same field name, separate storage from Style Card's).
+export function AttachmentsTab({ styleCardId, sampleCardId, card, onReloadCard }: { styleCardId?: string; sampleCardId?: string; card: any; onReloadCard: () => void }) {
   const [attachments, setAttachments] = useState<any[]>(Array.isArray(card.attachments) ? card.attachments : []);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -25,7 +27,8 @@ export function AttachmentsTab({ styleCardId, card, onReloadCard }: { styleCardI
   const persist = async (next: any[]) => {
     setAttachments(next);
     try {
-      await plmApi.styleCards.update(styleCardId, { attachments: next });
+      if (sampleCardId) await plmApi.sampleCards.update(sampleCardId, { attachments: next });
+      else await plmApi.styleCards.update(styleCardId!, { attachments: next });
       onReloadCard();
     } catch (e: any) {
       toast.error(e.message || "Failed to save attachments");
