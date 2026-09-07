@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Pin, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ListX, PanelRightClose, Pin, X, XSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,29 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { useWorkspaceStore, type WorkspaceTab } from "@/lib/store/workspace-store";
 import { useScreenIndexStore } from "@/lib/store/screen-index-store";
 import { resolveWorkspaceTabTitle } from "@/lib/workspace/resolve-tab-title";
+
+const DEFAULT_WORKSPACE_ROUTE = "/dashboard/default";
+
+type BulkCloseKind = "all" | "others" | "right";
+
+interface PendingBulkClose {
+  kind: BulkCloseKind;
+  keys: string[];
+  /** Tab to force-activate once the close completes, regardless of what closeTabs's own
+   *  fallback would have picked (see requestCloseOthers/requestCloseRight below). */
+  forceActiveKey?: string;
+  dirtyCount: number;
+}
+
+const BULK_CLOSE_COPY: Record<BulkCloseKind, string> = {
+  all: "close all tabs",
+  others: "close the other tabs",
+  right: "close the tabs to the right",
+};
 
 // Hides the scroller's native scrollbar across engines. `scrollbar-width` (a
 // real CSS property, applied inline so it never depends on Tailwind's
@@ -45,6 +65,7 @@ export function WorkspaceTabBar() {
   const rawEntries = useScreenIndexStore((s) => s.rawEntries);
   const loadRaw = useScreenIndexStore((s) => s.loadRaw);
   const [pendingClose, setPendingClose] = useState<WorkspaceTab | null>(null);
+  const [pendingBulkClose, setPendingBulkClose] = useState<PendingBulkClose | null>(null);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const tabElRef = useRef(new Map<string, HTMLDivElement>());
@@ -126,6 +147,71 @@ export function WorkspaceTabBar() {
     e.preventDefault();
   };
 
+  // Closes a group of tabs at once (Close All / Close Others / Close Tabs to the Right).
+  // `forceActiveKey`, when given, wins over closeTabs's own "activate the closed tab's
+  // previous neighbor" fallback — Close Others always wants the tab the user kept, and
+  // Close Right wants it only when the active tab was itself one of the ones closed. Route
+  // sync mirrors finishClose: land on the new active tab's href, or the default workspace
+  // route once no tabs remain (nothing under app/dashboard/(auth) registers that route as
+  // a workspace module, so it can never become a tab itself — see lib/workspace/registry.tsx).
+  const finishBulkClose = (keys: string[], forceActiveKey?: string) => {
+    useWorkspaceStore.getState().closeTabs(keys);
+    if (forceActiveKey) useWorkspaceStore.getState().activateTab(forceActiveKey);
+    const { tabs: nextTabs, activeKey: nextActiveKey } = useWorkspaceStore.getState();
+    if (nextTabs.length === 0) {
+      router.replace(DEFAULT_WORKSPACE_ROUTE, { scroll: false });
+      return;
+    }
+    const nextTab = nextTabs.find((t) => t.key === nextActiveKey) ?? nextTabs[0];
+    router.replace(nextTab.href, { scroll: false });
+  };
+
+  // Shared dirty-check gate for all three bulk operations: closes immediately if nothing
+  // in the affected group is dirty, otherwise defers to the confirmation dialog — same
+  // "don't silently destroy unsaved changes" rule requestClose already applies per-tab.
+  const requestBulkClose = (kind: BulkCloseKind, keys: string[], forceActiveKey?: string) => {
+    if (keys.length === 0) return;
+    const dirtyCount = tabs.filter((t) => keys.includes(t.key) && t.dirty).length;
+    if (dirtyCount === 0) {
+      finishBulkClose(keys, forceActiveKey);
+      return;
+    }
+    setPendingBulkClose({ kind, keys, forceActiveKey, dirtyCount });
+  };
+
+  const requestCloseAll = () => {
+    requestBulkClose("all", tabs.map((t) => t.key));
+  };
+
+  const requestCloseOthers = (tab: WorkspaceTab) => {
+    const keys = tabs.filter((t) => t.key !== tab.key).map((t) => t.key);
+    requestBulkClose("others", keys, tab.key);
+  };
+
+  const requestCloseRight = (tab: WorkspaceTab) => {
+    const index = tabs.findIndex((t) => t.key === tab.key);
+    const keys = tabs.slice(index + 1).map((t) => t.key);
+    // Only force `tab` active if the closed group actually included whatever was active —
+    // otherwise leave closeTabs's no-op fallback (activeKey untouched) alone.
+    const forceActiveKey = activeKey && keys.includes(activeKey) ? tab.key : undefined;
+    requestBulkClose("right", keys, forceActiveKey);
+  };
+
+  // Global "Close All" shortcut. A chorded combo (not a bare letter), so — like the
+  // Universal Action Menu's own shortcuts (use-universal-action-shortcuts.ts) — it's safe to
+  // fire even while a text field has focus; Chrome doesn't bind Ctrl+Shift+W itself, so this
+  // doesn't shadow an existing browser/app shortcut.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        requestCloseAll();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   if (tabs.length === 0) return null;
 
   const goTo = (tab: WorkspaceTab) => {
@@ -180,49 +266,56 @@ export function WorkspaceTabBar() {
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
           className={cn(SCROLLER_CLASS, "flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scroll-smooth px-2")}
         >
-          {tabs.map((tab) => {
+          {tabs.map((tab, tabIndex) => {
             const { title, icon: Icon } = resolveWorkspaceTabTitle(tab, entryByHref);
             const isActive = tab.key === activeKey;
             const pinned = pinnedKeys.has(tab.key);
+            const tabMenuActions: RowAction[] = [
+              { key: "close", label: "Close", icon: X, onSelect: () => requestClose(tab) },
+              { key: "close-others", label: "Close Others", icon: XSquare, onSelect: () => requestCloseOthers(tab), disabled: tabs.length <= 1 },
+              { key: "close-all", label: "Close All", icon: ListX, onSelect: requestCloseAll, shortcut: "Ctrl + Shift + W" },
+              { key: "close-right", label: "Close Tabs to the Right", icon: PanelRightClose, onSelect: () => requestCloseRight(tab), disabled: tabIndex >= tabs.length - 1 },
+            ];
             return (
-              <div
-                key={tab.key}
-                ref={(el) => {
-                  if (el) tabElRef.current.set(tab.key, el);
-                  else tabElRef.current.delete(tab.key);
-                }}
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => goTo(tab)}
-                className={cn(
-                  "group/tab flex h-8 min-w-[130px] max-w-[220px] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
-                  isActive
-                    ? "border-border bg-background font-medium text-foreground shadow-xs"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                )}
-              >
-                {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
-                <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
-                <button
-                  type="button"
-                  title={pinned ? "Unpin from My Menu" : "Pin to My Menu"}
-                  onClick={(e) => { e.stopPropagation(); pinned ? unpin(tab.key) : pin(tab.key, tab.href); }}
+              <RowContextMenu key={tab.key} actions={tabMenuActions}>
+                <div
+                  ref={(el) => {
+                    if (el) tabElRef.current.set(tab.key, el);
+                    else tabElRef.current.delete(tab.key);
+                  }}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => goTo(tab)}
                   className={cn(
-                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors",
-                    pinned ? "text-primary" : "text-muted-foreground/50 opacity-0 hover:text-foreground group-hover/tab:opacity-100"
+                    "group/tab flex h-8 min-w-[130px] max-w-[220px] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
+                    isActive
+                      ? "border-border bg-background font-medium text-foreground shadow-xs"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                   )}
                 >
-                  <Pin className={cn("h-3 w-3", pinned && "fill-current")} />
-                </button>
-                <button
-                  type="button"
-                  title="Close"
-                  onClick={(e) => { e.stopPropagation(); requestClose(tab); }}
-                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/50 opacity-0 transition-colors hover:bg-muted hover:text-foreground group-hover/tab:opacity-100"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
+                  {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
+                  <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
+                  <button
+                    type="button"
+                    title={pinned ? "Unpin from My Menu" : "Pin to My Menu"}
+                    onClick={(e) => { e.stopPropagation(); pinned ? unpin(tab.key) : pin(tab.key, tab.href); }}
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors",
+                      pinned ? "text-primary" : "text-muted-foreground/50 opacity-0 hover:text-foreground group-hover/tab:opacity-100"
+                    )}
+                  >
+                    <Pin className={cn("h-3 w-3", pinned && "fill-current")} />
+                  </button>
+                  <button
+                    type="button"
+                    title="Close"
+                    onClick={(e) => { e.stopPropagation(); requestClose(tab); }}
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/50 opacity-0 transition-colors hover:bg-muted hover:text-foreground group-hover/tab:opacity-100"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              </RowContextMenu>
             );
           })}
         </div>
@@ -269,6 +362,22 @@ export function WorkspaceTabBar() {
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label="Close All Tabs (Ctrl+Shift+W)"
+          title="Close All Tabs (Ctrl+Shift+W)"
+          onClick={requestCloseAll}
+          className="h-10 shrink-0 gap-1.5 rounded-none border-l px-2.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ListX className="h-4 w-4" />
+          <span className="text-xs font-medium">Close All</span>
+          <kbd className="rounded border border-border/60 bg-muted/60 px-1 py-0.5 text-[10px] font-normal leading-none text-muted-foreground/70">
+            Ctrl + Shift + W
+          </kbd>
+        </Button>
       </div>
 
       <AlertDialog open={!!pendingClose} onOpenChange={(open) => !open && setPendingClose(null)}>
@@ -300,6 +409,32 @@ export function WorkspaceTabBar() {
               }}
             >
               Save &amp; Close
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!pendingBulkClose} onOpenChange={(open) => !open && setPendingBulkClose(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingBulkClose?.dirtyCount === 1
+                ? "1 tab has"
+                : `${pendingBulkClose?.dirtyCount ?? 0} tabs have`}{" "}
+              unsaved changes. Do you want to {pendingBulkClose ? BULK_CLOSE_COPY[pendingBulkClose.kind] : ""} and
+              discard them?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingBulkClose(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingBulkClose) finishBulkClose(pendingBulkClose.keys, pendingBulkClose.forceActiveKey);
+                setPendingBulkClose(null);
+              }}
+            >
+              Discard &amp; Close
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

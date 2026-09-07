@@ -74,6 +74,7 @@ export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/dashboard/legacy-erp/current-accounts-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/current-accounts-list/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/fabric-cards", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/fabric-cards/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/fabric-cards-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/fabric-cards-list/page"), { ssr: false }) },
+  { path: "/dashboard/legacy-erp/fabric-yarn-requirements", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/fabric-yarn-requirements/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/financial-receipt-master-data", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/financial-receipt-master-data/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/financial-receipts", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/financial-receipts/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/general-settings", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/general-settings/page"), { ssr: false }) },

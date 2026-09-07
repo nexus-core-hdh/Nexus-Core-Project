@@ -53,6 +53,7 @@ interface WorkspaceState extends WorkspacePersisted {
   saveHandlers: Record<string, SaveHandler | undefined>;
   openTab: (tab: OpenTabInput) => void;
   closeTab: (key: string) => void;
+  closeTabs: (keys: string[]) => void;
   activateTab: (key: string) => void;
   pin: (key: string, href: string) => void;
   unpin: (key: string) => void;
@@ -160,6 +161,24 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         let nextActive = activeKey;
         if (activeKey === key) {
           const closedIndex = tabs.findIndex((t) => t.key === key);
+          nextActive = remaining[Math.max(0, closedIndex - 1)]?.key ?? remaining[0]?.key ?? null;
+        }
+        set({ tabs: remaining, activeKey: nextActive });
+      },
+
+      // Batched sibling of closeTab, for Close All / Close Others / Close Tabs to the Right —
+      // one set() for the whole group instead of one per tab, so a bulk close doesn't re-render
+      // (and re-debounce-persist) once per closed tab. Active-tab fallback mirrors closeTab's
+      // own "closed tab's previous neighbor" rule; callers that need a specific tab to end up
+      // active regardless (e.g. Close Others always activates the tab that was kept) call
+      // activateTab right after.
+      closeTabs: (keys) => {
+        const { tabs, activeKey } = get();
+        const keySet = new Set(keys);
+        const remaining = tabs.filter((t) => !keySet.has(t.key));
+        let nextActive = activeKey;
+        if (activeKey && keySet.has(activeKey)) {
+          const closedIndex = tabs.findIndex((t) => t.key === activeKey);
           nextActive = remaining[Math.max(0, closedIndex - 1)]?.key ?? remaining[0]?.key ?? null;
         }
         set({ tabs: remaining, activeKey: nextActive });

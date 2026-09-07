@@ -460,6 +460,17 @@ export const legacyErpApi = {
     listBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process") => api.get(`/legacy-erp/work-orders/${id}/bom/${lineType}`),
     upsertBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process", lines: any[]) => api.put(`/legacy-erp/work-orders/${id}/bom/${lineType}`, lines),
     transferBomFromStyleCard: (id: number, styleCardId: string) => api.post(`/legacy-erp/work-orders/${id}/bom/transfer-from-style-card`, { styleCardId }),
+    // Fabric/Yarn Requirements — reuses the Work Order's own BOM (fabric) and Fabric Card Yarn
+    // Recipe (yarn) as its data source; see fabric-yarn-requirements.service.ts.
+    requirements: {
+      getGrid: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements?type=${type}`),
+      getSaved: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/saved?type=${type}`),
+      getTotal: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/total?type=${type}`),
+      getManufacturingQuantity: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/manufacturing-quantity`),
+      getTransactions: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/transactions`),
+      calculate: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/calculate?type=${type}`, {}),
+      save: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/save?type=${type}`, {}),
+    },
   },
   fabricCards: {
     list: (search?: string) => api.get(`/legacy-erp/fabric-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),

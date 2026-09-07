@@ -14,6 +14,11 @@ const BOM_LINE_FIELDS = [
   // not listed here before the row ever reaches Prisma, so they were never persisted regardless
   // of what the frontend sent — always reloading back as 0.
   'marketLength', 'marketWidth', 'marketWeight',
+  // Legacy BOM column-set extension — see StyleBomLine's own schema comment for why these are
+  // plain new columns (no master/relation/calculation backs any of them).
+  'notForRequirement', 'useFixQuantity', 'printWastagePct', 'forex', 'manProductCode',
+  'orderCondition', 'condition', 'reasonRevision', 'dyeingInstruction', 'remarks', 'category',
+  'bodyColor', 'printColor', 'dyeingProcess',
 ];
 
 function pickBomLine(l: any) {

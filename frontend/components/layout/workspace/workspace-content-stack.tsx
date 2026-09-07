@@ -5,7 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
-import { findWorkspaceModule, isWorkspaceRoute } from "@/lib/workspace/registry";
+import { findWorkspaceModule, isWorkspaceRoute, resolveTabKey } from "@/lib/workspace/registry";
 import { WorkspaceTabContext } from "./workspace-tab-context";
 
 /**
@@ -34,10 +34,12 @@ export function WorkspaceContentStack() {
   useEffect(() => {
     const mod = findWorkspaceModule(pathname);
     if (!mod) return;
-    const alreadyOpen = useWorkspaceStore.getState().tabs.some((t) => t.key === mod.path);
-    if (alreadyOpen && useWorkspaceStore.getState().activeKey === mod.path) return;
     const query = searchParams.toString();
-    openTab({ key: mod.path, href: query ? `${pathname}?${query}` : pathname });
+    const href = query ? `${pathname}?${query}` : pathname;
+    const key = resolveTabKey(mod.path, href);
+    const alreadyOpen = useWorkspaceStore.getState().tabs.some((t) => t.key === key);
+    if (alreadyOpen && useWorkspaceStore.getState().activeKey === key) return;
+    openTab({ key, href });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, searchParams, openTab]);
 

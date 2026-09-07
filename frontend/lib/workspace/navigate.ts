@@ -1,7 +1,7 @@
 import type { useRouter } from "next/navigation";
 
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
-import { findWorkspaceModule } from "@/lib/workspace/registry";
+import { findWorkspaceModule, resolveTabKey } from "@/lib/workspace/registry";
 
 type Router = ReturnType<typeof useRouter>;
 
@@ -24,6 +24,6 @@ export function navigateOrOpenTab(router: Router, href: string, options?: { titl
     router.push(href);
     return;
   }
-  useWorkspaceStore.getState().openTab({ key: mod.path, href, title: options?.title });
+  useWorkspaceStore.getState().openTab({ key: resolveTabKey(mod.path, href), href, title: options?.title });
   router.replace(href, { scroll: false });
 }

@@ -694,6 +694,16 @@ async function main() {
           // existing, already-migrated legacy manufacturing table family (161/100/21 real
           // columns, 0 rows — first writer). Not a new table.
           { title: 'Work Order', href: '/dashboard/legacy-erp/work-orders-list', icon: 'ClipboardList', isNew: true },
+          // Fabric/Trim/Yarn Requirements — one screen/route (fabric-yarn-requirements.service.ts),
+          // three leaves distinguished by ?type=, same "one screen, N leaves via query param"
+          // convention as the Inventory Receipts submenu below. Each leaf's own explicit tab
+          // title ("Fabric Requirements"/"Trim Requirements"/"Yarn Requirements") lets all three
+          // be open as separate workspace tabs at once — see registry.tsx's MULTI_KEY_ROUTES.
+          { title: 'Fabric/Trim/Yarn Requirements', href: '#', icon: 'ClipboardList', isNew: true, items: [
+            { title: 'Fabric Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=fabric' },
+            { title: 'Trim Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=trim' },
+            { title: 'Yarn Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=yarn' },
+          ]},
           // Curated subset of the existing "Inventory Receipts" 18-leaf submenu below (the four
           // "Outside Process" types — see frontend's SUBCONTRACT_RECEIPT_TYPES) surfaced as its
           // own nav entry with an in-page type dropdown, instead of 4 more individual leaves —

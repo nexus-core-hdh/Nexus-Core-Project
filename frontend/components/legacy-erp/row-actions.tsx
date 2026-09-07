@@ -3,11 +3,11 @@
 import type { LucideIcon } from "lucide-react";
 import { MoreVertical } from "lucide-react";
 import {
-  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
+  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger,
   ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger,
   DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,11 @@ export interface RowAction {
    *  Purchase Receipt" -> dynamically loaded related receipts) instead of a plain item;
    *  `onSelect` is ignored and each child fires its own `onSelect`. */
   subActions?: RowAction[];
+  /** Display-only keyboard-shortcut hint (e.g. "Ctrl + Shift + W"), right-aligned in the menu
+   *  item via ContextMenuShortcut/DropdownMenuShortcut. Purely a visual reminder — the actual
+   *  key binding lives wherever it already did (a window keydown listener, etc.); this never
+   *  wires up its own handler, so it can't drift into a second code path for the same action. */
+  shortcut?: string;
 }
 
 function visibleActions(actions: RowAction[]) {
@@ -53,6 +58,7 @@ export function RowContextMenu({ actions, children, contentClassName }: { action
           <RenderMenuItem
             key={a.key} action={a} Item={ContextMenuItem} Separator={ContextMenuSeparator}
             Sub={ContextMenuSub} SubTrigger={ContextMenuSubTrigger} SubContent={ContextMenuSubContent}
+            Shortcut={ContextMenuShortcut}
           />
         ))}
       </ContextMenuContent>
@@ -83,6 +89,7 @@ export function RowActionsMenu({ actions, className }: { actions: RowAction[]; c
           <RenderMenuItem
             key={a.key} action={a} Item={DropdownMenuItem} Separator={DropdownMenuSeparator}
             Sub={DropdownMenuSub} SubTrigger={DropdownMenuSubTrigger} SubContent={DropdownMenuSubContent}
+            Shortcut={DropdownMenuShortcut}
           />
         ))}
       </DropdownMenuContent>
@@ -90,13 +97,14 @@ export function RowActionsMenu({ actions, className }: { actions: RowAction[]; c
   );
 }
 
-function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent }: {
+function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent, Shortcut }: {
   action: RowAction;
   Item: typeof ContextMenuItem | typeof DropdownMenuItem;
   Separator: typeof ContextMenuSeparator | typeof DropdownMenuSeparator;
   Sub: typeof ContextMenuSub | typeof DropdownMenuSub;
   SubTrigger: typeof ContextMenuSubTrigger | typeof DropdownMenuSubTrigger;
   SubContent: typeof ContextMenuSubContent | typeof DropdownMenuSubContent;
+  Shortcut: typeof ContextMenuShortcut | typeof DropdownMenuShortcut;
 }) {
   const Icon = action.icon;
   if (action.subActions) {
@@ -119,6 +127,7 @@ function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent }
                 className={c.destructive ? "text-destructive focus:text-destructive" : undefined}
               >
                 <c.icon className="h-3.5 w-3.5 mr-2" />{c.label}
+                {c.shortcut && <Shortcut>{c.shortcut}</Shortcut>}
               </Item>
             ))}
           </SubContent>
@@ -135,6 +144,7 @@ function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent }
         className={action.destructive ? "text-destructive focus:text-destructive" : undefined}
       >
         <Icon className="h-3.5 w-3.5 mr-2" />{action.label}
+        {action.shortcut && <Shortcut>{action.shortcut}</Shortcut>}
       </Item>
     </>
   );

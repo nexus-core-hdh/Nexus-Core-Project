@@ -54,6 +54,8 @@ import { ItemStatementController } from './item-statement.controller';
 import { ItemStatementService } from './item-statement.service';
 import { WorkOrderController } from './work-order.controller';
 import { WorkOrderService } from './work-order.service';
+import { FabricYarnRequirementsController } from './fabric-yarn-requirements.controller';
+import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { ApprovalModule } from '../approval/approval.module';
@@ -96,6 +98,10 @@ import { ApprovalModule } from '../approval/approval.module';
     FiReceiptController,
     ContractController,
     ItemStatementController,
+    // Registered before WorkOrderController — its own '/:id/:tab' catch-all (Explanation/
+    // Activities/Expenses satellites) would otherwise swallow '/:id/requirements' first, since
+    // Nest/Express match same-specificity routes in controller registration order.
+    FabricYarnRequirementsController,
     WorkOrderController,
   ],
   providers: [
@@ -129,6 +135,7 @@ import { ApprovalModule } from '../approval/approval.module';
     ContractAttachmentsService,
     ItemStatementService,
     WorkOrderService,
+    FabricYarnRequirementsService,
     DeleteDependencyService,
     ReceiptTraceabilityService,
   ],

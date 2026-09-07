@@ -3791,6 +3791,27 @@ model StyleBomLine {
   finishWidth     String?
   finishRoute     String?
   revision        String?
+  // Legacy BOM column-set extension (Manage Columns) — plain scalar fields matching the exact
+  // free-text/boolean/decimal convention every field above already uses; no master table backs
+  // any of these (confirmed during audit), so they're genuine new columns, not a second table.
+  // printWastagePct joins wastePct/dyeWastagePct/otherWastagePct in the SAME existing applyWaste()
+  // sum (lib/legacy-erp/waste-calc.ts takes a variadic wastePercentages list already) — not a new
+  // calculation. notForRequirement/useFixQuantity are stored flags only, deliberately not wired
+  // into the Fabric/Yarn Requirements screens or the auto-quantity formula (out of scope here).
+  notForRequirement Boolean @default(false)
+  useFixQuantity    Boolean @default(false)
+  printWastagePct   Decimal @default(0) @db.Decimal(8, 4)
+  forex             String?
+  manProductCode    String?
+  orderCondition    String?
+  condition         String?
+  reasonRevision    String?
+  dyeingInstruction String?
+  remarks           String?
+  category          String?
+  bodyColor         String?
+  printColor        String?
+  dyeingProcess     String?
   sortOrder       Int     @default(0)
 
   styleCard  StyleCard   @relation(fields: [styleCardId], references: [id], onDelete: Cascade)
@@ -3932,6 +3953,21 @@ model SampleBomLine {
   finishWidth       String?
   finishRoute       String?
   revision          String?
+  // Exact mirror of StyleBomLine's own extension above — see its comment.
+  notForRequirement Boolean @default(false)
+  useFixQuantity    Boolean @default(false)
+  printWastagePct   Decimal @default(0) @db.Decimal(8, 4)
+  forex             String?
+  manProductCode    String?
+  orderCondition    String?
+  condition         String?
+  reasonRevision    String?
+  dyeingInstruction String?
+  remarks           String?
+  category          String?
+  bodyColor         String?
+  printColor        String?
+  dyeingProcess     String?
   sortOrder         Int     @default(0)
 
   sampleCard SampleCard  @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)

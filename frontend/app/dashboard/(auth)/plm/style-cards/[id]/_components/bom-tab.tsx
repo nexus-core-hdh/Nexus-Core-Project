@@ -67,6 +67,25 @@ type BomRow = {
   finishWidth: string;
   finishRoute: string;
   revision: string;
+  // Legacy BOM column-set extension (Manage Columns) — real StyleBomLine/SampleBomLine columns
+  // (see the model's own schema comment), plain scalar fields with no master/relation backing
+  // them. Blank/false/0 for every Work Order row (MA_RecipeItem has no equivalent columns and
+  // save() below never sends these in Work Order mode — same "genuinely unsupported, not sent"
+  // convention rowColumn already used before this change).
+  notForRequirement: boolean;
+  useFixQuantity: boolean;
+  printWastagePct: number;
+  forex: string;
+  manProductCode: string;
+  orderCondition: string;
+  condition: string;
+  reasonRevision: string;
+  dyeingInstruction: string;
+  remarks: string;
+  category: string;
+  bodyColor: string;
+  printColor: string;
+  dyeingProcess: string;
 };
 
 const LINE_TYPES = [
@@ -82,6 +101,9 @@ const blankRow = (lineType: string): BomRow => ({
   marketLength: 0, marketWidth: 0, marketWeight: 0,
   quantity: 0, wastePct: 0, dyeWastagePct: 0, otherWastagePct: 0, unitPrice: 0, component: "",
   dia: "", gauge: "", finishWidth: "", finishRoute: "", revision: "",
+  notForRequirement: false, useFixQuantity: false, printWastagePct: 0, forex: "", manProductCode: "",
+  orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
+  category: "", bodyColor: "", printColor: "", dyeingProcess: "",
 });
 
 // Automatic Fabric quantity calculation — Area (m²) = MarketWidth * MarketLength / 10,000, then
@@ -203,45 +225,134 @@ type ColKey =
   | "rowColumn" | "swatchCardId" | "willBeCut" | "mainFabric" | "unit"
   | "marketLength" | "marketWidth" | "marketWeight" | "quantity"
   | "wastePct" | "dyeWastagePct" | "otherWastagePct" | "totalWaste" | "calculatedQty"
-  | "unitPrice" | "component" | "dia" | "gauge" | "finishWidth" | "finishRoute" | "revision";
+  | "unitPrice" | "component" | "dia" | "gauge" | "finishWidth" | "finishRoute" | "revision"
+  // ---- Legacy column-set extension below (see the audit report for the A/B/C/D mapping of
+  // every requested legacy column — labels that turned out to be exact aliases of a column
+  // above, e.g. "Marker Width" -> marketWidth, "Price" -> unitPrice, "Process Name" -> process,
+  // "Choose Ornament" -> fabricName, "Route Code"/"Route Name" -> the header Route fields below,
+  // are NOT duplicated here, per "reuse existing field rather than duplicating it".
+  // Item No — calculated (row position within its tab group), no storage.
+  | "itemNo"
+  // Existing-relation, read-only display (Fabric Card's own master fields, already fetched into
+  // fabricCardCacheRef/processCards — never persisted a second time on the BOM line itself).
+  | "fabricSupplierCode" | "fabricSupplierName" | "fabricType" | "processCode"
+  | "rawWidth" | "rawWeight" | "pus" | "fine"
+  // New real StyleBomLine/SampleBomLine columns (editable, persisted, whitelisted server-side).
+  | "notForRequirement" | "useFixQuantity" | "printWastagePct" | "forex" | "manProductCode"
+  | "orderCondition" | "condition" | "reasonRevision" | "dyeingInstruction" | "remarks"
+  | "category" | "bodyColor" | "printColor" | "dyeingProcess"
+  // Genuinely unavailable — no existing master/relation/calculation found for these during the
+  // audit (no Certification or Country table, no per-line Size/Variant-Type/Recipe-Group
+  // relation). Listed per the task's own "list if appropriate, do not invent persistence"
+  // instruction; always render "—", never sent on save.
+  | "recipeGroupNo" | "fabricTypeExplanation" | "certificationCode" | "certificationName"
+  | "countryCode" | "countryName" | "variant1Explanation" | "variant2Explanation"
+  | "selectSize" | "productionVariants" | "knittedInVariants" | "markerCount"
+  | "routeCodeLine" | "routeNameLine";
 
 type ColumnDef = { key: ColKey; label: string; align?: "left" | "right" | "center" };
 
 const COLUMNS: ColumnDef[] = [
+  { key: "itemNo", label: "Item No", align: "center" },
   { key: "fabricCode", label: "Fabric Code" },
   { key: "fabricName", label: "Fabric Name" },
+  { key: "fabricSupplierCode", label: "Fabric Card Supplier Code" },
+  { key: "fabricSupplierName", label: "Fabric Card Supplier Name" },
   { key: "explanation", label: "Explanation" },
-  { key: "placement", label: "Placement" },
+  { key: "recipeGroupNo", label: "Recipe Group No" },
+  { key: "fabricType", label: "Fabric Type" },
+  { key: "fabricTypeExplanation", label: "Fabric Type Explanation" },
+  { key: "routeCodeLine", label: "Route Code" },
+  { key: "routeNameLine", label: "Route Name" },
+  { key: "certificationCode", label: "Certification Code" },
+  { key: "certificationName", label: "Certification Name" },
   { key: "process", label: "Process" },
+  { key: "processCode", label: "Process Code" },
+  { key: "countryCode", label: "Country Code" },
+  { key: "countryName", label: "Country Name" },
   { key: "variant", label: "Variant-1" },
+  { key: "variant1Explanation", label: "Variant-1 Explanation" },
   // Yarn Recipe (yarn-recipe-dialog.tsx) has both Variant-1 and Variant-2; StyleBomLine (Style/
   // Sample Card's own persistence) has no variant2 column at all, but MA_RecipeItem (Work Order's)
   // genuinely does — hidden outside Work Order mode by columnDefsForTab below rather than shown
   // as a dead, never-persisted field on the other two callers.
   { key: "variant2", label: "Variant-2" },
+  { key: "variant2Explanation", label: "Variant-2 Explanation" },
   { key: "rowColumn", label: "Row/Column" },
   { key: "swatchCardId", label: "Choose Color" },
+  { key: "selectSize", label: "Select Size" },
+  { key: "productionVariants", label: "Production Variants" },
   { key: "willBeCut", label: "Will be Cut", align: "center" },
   { key: "mainFabric", label: "Main Fabric", align: "center" },
+  { key: "knittedInVariants", label: "Knitted in Variants" },
+  { key: "notForRequirement", label: "NOT for Requirement", align: "center" },
+  { key: "useFixQuantity", label: "Use Fix Quantity", align: "center" },
+  { key: "rawWidth", label: "Raw Width", align: "right" },
+  { key: "rawWeight", label: "Raw Weight", align: "right" },
   { key: "unit", label: "Unit" },
   { key: "marketLength", label: "Market Length", align: "right" },
   { key: "marketWidth", label: "Market Width", align: "right" },
   { key: "marketWeight", label: "Market Weight", align: "right" },
+  { key: "pus", label: "Pus", align: "right" },
+  { key: "fine", label: "Fine", align: "right" },
+  { key: "markerCount", label: "Marker Count", align: "right" },
   { key: "quantity", label: "Quantity", align: "right" },
   { key: "wastePct", label: "Waste %", align: "right" },
   { key: "dyeWastagePct", label: "Dye Wastage %", align: "right" },
+  { key: "printWastagePct", label: "Print Wastage %", align: "right" },
   { key: "otherWastagePct", label: "Other Wastage %", align: "right" },
+  { key: "forex", label: "Forex" },
   { key: "totalWaste", label: "Total Waste %", align: "right" },
   { key: "calculatedQty", label: "Calculated Qty", align: "right" },
   { key: "unitPrice", label: "Unit Price", align: "right" },
+  { key: "manProductCode", label: "Man. Product Code" },
+  { key: "orderCondition", label: "Order Condition" },
+  { key: "condition", label: "Condition" },
   { key: "component", label: "Component" },
   { key: "dia", label: "Dia" },
   { key: "gauge", label: "Gauge" },
   { key: "finishWidth", label: "Finish Width" },
   { key: "finishRoute", label: "Finish Route" },
   { key: "revision", label: "Revision" },
+  { key: "reasonRevision", label: "Reason Revision" },
+  { key: "dyeingInstruction", label: "Dyeing Instruction" },
+  { key: "remarks", label: "Remarks" },
+  { key: "category", label: "Category" },
+  { key: "placement", label: "Placement" },
+  { key: "bodyColor", label: "Body Color" },
+  { key: "printColor", label: "Print Color" },
+  { key: "dyeingProcess", label: "Dyeing Process" },
 ];
 const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
+
+// Every newly-added column above stays hidden until a user opts in via Manage Columns — this
+// only seeds a grid that has never saved a preference (useGridColumns' own `defaultHidden`
+// contract), so the "practical default visible set" every existing user already sees is
+// byte-for-byte unchanged.
+const NEW_COLUMNS_DEFAULT_HIDDEN: ColKey[] = [
+  "itemNo", "fabricSupplierCode", "fabricSupplierName", "recipeGroupNo", "fabricType",
+  "fabricTypeExplanation", "routeCodeLine", "routeNameLine", "certificationCode", "certificationName",
+  "processCode", "countryCode", "countryName", "variant1Explanation", "variant2Explanation",
+  "selectSize", "productionVariants", "knittedInVariants", "notForRequirement", "useFixQuantity",
+  "rawWidth", "rawWeight", "pus", "fine", "markerCount", "printWastagePct", "forex",
+  "manProductCode", "orderCondition", "condition", "reasonRevision", "dyeingInstruction",
+  "remarks", "category", "bodyColor", "printColor", "dyeingProcess",
+];
+
+// D-classified columns (see the ColKey union's own comment) — no existing master/relation/
+// calculation backs these; always render as a plain unavailable placeholder, never editable,
+// never sent on save.
+const UNAVAILABLE_COLS: ColKey[] = [
+  "recipeGroupNo", "fabricTypeExplanation", "certificationCode", "certificationName",
+  "countryCode", "countryName", "variant1Explanation", "variant2Explanation",
+  "selectSize", "productionVariants", "knittedInVariants", "markerCount",
+  "routeCodeLine", "routeNameLine",
+];
+const UNAVAILABLE_TITLE: Partial<Record<ColKey, string>> = {
+  routeCodeLine: "Already available as the BOM header's own Route/Route Code fields above — not duplicated per line.",
+  routeNameLine: "Already available as the BOM header's own Route picker above — not duplicated per line.",
+  knittedInVariants: "Available on the selected Fabric Card's own Yarn Recipe (Scissors icon) — not a per BOM-line field.",
+};
 
 // Fabric Code/Name identify the line and always stay first & visible — same rule as the
 // Purchase Receipt grid's own FIXED_COLS.
@@ -256,6 +367,11 @@ const FIXED_COLS: ColKey[] = ["fabricCode", "fabricName"];
 const TRIM_HIDDEN_COLS: ColKey[] = [
   "willBeCut", "mainFabric", "marketLength", "marketWidth", "marketWeight",
   "dia", "gauge", "finishWidth", "finishRoute",
+  // Same fabric-only rule as above, extended to this task's new Fabric-Card-physical-property
+  // columns (Raw Width/Weight, Pus, Fine, Fabric Type all come from IM_Item Detail-tab columns
+  // Trim Cards don't carry) and the fabric-only auto-quantity override flag.
+  "rawWidth", "rawWeight", "pus", "fine", "fabricType", "fabricTypeExplanation",
+  "useFixQuantity", "knittedInVariants", "markerCount",
 ];
 
 // The shared column set/order/widths (Manage Columns) stays one global user preference across
@@ -284,6 +400,14 @@ const DEFAULT_WIDTHS: Record<ColKey, number> = {
   marketLength: 110, marketWidth: 110, marketWeight: 120, quantity: 100,
   wastePct: 90, dyeWastagePct: 110, otherWastagePct: 110, totalWaste: 110, calculatedQty: 110,
   unitPrice: 100, component: 130, dia: 90, gauge: 90, finishWidth: 120, finishRoute: 120, revision: 110,
+  itemNo: 70, fabricSupplierCode: 150, fabricSupplierName: 170, recipeGroupNo: 130, fabricType: 130,
+  fabricTypeExplanation: 170, routeCodeLine: 110, routeNameLine: 130, certificationCode: 140,
+  certificationName: 160, processCode: 110, countryCode: 110, countryName: 130,
+  variant1Explanation: 150, variant2Explanation: 150, selectSize: 110, productionVariants: 150,
+  knittedInVariants: 150, notForRequirement: 130, useFixQuantity: 120, rawWidth: 100, rawWeight: 100,
+  pus: 80, fine: 80, markerCount: 110, printWastagePct: 110, forex: 100, manProductCode: 150,
+  orderCondition: 130, condition: 120, reasonRevision: 150, dyeingInstruction: 160, remarks: 160,
+  category: 120, bodyColor: 110, printColor: 110, dyeingProcess: 130,
 };
 const MIN_WIDTHS: Record<ColKey, number> = {
   fabricCode: 100, fabricName: 140, explanation: 130, placement: 90, process: 90, variant: 80, variant2: 80,
@@ -291,14 +415,27 @@ const MIN_WIDTHS: Record<ColKey, number> = {
   marketLength: 80, marketWidth: 80, marketWeight: 90, quantity: 80,
   wastePct: 70, dyeWastagePct: 80, otherWastagePct: 80, totalWaste: 80, calculatedQty: 80,
   unitPrice: 80, component: 90, dia: 70, gauge: 70, finishWidth: 90, finishRoute: 90, revision: 80,
+  itemNo: 50, fabricSupplierCode: 100, fabricSupplierName: 110, recipeGroupNo: 90, fabricType: 90,
+  fabricTypeExplanation: 110, routeCodeLine: 80, routeNameLine: 90, certificationCode: 100,
+  certificationName: 110, processCode: 80, countryCode: 80, countryName: 90,
+  variant1Explanation: 100, variant2Explanation: 100, selectSize: 80, productionVariants: 100,
+  knittedInVariants: 100, notForRequirement: 90, useFixQuantity: 90, rawWidth: 70, rawWeight: 70,
+  pus: 60, fine: 60, markerCount: 80, printWastagePct: 80, forex: 70, manProductCode: 100,
+  orderCondition: 90, condition: 80, reasonRevision: 100, dyeingInstruction: 110, remarks: 110,
+  category: 80, bodyColor: 80, printColor: 80, dyeingProcess: 90,
 };
 const DEL_W = 40;
 
 // Extra per-column TableCell classes — the same overrides the original hardcoded markup used
 // (select cells get "p-1", the two read-only computed columns get right-aligned mono text).
 const cellClassFor = (key: ColKey): string | undefined => {
-  if (key === "process" || key === "swatchCardId") return "p-1";
-  if (key === "totalWaste" || key === "calculatedQty") return "text-right font-mono text-xs px-2";
+  if (key === "process" || key === "swatchCardId" || key === "forex") return "p-1";
+  if (
+    key === "totalWaste" || key === "calculatedQty" || key === "fabricSupplierCode" ||
+    key === "fabricSupplierName" || key === "fabricType" || key === "processCode" ||
+    key === "rawWidth" || key === "rawWeight" || key === "pus" || key === "fine"
+  ) return "text-right font-mono text-xs px-2";
+  if (key === "itemNo") return "text-center font-mono text-xs px-2 text-muted-foreground";
   return undefined;
 };
 
@@ -408,6 +545,36 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     setYarnRecipeByCard((prev) => ({ ...prev, [key]: lines }));
     return lines;
   };
+  // Fabric Card's own CurrentAccountId ("Manufacturer Info" / supplier — fabric-card.service.ts's
+  // HEADER_COLUMNS) resolved to its FI_Account Code/Name (legacyErpApi.accounts.get, the same
+  // endpoint the Current Account screens themselves use) — fetched lazily per distinct id, the
+  // same on-demand + cached pattern as ensureItemUnits/ensureYarnRecipe above, since this column
+  // stays hidden by default and most BOMs only ever reference a handful of distinct cards.
+  // Powers BOTH "Current Account Code/Name" and "Fabric Card Supplier Code/Name" (two legacy
+  // labels for the exact same relation — see the audit report), never fetched twice for the
+  // same card.
+  const [accountsById, setAccountsById] = useState<Record<string, any>>({});
+  const accountsCacheRef = useRef<Record<string, any | Promise<any>>>({});
+  const ensureAccount = async (accountId: number): Promise<any> => {
+    const key = String(accountId);
+    const cached = accountsCacheRef.current[key];
+    if (cached) return cached;
+    const promise = legacyErpApi.accounts.get(accountId).catch(() => null);
+    accountsCacheRef.current[key] = promise;
+    const account = await promise;
+    accountsCacheRef.current[key] = account;
+    setAccountsById((prev) => ({ ...prev, [key]: account }));
+    return account;
+  };
+  // Fab Type Master (MD_Fabric, via the generic legacy-master-lookup 'fabric' key) — the master
+  // Fabric Card's own FabricTypeId already resolves through (fabric-card.service.ts's
+  // IDENTITY_FIELDS). A small reference table, loaded once in load() alongside Swatch/Process/
+  // Route, not lazily per row.
+  const [fabricTypes, setFabricTypes] = useState<any[]>([]);
+  // Forex/Currency master (MD_Forex, same generic lookup) — StyleBomLine/SampleBomLine have no
+  // existing Forex column (confirmed during audit); loaded once, same as Fabric Type above, to
+  // back the new "Forex" column's dropdown.
+  const [forexOptions, setForexOptions] = useState<any[]>([]);
   // Which row's Search icon opened the full Fabric/Trim Card grid lookup (CardLookupDialog),
   // and which card type it should search — null when the dialog is closed.
   const [lookupTarget, setLookupTarget] = useState<{ rowId: string; lineType: "fabric" | "trim" } | null>(null);
@@ -436,7 +603,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   const load = async () => {
     setLoading(true);
     try {
-      const [lines, sw, pc, fab, trim, routes] = await Promise.all([
+      const [lines, sw, pc, fab, trim, routes, fabTypes, forexList] = await Promise.all([
         isWorkOrderMode
           ? Promise.all(BOM_LINE_TYPE_VALUES.map((lt) => legacyErpApi.workOrders.listBom(workOrder!.workOrderId, lt).catch(() => [])))
               .then((byType) => byType.flatMap((rowsOfType: any[], i) => (rowsOfType || []).map((l: any) => ({ ...l, lineType: BOM_LINE_TYPE_VALUES[i] }))))
@@ -448,6 +615,8 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         legacyErpApi.fabricCards.list().catch(() => []),
         legacyErpApi.trimInventoryCards.list().catch(() => []),
         plmApi.routeCards.list().catch(() => []),
+        legacyErpApi.masterLookup.list('fabric').catch(() => []),
+        legacyErpApi.masterLookup.list('forex').catch(() => []),
       ]);
       const fabList = Array.isArray(fab) ? fab : [];
       const trimList = Array.isArray(trim) ? trim : [];
@@ -465,6 +634,11 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             wastePct: num(l.wastePct), dyeWastagePct: num(l.dyeWastagePct), otherWastagePct: num(l.otherWastagePct),
             unitPrice: num(l.unitPrice), component: l.component || "", dia: l.dia || "", gauge: l.gauge || "",
             finishWidth: l.finishWidth || "", finishRoute: l.finishRoute || "", revision: l.revision || "",
+            notForRequirement: !!l.notForRequirement, useFixQuantity: !!l.useFixQuantity,
+            printWastagePct: num(l.printWastagePct), forex: l.forex || "", manProductCode: l.manProductCode || "",
+            orderCondition: l.orderCondition || "", condition: l.condition || "", reasonRevision: l.reasonRevision || "",
+            dyeingInstruction: l.dyeingInstruction || "", remarks: l.remarks || "", category: l.category || "",
+            bodyColor: l.bodyColor || "", printColor: l.printColor || "", dyeingProcess: l.dyeingProcess || "",
           };
         }
         // Work Order / MA_RecipeItem — fabricCode/fabricName/unit have no denormalized column
@@ -482,12 +656,19 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           wastePct: num(l.wastage), dyeWastagePct: 0, otherWastagePct: 0,
           unitPrice: num(l.price), component: l.uD_Component || "", dia: l.uD_Dia || "", gauge: l.uD_Guage || "",
           finishWidth: l.uD_FinishWidth || "", finishRoute: l.uD_FinishRoute || "", revision: l.uD_Revision || "",
+          // MA_RecipeItem has no equivalent columns for this task's extension (see BomRow's own
+          // comment) — always blank/false here, and save() never sends these in Work Order mode.
+          notForRequirement: false, useFixQuantity: false, printWastagePct: 0, forex: "", manProductCode: "",
+          orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
+          category: "", bodyColor: "", printColor: "", dyeingProcess: "",
         };
       });
       setRows(loadedRows);
       setSwatches(Array.isArray(sw) ? sw : (sw as any)?.data || []);
       setProcessCards(Array.isArray(pc) ? pc : (pc as any)?.data || []);
       setRouteCards(Array.isArray(routes) ? routes : (routes as any)?.data || []);
+      setFabricTypes(Array.isArray(fabTypes) ? fabTypes : (fabTypes as any)?.data || []);
+      setForexOptions(Array.isArray(forexList) ? forexList : (forexList as any)?.data || []);
       setFabricOptions(fabList.map((row: any) => ({ id: String(row.id), code: row.inventoryCode, name: row.inventoryName })));
       setTrimOptions(trimList.map((row: any) => ({ id: String(row.id), code: row.inventoryCode, name: row.inventoryName })));
       // Populate the Unit dropdown for every already-saved row that already has a selected card —
@@ -629,7 +810,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             swatchCardId: r.swatchCardId ? Number(r.swatchCardId) : undefined,
             // Same combined-total mapping transferBomFromStyleCard uses — see RECIPE_ITEM_COLUMNS'
             // own comment on why only one Wastage column exists here.
-            wastage: (r.wastePct || 0) + (r.dyeWastagePct || 0) + (r.otherWastagePct || 0),
+            wastage: (r.wastePct || 0) + (r.dyeWastagePct || 0) + (r.otherWastagePct || 0) + (r.printWastagePct || 0),
             uD_Component: r.component || undefined, uD_Dia: r.dia || undefined, uD_Guage: r.gauge || undefined,
             uD_FinishWidth: r.finishWidth || undefined, uD_FinishRoute: r.finishRoute || undefined,
             uD_Revision: r.revision || undefined, uD_Placement: r.placement || undefined, uD_Remarks: r.process || undefined,
@@ -679,6 +860,9 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     storageKey: isWorkOrderMode ? "workOrderBomGrid" : isSampleMode ? "sampleBomLineGrid" : "bomLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
+    // Seeds a grid with no saved preference yet only — every existing user's already-visible set
+    // is untouched (see NEW_COLUMNS_DEFAULT_HIDDEN's own comment).
+    defaultHidden: NEW_COLUMNS_DEFAULT_HIDDEN,
   });
   const displayColumnDefs = useMemo(
     () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
@@ -692,7 +876,85 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   // ---- Cell content per column key — identical field bindings/editors to the original
   // hardcoded markup, just looked up by key so Manage Columns can show/hide/reorder them.
   const renderCell = (r: BomRow, key: ColKey) => {
+    // D-classified legacy columns (see UNAVAILABLE_COLS/UNAVAILABLE_TITLE above) — one shared
+    // placeholder instead of 12 near-identical cases, always "—", never editable, never sent on
+    // save (renderCell never even reaches the switch below for these keys).
+    if (UNAVAILABLE_COLS.includes(key)) {
+      return <span className="block px-2 text-xs text-muted-foreground/60" title={UNAVAILABLE_TITLE[key] || "Not available — no existing source field or master for this legacy column."}>—</span>;
+    }
     switch (key) {
+      case "itemNo": {
+        const siblings = grouped[r.lineType] || [];
+        const idx = siblings.findIndex((row) => row.id === r.id);
+        return <span>{idx + 1}</span>;
+      }
+      case "fabricSupplierCode":
+      case "fabricSupplierName": {
+        const accountId = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)]?.currentAccountId : null;
+        if (accountId == null) return <span className="block px-2 text-right text-xs text-muted-foreground">—</span>;
+        const cached = accountsById[String(accountId)];
+        if (cached === undefined) { ensureAccount(accountId); return <span className="block px-2 text-right text-xs text-muted-foreground">…</span>; }
+        const value = key === "fabricSupplierCode" ? cached?.currentAccountCode : cached?.currentAccountName;
+        return <span>{value || "—"}</span>;
+      }
+      case "fabricType": {
+        const typeId = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)]?.fabricTypeId : null;
+        const match = typeId != null ? fabricTypes.find((t: any) => String(t.id) === String(typeId)) : null;
+        return <span>{match?.name || "—"}</span>;
+      }
+      case "processCode": {
+        const match = processCards.find((p: any) => p.name === r.process);
+        return <span>{match?.code || "—"}</span>;
+      }
+      case "rawWidth": {
+        const card = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)] : null;
+        return <span>{card?.fRawWidth ?? "—"}</span>;
+      }
+      case "rawWeight": {
+        const card = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)] : null;
+        return <span>{card?.fRawWeight ?? "—"}</span>;
+      }
+      case "pus": {
+        const card = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)] : null;
+        return <span>{card?.fPus ?? "—"}</span>;
+      }
+      case "fine": {
+        const card = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)] : null;
+        return <span>{card?.fFine ?? "—"}</span>;
+      }
+      case "notForRequirement":
+        return <GridCheckbox checked={r.notForRequirement} onChange={(v) => update(r.id, { notForRequirement: v })} />;
+      case "useFixQuantity":
+        return <GridCheckbox checked={r.useFixQuantity} onChange={(v) => update(r.id, { useFixQuantity: v })} />;
+      case "printWastagePct":
+        return <GridInput type="number" align="right" value={r.printWastagePct} onChange={(v) => update(r.id, { printWastagePct: parseFloat(v) || 0 })} />;
+      case "forex":
+        return (
+          <select value={r.forex} onChange={(e) => update(r.id, { forex: e.target.value })} className="h-7 w-full text-xs bg-transparent outline-none rounded focus:bg-accent/50">
+            <option value="">—</option>
+            {forexOptions.map((f: any) => <option key={f.id} value={f.code || f.name}>{f.code || f.name}</option>)}
+          </select>
+        );
+      case "manProductCode":
+        return <GridInput value={r.manProductCode} onChange={(v) => update(r.id, { manProductCode: v })} />;
+      case "orderCondition":
+        return <GridInput value={r.orderCondition} onChange={(v) => update(r.id, { orderCondition: v })} />;
+      case "condition":
+        return <GridInput value={r.condition} onChange={(v) => update(r.id, { condition: v })} />;
+      case "reasonRevision":
+        return <GridInput value={r.reasonRevision} onChange={(v) => update(r.id, { reasonRevision: v })} />;
+      case "dyeingInstruction":
+        return <GridInput value={r.dyeingInstruction} onChange={(v) => update(r.id, { dyeingInstruction: v })} />;
+      case "remarks":
+        return <GridInput value={r.remarks} onChange={(v) => update(r.id, { remarks: v })} />;
+      case "category":
+        return <GridInput value={r.category} onChange={(v) => update(r.id, { category: v })} />;
+      case "bodyColor":
+        return <GridInput value={r.bodyColor} onChange={(v) => update(r.id, { bodyColor: v })} />;
+      case "printColor":
+        return <GridInput value={r.printColor} onChange={(v) => update(r.id, { printColor: v })} />;
+      case "dyeingProcess":
+        return <GridInput value={r.dyeingProcess} onChange={(v) => update(r.id, { dyeingProcess: v })} />;
       case "fabricCode":
         return r.lineType === "fabric" || r.lineType === "trim"
           ? <span className="px-2 text-xs text-muted-foreground font-mono">{r.fabricCode || "—"}</span>
@@ -864,7 +1126,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         // calculation the Calculated Qty column shows), never the raw pre-waste Quantity itself.
         // Yarn row waste is NOT applied here — see yarnBreakdownFromRecipe's own comment; that
         // belongs to a separate future Yarn Requirement/Consumption screen, not this Fabric BOM.
-        const { totalWastePct, finalQty: calculatedQuantity } = applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.otherWastagePct);
+        const { totalWastePct, finalQty: calculatedQuantity } = applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.printWastagePct, r.otherWastagePct);
         const yarnRows = (recipeLines && yarnBreakdownFromRecipe(calculatedQuantity, recipeLines)) || yarnConsumptionBreakdown(calculatedQuantity, card);
         const title = [
           "Auto-calculated: Area (m²) = Market Width × Market Length / 10,000, then Quantity (g) = Area × Weight/m², converted into the selected Unit using the Fabric Card's configured Item Units.",
@@ -880,9 +1142,9 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       case "otherWastagePct":
         return <GridInput type="number" align="right" value={r.otherWastagePct} onChange={(v) => update(r.id, { otherWastagePct: parseFloat(v) || 0 })} />;
       case "totalWaste":
-        return <>{applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.otherWastagePct).totalWastePct.toFixed(2)}</>;
+        return <>{applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.printWastagePct, r.otherWastagePct).totalWastePct.toFixed(2)}</>;
       case "calculatedQty":
-        return <>{applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.otherWastagePct).finalQty.toFixed(2)}</>;
+        return <>{applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.printWastagePct, r.otherWastagePct).finalQty.toFixed(2)}</>;
       case "unitPrice":
         return <GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
       case "component":
@@ -1091,7 +1353,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             // The Fabric's own Calculated Quantity (Quantity x (1 + Waste/Dye Wastage/Other
             // Wastage %), same non-compound calc as the "calculatedQty" column) — Yarn Recipe
             // rows distribute from this, never the raw pre-waste Quantity.
-            fabricQuantity={applyWaste(row.quantity, row.wastePct, row.dyeWastagePct, row.otherWastagePct).finalQty}
+            fabricQuantity={applyWaste(row.quantity, row.wastePct, row.dyeWastagePct, row.printWastagePct, row.otherWastagePct).finalQty}
             fabricUnit={row.unit}
           />
         );
