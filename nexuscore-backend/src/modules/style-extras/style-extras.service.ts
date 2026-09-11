@@ -2,10 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LegacyMasterLookupService } from '../legacy-erp/legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit } from '../legacy-erp/unit-conversion.util';
+import { assertAllNonNegative } from '../legacy-erp/numeric-guards.util';
 
 const BOM_LINE_FIELDS = [
   'lineType', 'fabricInventoryId', 'fabricCode', 'fabricName', 'unitId', 'explanation', 'placement', 'process', 'variant',
-  'rowColumn', 'swatchCardId', 'willBeCut', 'mainFabric', 'unit', 'quantity', 'wastePct',
+  'rowColumn', 'colorCardId', 'willBeCut', 'mainFabric', 'unit', 'quantity', 'wastePct',
   'dyeWastagePct', 'otherWastagePct', 'unitPrice', 'component', 'dia', 'gauge',
   'finishWidth', 'finishRoute', 'revision',
   // Real StyleBomLine columns (added — see the model's own comment). Previously absent from this
@@ -24,11 +25,19 @@ const BOM_LINE_FIELDS = [
 function pickBomLine(l: any) {
   const out: any = {};
   for (const f of BOM_LINE_FIELDS) if (l[f] !== undefined) out[f] = l[f];
-  // swatchCardId is a real FK to SwatchCard (nullable) — the BOM grid's "Choose Color" cell
-  // sends "" (its own <select> empty-option value), not null, when no color is picked. "" isn't
-  // a valid SwatchCard.id, so Postgres rejects it as a foreign key violation on insert; only an
-  // actual NULL satisfies "no color selected".
-  if (out.swatchCardId === '') out.swatchCardId = null;
+  // colorCardId is a real FK to ColorCard (nullable) — the BOM grid's "Choose Color" cell can
+  // send "" when no color is picked/resolved. "" isn't a valid ColorCard.id, so Postgres rejects
+  // it as a foreign key violation on insert; only an actual NULL satisfies "no color selected".
+  if (out.colorCardId === '') out.colorCardId = null;
+  // Normal business quantities/values — none of these has a legitimate signed meaning on a BOM
+  // line (no discount/reversal/adjustment concept exists here); Consumption, Wastage %s, Market
+  // dimensions and Unit Price are always magnitudes.
+  assertAllNonNegative({
+    Quantity: out.quantity, 'Waste %': out.wastePct, 'Dye Wastage %': out.dyeWastagePct,
+    'Other Wastage %': out.otherWastagePct, 'Print Wastage %': out.printWastagePct,
+    'Unit Price': out.unitPrice, 'Market Length': out.marketLength, 'Market Width': out.marketWidth,
+    'Market Weight': out.marketWeight,
+  });
   return out;
 }
 
@@ -66,7 +75,7 @@ export class StyleExtrasService {
   async getBomLines(styleCardId: string) {
     return this.prisma.styleBomLine.findMany({
       where: { styleCardId },
-      include: { swatchCard: { select: { id: true, colorName: true, colorCode: true, pantoneCode: true } } },
+      include: { colorCard: { select: { id: true, code: true, name: true, color: true } } },
       orderBy: { sortOrder: 'asc' },
     });
   }
@@ -100,7 +109,7 @@ export class StyleExtrasService {
   async getSampleBomLines(sampleCardId: string) {
     return this.prisma.sampleBomLine.findMany({
       where: { sampleCardId },
-      include: { swatchCard: { select: { id: true, colorName: true, colorCode: true, pantoneCode: true } } },
+      include: { colorCard: { select: { id: true, code: true, name: true, color: true } } },
       orderBy: { sortOrder: 'asc' },
     });
   }

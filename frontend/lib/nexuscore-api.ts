@@ -443,7 +443,16 @@ export const legacyErpApi = {
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/yarn-cards/${id}/attachments/${attId}/content`,
   },
   workOrders: {
-    list: (search?: string) => api.get(`/legacy-erp/work-orders${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    // Plain string keeps the existing search-box call site unchanged; the object form adds the
+    // optional styleCardId filter (Style Card's own Order Info tab) without a second method.
+    list: (opts?: string | { search?: string; styleCardId?: string }) => {
+      const o = typeof opts === "string" ? { search: opts } : opts || {};
+      const qs = new URLSearchParams();
+      if (o.search) qs.set("search", o.search);
+      if (o.styleCardId) qs.set("styleCardId", o.styleCardId);
+      const q = qs.toString();
+      return api.get(`/legacy-erp/work-orders${q ? `?${q}` : ""}`);
+    },
     get: (id: number) => api.get(`/legacy-erp/work-orders/${id}`),
     previewNextCode: () => api.get(`/legacy-erp/work-orders/next-code`),
     create: (d: any) => api.post('/legacy-erp/work-orders', d),
@@ -467,9 +476,22 @@ export const legacyErpApi = {
       getSaved: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/saved?type=${type}`),
       getTotal: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/total?type=${type}`),
       getManufacturingQuantity: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/manufacturing-quantity`),
+      // Multi-Color BOM mapping validation — additive, non-fatal warnings only (see the service's
+      // own comment on why Calculate/Save never throw for this).
+      getMappingWarnings: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/mapping-warnings?type=${type}`),
       getTransactions: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/transactions`),
       calculate: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/calculate?type=${type}`, {}),
       save: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/save?type=${type}`, {}),
+      // Requirement locking — real, persistent, database-enforced (MA_WorkOrder's own per-type
+      // lock-flag columns; see fabric-yarn-requirements.service.ts). Scoped per Work Order AND per
+      // Requirement type, matching the existing 3 independent column triples.
+      getLockStatus: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/lock-status?type=${type}`),
+      lock: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/lock?type=${type}`, {}),
+      unlock: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/unlock?type=${type}`, {}),
+      // Deletes exactly ONE saved Requirement record — recordId is a real MA_Requirement.RecId
+      // (getSaved's own `id` field), never a bulk "delete everything of this type" call.
+      deleteRecord: (workOrderId: number, type: "fabric" | "trim" | "yarn", recordId: number | string) => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/${recordId}?type=${type}`),
+      deleteAll: (workOrderId: number) => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/all`),
     },
   },
   fabricCards: {

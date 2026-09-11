@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
+import { assertAllNonNegative } from './numeric-guards.util';
 
 // Work Order — NOT a new entity. MA_WorkOrder/MA_WorkOrderItem/MA_WorkOrderItemVariant are
 // already-existing, already-migrated legacy tables (confirmed via information_schema: 161/100/21
@@ -44,6 +45,16 @@ export const HEADER_COLUMNS = [
   'DeliveryDate', 'AgreedDeliveryDate', 'PlanDate', 'ShipmentDate',
   'Quantity', 'UD_SampleRevision', 'UD_reasonOfRevision', 'Explanation',
   ...DETAIL_COLUMNS,
+  // "Create Order" from a Style Card (PLM) — the genuine, durable link back to the real Prisma
+  // StyleCard this Work Order was created for. Previously no such column existed anywhere on
+  // MA_WorkOrder/MA_WorkOrderItem (confirmed via information_schema — see this migration's own
+  // comment), so Style selection on this screen was in-memory/display-only and never survived a
+  // reload ("Global Rule #5", work-orders/page.tsx). A real nullable TEXT column + FK constraint
+  // to "StyleCard"("id") — added in migration 20260908092625_add_style_card_link_to_work_order —
+  // is the minimal new storage for this; it plugs into the exact same generic column
+  // read/write/coerce pipeline every other HEADER_COLUMNS entry already uses below, so create()/
+  // update()/get()/list() all support it with zero new per-field code.
+  'StyleCardId',
 ] as const;
 
 // Style Info grid — curated subset of MA_WorkOrderItem's 100 real columns. InventoryId is the
@@ -107,7 +118,7 @@ export const RECIPE_ITEM_COLUMNS = [
   'InventoryId', 'Explanation', 'Variant1', 'Variant2', 'IsCutting', 'IsMaster',
   'UnitId', 'Quantity', 'MarkerWidth', 'MarkerLength', 'M2Weight',
   'UD_Dia', 'UD_Guage', 'UD_FinishWidth', 'UD_FinishRoute', 'UD_Revision', 'UD_Component', 'UD_Placement', 'UD_Remarks',
-  'Price', 'ForexId', 'SwatchCardId', 'Wastage',
+  'Price', 'ForexId', 'ColorCardId', 'Wastage',
 ] as const;
 
 const camel = (col: string) => col[0].toLowerCase() + col.slice(1);
@@ -130,11 +141,16 @@ export class WorkOrderService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, ITEM_VARIANT_TABLE));
   }
 
-  async list(search?: string) {
+  // `styleCardId` — additive optional filter (Style Card's own Order Info tab: "the relevant
+  // Work Order(s) associated with that Style Card"), reusing this same list() rather than a
+  // second method/route. Omitted entirely, existing callers (work-orders-list/page.tsx's own
+  // search box) are byte-for-byte unaffected.
+  async list(search?: string, styleCardId?: string) {
     const searchFilter = search ? Prisma.sql`AND "WorkOrderNo" ILIKE ${`%${search}%`}` : Prisma.sql``;
+    const styleFilter = styleCardId ? Prisma.sql`AND "StyleCardId" = ${styleCardId}` : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${HEADER_SELECT} FROM "MA_WorkOrder"
-      WHERE "IsDeleted" = 0 ${searchFilter}
+      WHERE "IsDeleted" = 0 ${searchFilter} ${styleFilter}
       ORDER BY "WorkOrderNo" DESC LIMIT 50
     `);
     return sanitizeRawRow(rows);
@@ -167,7 +183,21 @@ export class WorkOrderService {
     if (rows.length) throw new ConflictException('A work order already exists with this number.');
   }
 
+  // Header-level normal business quantities/values — none of these has a legitimate signed
+  // meaning on MA_WorkOrder (unlike FI_Receipt's Debit/Credit or IM_Receipt's ReceiptType-shared
+  // Quantity — see numeric-guards.util.ts's own comment). Quantity2 is "Extra Cutting %" (the
+  // Will Be Cut feature — a negative Extra Cutting % would silently round production quantities
+  // DOWN below what was actually produced, the same class of bug as the screenshot's -1).
+  private assertHeaderQuantitiesNonNegative(source: Record<string, any>) {
+    assertAllNonNegative({
+      Quantity: source.quantity, 'Extra Cutting %': source.quantity2, 'CMT Price': source.cmtPrice,
+      'Commission %': source.comissionPercent, 'General Expense %': source.generalExpensePercent,
+      'Discount Amount': source.discountAmount,
+    });
+  }
+
   async create(dto: Record<string, any>, userId: number) {
+    this.assertHeaderQuantitiesNonNegative(dto);
     const toDb = await this.headerToDb();
     const manualNo = String(dto.workOrderNo ?? '').trim();
     const workOrderNo = manualNo || (await this.nextWorkOrderNo());
@@ -195,6 +225,7 @@ export class WorkOrderService {
 
   async update(id: number, dto: Record<string, any>, userId: number) {
     await this.get(id);
+    this.assertHeaderQuantitiesNonNegative(dto);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'WorkOrderNo' && toDb(c, dto[camel(c)]) !== undefined);
     // WorkOrderNo ("Edit Code") is handled separately from the generic column loop above — it's
@@ -239,6 +270,7 @@ export class WorkOrderService {
     await this.prisma.$executeRaw`UPDATE "MA_WorkOrderItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0`;
     for (const [i, line] of (lines || []).entries()) {
       const effective = { ...line, itemOrderNo: line.itemOrderNo ?? i + 1 };
+      assertAllNonNegative({ 'Unit Price': effective.unitPrice, 'Forex Unit Price': effective.forexUnitPrice, 'Packaging': effective.packageQuantity });
       const cols = ITEM_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
       if (!cols.length) continue;
       const colList = Prisma.raw(['"WorkOrderId"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
@@ -264,6 +296,10 @@ export class WorkOrderService {
     await this.prisma.$executeRaw`UPDATE "MA_WorkOrderItemVariant" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "WorkOrderItemId" = ${workOrderItemId} AND "IsDeleted" = 0`;
     for (const [i, line] of (lines || []).entries()) {
       const effective = { ...line, subNo: line.subNo ?? i + 1 };
+      // Manufacturing Quantities — the exact field family the screenshot's -1 bug came from
+      // (Quantity, per Color+Size). AdditionalQuantity is "Cutting/Mfg Surplus" — also always a
+      // magnitude, never a signed adjustment, on this table.
+      assertAllNonNegative({ Quantity: effective.quantity, 'Cutting/Mfg Surplus': effective.additionalQuantity, 'Unit Price': effective.unitPrice });
       const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
       if (!cols.length) continue;
       const colList = Prisma.raw(['"WorkOrderItemId"', '"SubNo"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
@@ -320,6 +356,13 @@ export class WorkOrderService {
     await this.prisma.$executeRaw`UPDATE "MA_RecipeItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecipeId" = ${recipeId} AND "IsDeleted" = 0`;
     const recipeType = RECIPE_TYPE_BY_LINE_TYPE[lineType];
     for (const line of lines || []) {
+      // BOM/Recipe line quantities — Consumption (Quantity), Marker dimensions, Weight and
+      // Wastage % are all magnitudes with no signed meaning on MA_RecipeItem; Price is an
+      // ordinary per-unit cost here (no discount/adjustment feature exists on a BOM line).
+      assertAllNonNegative({
+        Quantity: line.quantity, 'Marker Width': line.markerWidth, 'Marker Length': line.markerLength,
+        'M2 Weight': line.m2Weight, Wastage: line.wastage, Price: line.price,
+      });
       const cols = RECIPE_ITEM_COLUMNS.filter((c) => toDb(c, line[camel(c)]) !== undefined);
       if (!cols.length) continue;
       const colList = Prisma.raw(['"RecipeId"', '"RecipeType"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
@@ -355,7 +398,7 @@ export class WorkOrderService {
           unitId: l.unitId ?? undefined,
           quantity: l.quantity ?? undefined,
           price: l.unitPrice ?? undefined,
-          swatchCardId: l.swatchCardId ?? undefined,
+          colorCardId: l.colorCardId ?? undefined,
           // StyleBomLine's 3-way wastePct/dyeWastagePct/otherWastagePct combine into MA_RecipeItem's
           // single Wastage column — same non-compound sum this component's own applyWaste() uses
           // (matches how BomTab's own Work Order save path combines them client-side too).

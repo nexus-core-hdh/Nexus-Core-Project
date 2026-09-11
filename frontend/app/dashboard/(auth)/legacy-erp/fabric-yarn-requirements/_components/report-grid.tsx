@@ -13,6 +13,7 @@ import { ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGridColumns, type GridColumnDef } from "@/hooks/use-grid-columns";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 
 export interface ReportColumn<T> {
   key: string;
@@ -25,12 +26,19 @@ export interface ReportColumn<T> {
 
 export function ReportGrid<T extends { id: string | number }>({
   storageKey, columns, rows, loading, emptyLabel,
+  getRowActions, selectedId, onRowClick,
 }: {
   storageKey: string;
   columns: ReportColumn<T>[];
   rows: T[];
   loading?: boolean;
   emptyLabel: string;
+  // Row-level right-click menu (Delete this specific record, etc.) — when omitted, rows render
+  // exactly as before (no menu, no click/selection handling), so the other ReportGrid instances
+  // on this screen (Total Requirements, Transaction Details) are completely unaffected.
+  getRowActions?: (row: T) => RowAction[];
+  selectedId?: string | number | null;
+  onRowClick?: (row: T) => void;
 }) {
   const gridColumnDefs = useMemo<GridColumnDef<string>[]>(
     () => columns.map((c) => ({ key: c.key, label: c.label, defaultWidth: c.defaultWidth, minWidth: c.minWidth ?? 80 })),
@@ -93,18 +101,30 @@ export function ReportGrid<T extends { id: string | number }>({
               <TableRow><TableCell colSpan={displayColumnDefs.length} className="text-center text-sm text-muted-foreground py-8">Loading...</TableCell></TableRow>
             ) : rows.length === 0 ? (
               <TableRow><TableCell colSpan={displayColumnDefs.length} className="text-center text-sm text-muted-foreground py-8">{emptyLabel}</TableCell></TableRow>
-            ) : rows.map((row) => (
-              <TableRow key={row.id} className="[&>td]:border-r [&>td]:h-8">
-                {displayColumnDefs.map((col) => {
-                  const def = colByKey.get(col.key)!;
-                  return (
-                    <TableCell key={col.key} className={cn("px-2 text-xs truncate", def.align === "right" && "text-right font-mono")}>
-                      {def.render(row)}
-                    </TableCell>
-                  );
-                })}
-              </TableRow>
-            ))}
+            ) : rows.map((row) => {
+              const tr = (
+                <TableRow
+                  key={row.id}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  className={cn(
+                    "[&>td]:border-r [&>td]:h-8",
+                    onRowClick && "cursor-pointer",
+                    selectedId != null && String(selectedId) === String(row.id) && "bg-primary/10 hover:bg-primary/15",
+                  )}
+                >
+                  {displayColumnDefs.map((col) => {
+                    const def = colByKey.get(col.key)!;
+                    return (
+                      <TableCell key={col.key} className={cn("px-2 text-xs truncate", def.align === "right" && "text-right font-mono")}>
+                        {def.render(row)}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              );
+              if (!getRowActions) return tr;
+              return <RowContextMenu key={row.id} actions={getRowActions(row)}>{tr}</RowContextMenu>;
+            })}
           </TableBody>
         </Table>
       </div>

@@ -15,6 +15,7 @@ export function GridInput({
   align = "left",
   type = "text",
   decimalKey,
+  nonNegative,
 }: {
   value: string | number;
   onChange: (v: string) => void;
@@ -24,6 +25,10 @@ export function GridInput({
    *  straight through to EditableGridInput. Omitted by every existing caller today, so behavior
    *  is unchanged unless a cell explicitly adopts it. */
   decimalKey?: DecimalFieldKey;
+  /** Opt-in — blocks negative values for normal non-negative business cells (Qty, Wastage %,
+   *  Unit Price, ...). Forwarded straight through to EditableGridInput (see
+   *  lib/numeric-guards.ts). Omitted by every existing caller today. */
+  nonNegative?: boolean;
 }) {
-  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} decimalKey={decimalKey} />;
+  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} decimalKey={decimalKey} nonNegative={nonNegative} />;
 }

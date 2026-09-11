@@ -731,7 +731,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "quantity", firstBorder)}>
                         {isActive(r.clientId, "quantity") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.quantity} disabled={readOnly} decimalKey="quantity"
+                            <EditableGridInput autoFocus type="number" align="right" nonNegative value={r.quantity} disabled={readOnly} decimalKey="quantity"
                               onChange={(v) => updateRow(r.clientId, { quantity: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -746,7 +746,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "grossQuantity", firstBorder)}>
                         {isActive(r.clientId, "grossQuantity") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly} decimalKey="quantity"
+                            <EditableGridInput autoFocus type="number" align="right" nonNegative value={r.grossQuantity} disabled={readOnly} decimalKey="quantity"
                               onChange={(v) => updateRow(r.clientId, { grossQuantity: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -778,7 +778,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "rate", firstBorder)}>
                         {isActive(r.clientId, "rate") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.rate} disabled={readOnly} decimalKey="unit-price"
+                            <EditableGridInput autoFocus type="number" align="right" nonNegative value={r.rate} disabled={readOnly} decimalKey="unit-price"
                               onChange={(v) => updateRow(r.clientId, { rate: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -838,7 +838,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "vatPct", firstBorder)}>
                         {isActive(r.clientId, "vatPct") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.vatRate} disabled={readOnly}
+                            <EditableGridInput autoFocus type="number" align="right" nonNegative value={r.vatRate} disabled={readOnly}
                               onChange={(v) => updateRow(r.clientId, { vatRate: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />
@@ -862,7 +862,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       <TableCell key={col.key} className={cellCls(r.clientId, "received", firstBorder)}>
                         {isActive(r.clientId, "received") && editing ? (
                           <div className={EDITOR_WRAP}>
-                            <EditableGridInput autoFocus type="number" align="right" value={r.receivedQuantity} disabled={readOnly} decimalKey="quantity"
+                            <EditableGridInput autoFocus type="number" align="right" nonNegative value={r.receivedQuantity} disabled={readOnly} decimalKey="quantity"
                               onChange={(v) => updateRow(r.clientId, { receivedQuantity: v })}
                               onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                               onKeyDown={(e) => handleEditorKeyDown(e, r)} className={EDITOR_CONTROL} />

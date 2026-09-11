@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
+import { normalizeNonNegative } from "@/lib/numeric-guards";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const num = (v: any) => (v === null || v === undefined || v === "" ? 0 : Number(v));
@@ -240,9 +241,9 @@ export function YarnRecipeDialog({ open, onOpenChange, fabricInventoryId, fabric
                         <TableCell className="p-0"><input className="h-7 w-full bg-transparent px-2 text-xs outline-none" value={r.variant2} onChange={(e) => update(r.id, { variant2: e.target.value })} /></TableCell>
                         <TableCell className="p-0"><input className="h-7 w-full bg-transparent px-2 text-xs outline-none" value={r.process} onChange={(e) => update(r.id, { process: e.target.value })} /></TableCell>
                         <TableCell className="p-0"><input className="h-7 w-full bg-transparent px-2 text-xs outline-none" value={r.knittedInVariants} onChange={(e) => update(r.id, { knittedInVariants: e.target.value })} /></TableCell>
-                        <TableCell className="p-0"><input type="number" className="h-7 w-full bg-transparent px-2 text-right text-xs font-mono outline-none" value={r.percentage} onChange={(e) => update(r.id, { percentage: parseFloat(e.target.value) || 0 })} /></TableCell>
-                        <TableCell className="p-0"><input type="number" className="h-7 w-full bg-transparent px-2 text-right text-xs font-mono outline-none" value={r.wastePct} onChange={(e) => update(r.id, { wastePct: parseFloat(e.target.value) || 0 })} /></TableCell>
-                        <TableCell className="p-0"><input type="number" className="h-7 w-full bg-transparent px-2 text-right text-xs font-mono outline-none" value={r.dyeWastagePct} onChange={(e) => update(r.id, { dyeWastagePct: parseFloat(e.target.value) || 0 })} /></TableCell>
+                        <TableCell className="p-0"><input type="number" min={0} className="h-7 w-full bg-transparent px-2 text-right text-xs font-mono outline-none" value={r.percentage} onChange={(e) => update(r.id, { percentage: normalizeNonNegative(e.target.value) })} /></TableCell>
+                        <TableCell className="p-0"><input type="number" min={0} className="h-7 w-full bg-transparent px-2 text-right text-xs font-mono outline-none" value={r.wastePct} onChange={(e) => update(r.id, { wastePct: normalizeNonNegative(e.target.value) })} /></TableCell>
+                        <TableCell className="p-0"><input type="number" min={0} className="h-7 w-full bg-transparent px-2 text-right text-xs font-mono outline-none" value={r.dyeWastagePct} onChange={(e) => update(r.id, { dyeWastagePct: normalizeNonNegative(e.target.value) })} /></TableCell>
                         <TableCell className="px-2 text-right font-mono text-xs text-muted-foreground">{r.percentage > 0 ? `${yarnQty} ${fabricUnit || ""}`.trim() : "—"}</TableCell>
                         <TableCell className="p-0 text-center">
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeRow(r.id)}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>

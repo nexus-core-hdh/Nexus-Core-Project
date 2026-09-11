@@ -19,6 +19,7 @@ import { CostDetailDialog, CostDetailValue, emptyCostDetail } from "../_componen
 import { ProfitBreakdownDialog } from "../_components/profit-breakdown-dialog";
 import { plmApi } from "@/lib/nexuscore-api";
 import { FormRow as FieldRow } from "@/components/forms/form-row";
+import { normalizeNonNegative } from "@/lib/numeric-guards";
 
 // ---------- formatting helpers ----------
 const fmt2 = (n: number) => (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -53,15 +54,18 @@ const INCOTERMS = ["FOB", "CIF", "CFR", "EXW", "DDP", "FCA"];
 // so this grid's cells look identical to every other input in the app instead of using
 // their own bespoke CSS.
 function GridInput({
-  value, onChange, align = "left", type = "text", decimalKey,
+  value, onChange, align = "left", type = "text", decimalKey, nonNegative,
 }: {
   value: string | number; onChange: (v: string) => void; align?: "left" | "right"; type?: string;
   /** Opt-in Decimal Parameters rounding — forwarded straight through to EditableGridInput.
    *  Omitted by every existing caller today, so behavior is unchanged unless a cell explicitly
    *  adopts it. */
   decimalKey?: DecimalFieldKey;
+  /** Opt-in — blocks negative values (Qty, Waste %, Unit Price, ...). Forwarded straight
+   *  through to EditableGridInput (see lib/numeric-guards.ts). */
+  nonNegative?: boolean;
 }) {
-  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} decimalKey={decimalKey} />;
+  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} decimalKey={decimalKey} nonNegative={nonNegative} />;
 }
 
 function SectionHeaderBar({ title, total, sharePct }: { title: string; total: number; sharePct: number }) {
@@ -83,8 +87,9 @@ function SummaryRow({ label, pct, onPctChange, pkr, usd, bold = false, extra }: 
         {pct !== undefined ? (
           <input
             type="number"
+            min={0}
             value={pct}
-            onChange={(e) => onPctChange?.(parseFloat(e.target.value) || 0)}
+            onChange={(e) => onPctChange?.(normalizeNonNegative(e.target.value))}
             className="h-6 w-full bg-transparent text-xs text-right font-mono px-1 outline-none rounded focus:bg-accent/50"
           />
         ) : null}
@@ -347,7 +352,7 @@ export default function CostingSheetDetailPage() {
                   <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>{CURRENCIES.filter((c) => c !== "PKR").map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
-                <Input type="number" value={header.foreignRate} onChange={(e) => setHeader((h) => ({ ...h, foreignRate: parseFloat(e.target.value) || 0 }))} className="h-7 w-28 text-xs text-right font-mono" />
+                <Input type="number" min={0} value={header.foreignRate} onChange={(e) => setHeader((h) => ({ ...h, foreignRate: normalizeNonNegative(e.target.value) }))} className="h-7 w-28 text-xs text-right font-mono" />
               </FieldRow>
               <FieldRow label="Quoted Price Forex">
                 <Select value={header.quotedPriceForex} onValueChange={(v) => setHeader((h) => ({ ...h, quotedPriceForex: v }))}>
@@ -356,10 +361,10 @@ export default function CostingSheetDetailPage() {
                 </Select>
               </FieldRow>
               <FieldRow label="Quoted Price">
-                <Input type="number" value={header.quotedPrice} onChange={(e) => setHeader((h) => ({ ...h, quotedPrice: parseFloat(e.target.value) || 0 }))} className="h-7 w-32 text-xs text-right font-mono" />
+                <Input type="number" min={0} value={header.quotedPrice} onChange={(e) => setHeader((h) => ({ ...h, quotedPrice: normalizeNonNegative(e.target.value) }))} className="h-7 w-32 text-xs text-right font-mono" />
               </FieldRow>
               <FieldRow label="Order Quantity">
-                <Input type="number" value={header.orderQuantity} onChange={(e) => setHeader((h) => ({ ...h, orderQuantity: parseFloat(e.target.value) || 0 }))} className="h-7 w-32 text-xs text-right font-mono" />
+                <Input type="number" min={0} value={header.orderQuantity} onChange={(e) => setHeader((h) => ({ ...h, orderQuantity: normalizeNonNegative(e.target.value) }))} className="h-7 w-32 text-xs text-right font-mono" />
               </FieldRow>
               <FieldRow label="Shipping Terms">
                 <Select value={header.shippingTerms} onValueChange={(v) => setHeader((h) => ({ ...h, shippingTerms: v }))}>
@@ -467,9 +472,9 @@ export default function CostingSheetDetailPage() {
                             <TableCell><GridInput value={r.groupName} onChange={(v) => updateRaw(r.id, { groupName: v })} /></TableCell>
                             <TableCell><GridInput value={r.inventoryCode} onChange={(v) => updateRaw(r.id, { inventoryCode: v })} /></TableCell>
                             <TableCell><GridInput value={r.inventoryName} onChange={(v) => updateRaw(r.id, { inventoryName: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => updateRaw(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.wastePct} onChange={(v) => updateRaw(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateRaw(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => updateRaw(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.wastePct} onChange={(v) => updateRaw(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateRaw(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput value={r.forex} onChange={(v) => updateRaw(r.id, { forex: v })} /></TableCell>
                             <TableCell><GridInput value={r.unit} onChange={(v) => updateRaw(r.id, { unit: v })} /></TableCell>
                             <TableCell><GridInput value={r.explanation} onChange={(v) => updateRaw(r.id, { explanation: v })} /></TableCell>
@@ -524,11 +529,11 @@ export default function CostingSheetDetailPage() {
                             <TableCell><GridInput value={r.groupCode} onChange={(v) => updateLabor(r.id, { groupCode: v })} /></TableCell>
                             <TableCell><GridInput value={r.groupName} onChange={(v) => updateLabor(r.id, { groupName: v })} /></TableCell>
                             <TableCell><GridInput value={r.explanation} onChange={(v) => updateLabor(r.id, { explanation: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => updateLabor(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.wastePct} onChange={(v) => updateLabor(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => updateLabor(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.wastePct} onChange={(v) => updateLabor(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput value={r.forex} onChange={(v) => updateLabor(r.id, { forex: v })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateLabor(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateLabor(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
                             <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setLaborRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>
@@ -574,10 +579,10 @@ export default function CostingSheetDetailPage() {
                             <TableCell><GridInput value={r.groupCode} onChange={(v) => updateOther(r.id, { groupCode: v })} /></TableCell>
                             <TableCell><GridInput value={r.groupName} onChange={(v) => updateOther(r.id, { groupName: v })} /></TableCell>
                             <TableCell><GridInput value={r.explanation} onChange={(v) => updateOther(r.id, { explanation: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => updateOther(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => updateOther(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell><GridInput value={r.forex} onChange={(v) => updateOther(r.id, { forex: v })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(usdRate)}</TableCell>
-                            <TableCell><GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateOther(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
+                            <TableCell><GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateOther(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
                             <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
                             <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOtherRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>

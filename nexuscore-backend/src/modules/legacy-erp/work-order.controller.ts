@@ -16,8 +16,8 @@ export class WorkOrderController {
     private readonly satellites: YarnCardSatellitesService,
   ) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Query('styleCardId') styleCardId?: string) {
+    return this.svc.list(search, styleCardId);
   }
 
   @Get('next-code') async previewNextCode() {

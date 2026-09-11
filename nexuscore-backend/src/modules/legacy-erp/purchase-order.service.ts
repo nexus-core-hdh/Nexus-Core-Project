@@ -9,6 +9,7 @@ import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, fromBaseQuantitySql } from './unit-conversion.util';
 import { DeleteDependencyService } from './delete-dependency.service';
+import { assertAllNonNegative } from './numeric-guards.util';
 
 // Purchase Order — NOT a new entity. IM_OrderReceipt/IM_OrderReceiptItem are the same
 // generic "goods receipt" spine the legacy system uses for every receipt kind (Purchase
@@ -506,6 +507,14 @@ export class PurchaseOrderService {
     }
     const toDb = await this.itemToDb();
     const effective: Record<string, any> = { ...dto, receiptType };
+    // Purchase Order (IM_OrderReceipt) is a genuinely separate, dedicated entity — NOT part of
+    // the ReceiptType-shared IM_Receipt family that backs Stock Adjustment/Return/Transfer (see
+    // receipt-types.config.ts's own comment), so none of these has a legitimate signed meaning.
+    assertAllNonNegative({
+      Quantity: effective.quantity, 'Gross Quantity': effective.grossQuantity, 'Unit Price': effective.unitPrice,
+      'Forex Rate': effective.forexRate, 'Forex Unit Price': effective.forexUnitPrice, 'VAT Rate': effective.vatRate,
+      'Received Quantity': effective.receivedQuantity,
+    });
     // Item -> Unit backend enforcement (spec Section 4/10) — brings Purchase Order to parity with
     // Purchase Receipt's own resolveUnitId (inventory-receipt.service.ts), which already did this;
     // PO's own createItem/updateItem had no unit resolution at all until now. Reuses the exact same
@@ -530,6 +539,11 @@ export class PurchaseOrderService {
   async updateItem(itemId: number, dto: Record<string, any>, userId: number) {
     const toDb = await this.itemToDb();
     const effective = { ...dto };
+    assertAllNonNegative({
+      Quantity: effective.quantity, 'Gross Quantity': effective.grossQuantity, 'Unit Price': effective.unitPrice,
+      'Forex Rate': effective.forexRate, 'Forex Unit Price': effective.forexUnitPrice, 'VAT Rate': effective.vatRate,
+      'Received Quantity': effective.receivedQuantity,
+    });
     // Same "only touch Unit when Item and/or Unit actually changes" shape as
     // inventory-receipt.service.ts's own updateItem — an edit to an unrelated field must not force
     // a normalization query, and changing Item alone still re-resolves Unit against the new item.
@@ -604,6 +618,7 @@ export class PurchaseOrderService {
   async createItemVariantLine(orderReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
     if (!dto.inventoryVariantId) throw new BadRequestException('A variant is required');
     const toDb = await this.itemVariantToDb();
+    assertAllNonNegative({ Quantity: dto.quantity, 'Net Unit Price': dto.netUnitPrice, 'Received Quantity': dto.receivedQuantity });
     const effective = { ...dto, receiptType };
     const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const colList = Prisma.raw(['"OrderReceiptItemId"', '"ReceiptType"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
@@ -618,6 +633,7 @@ export class PurchaseOrderService {
 
   async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number) {
     const toDb = await this.itemVariantToDb();
+    assertAllNonNegative({ Quantity: dto.quantity, 'Net Unit Price': dto.netUnitPrice, 'Received Quantity': dto.receivedQuantity });
     const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant" WHERE "RecId" = ${variantLineId}`);

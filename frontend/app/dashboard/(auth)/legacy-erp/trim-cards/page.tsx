@@ -407,7 +407,7 @@ export default function CustomerDefineTrimsPage() {
       case "explanation":
         return <GridInput value={line.explanation} onChange={(v) => updateLine(line.id, { explanation: v })} />;
       case "orderQuantity":
-        return <GridInput type="number" align="right" value={line.orderQuantity} decimalKey="quantity" onChange={(v) => updateLine(line.id, { orderQuantity: v })} />;
+        return <GridInput type="number" align="right" nonNegative value={line.orderQuantity} decimalKey="quantity" onChange={(v) => updateLine(line.id, { orderQuantity: v })} />;
       case "unit":
         return activeAutocomplete?.lineId === line.id && activeAutocomplete.field === "unit" ? (
           <AutocompleteTextCell
@@ -431,15 +431,15 @@ export default function CustomerDefineTrimsPage() {
           />
         );
       case "quantity":
-        return <GridInput type="number" align="right" value={line.quantity} decimalKey="quantity" onChange={(v) => updateLine(line.id, { quantity: v })} />;
+        return <GridInput type="number" align="right" nonNegative value={line.quantity} decimalKey="quantity" onChange={(v) => updateLine(line.id, { quantity: v })} />;
       case "wastePct":
-        return <GridInput type="number" align="right" value={line.wastePct} onChange={(v) => updateLine(line.id, { wastePct: v })} />;
+        return <GridInput type="number" align="right" nonNegative value={line.wastePct} onChange={(v) => updateLine(line.id, { wastePct: v })} />;
       case "forexId":
         return <GridInput value={line.forexId} onChange={(v) => updateLine(line.id, { forexId: v })} />;
       case "forexPrice":
-        return <GridInput type="number" align="right" value={line.forexPrice} onChange={(v) => updateLine(line.id, { forexPrice: v })} />;
+        return <GridInput type="number" align="right" nonNegative value={line.forexPrice} onChange={(v) => updateLine(line.id, { forexPrice: v })} />;
       case "unitPrice":
-        return <GridInput type="number" align="right" value={line.unitPrice} decimalKey="unit-price" onChange={(v) => updateLine(line.id, { unitPrice: v })} />;
+        return <GridInput type="number" align="right" nonNegative value={line.unitPrice} decimalKey="unit-price" onChange={(v) => updateLine(line.id, { unitPrice: v })} />;
       default:
         return null;
     }

@@ -1217,7 +1217,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                     {isActive("quantity") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
-                          autoFocus type="number" align="right" value={r.quantity} disabled={readOnly}
+                          autoFocus type="number" align="right" nonNegative value={r.quantity} disabled={readOnly}
                           decimalKey="quantity"
                           onChange={(v) => updateRow(r.clientId, { quantity: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
@@ -1239,7 +1239,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                     {isActive("grossQuantity") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
-                          autoFocus type="number" align="right" value={r.grossQuantity} disabled={readOnly}
+                          autoFocus type="number" align="right" nonNegative value={r.grossQuantity} disabled={readOnly}
                           decimalKey="quantity"
                           onChange={(v) => updateRow(r.clientId, { grossQuantity: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
@@ -1293,7 +1293,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                     {isActive("rate") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
-                          autoFocus type="number" align="right" value={r.rate} disabled={readOnly}
+                          autoFocus type="number" align="right" nonNegative value={r.rate} disabled={readOnly}
                           decimalKey="unit-price"
                           onChange={(v) => updateRow(r.clientId, { rate: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
@@ -1339,7 +1339,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                     {isActive("forexPrice") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
-                          autoFocus type="number" align="right" value={r.currencyPrice} disabled={readOnly}
+                          autoFocus type="number" align="right" nonNegative value={r.currencyPrice} disabled={readOnly}
                           decimalKey="forex-unit-price"
                           onChange={(v) => updateRow(r.clientId, { currencyPrice: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
@@ -1378,7 +1378,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                     {isActive("vatPct") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
-                          autoFocus type="number" align="right" value={r.vatRate} disabled={readOnly}
+                          autoFocus type="number" align="right" nonNegative value={r.vatRate} disabled={readOnly}
                           onChange={(v) => updateRow(r.clientId, { vatRate: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}
                           onKeyDown={(e) => handleEditorKeyDown(e, r)}
@@ -1403,7 +1403,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                     {isActive("received") && editing ? (
                       <div className={EDITOR_WRAP}>
                         <EditableGridInput
-                          autoFocus type="number" align="right" value={r.receivedQuantity} disabled={readOnly}
+                          autoFocus type="number" align="right" nonNegative value={r.receivedQuantity} disabled={readOnly}
                           decimalKey="quantity"
                           onChange={(v) => updateRow(r.clientId, { receivedQuantity: v })}
                           onBlur={() => { persistRow(r.clientId, r); setEditing(false); }}

@@ -212,17 +212,40 @@ export default function YarnCardPage() {
   const set = (k: string, v: any) => setForm((p) => ({ ...p, [k]: v }));
 
   const search = async () => {
-    if (!codeInput.trim()) return;
+    const term = codeInput.trim();
+    if (!term) return;
     setSearching(true);
     try {
-      const r: any = await legacyErpApi.yarnCards.getByCode(codeInput.trim());
+      // Partial, case-insensitive match on BOTH Code and Name — legacyErpApi.yarnCards.list(term)
+      // already implements exactly this server-side (yarn-card.service.ts's own list(): "Code"
+      // ILIKE %term% OR "Name" ILIKE %term%, ORDER BY Code), the same endpoint the Yarn Count
+      // lookup elsewhere already searches through. Reused as-is, not a second search query.
+      const results: any[] = await legacyErpApi.yarnCards.list(term);
+      if (!results.length) {
+        toast.error("No yarn card found matching that code or name");
+        setItemId(null);
+        setForm(emptyForm);
+        lastSavedRef.current = emptyForm;
+        loadPreviewCode();
+        return;
+      }
+      // An exact Code match wins over a broader partial/Name match (preserves today's "type the
+      // exact code, land on that record" behavior unchanged); otherwise, with more than one
+      // partial match, ask the user to narrow it down rather than silently guessing which one —
+      // this box has never had a multi-result picker, so it doesn't grow one now.
+      const exact = results.find((row) => String(row.inventoryCode).toLowerCase() === term.toLowerCase());
+      if (!exact && results.length > 1) {
+        toast.error(`${results.length} yarn cards match "${term}" — refine your search to load one`);
+        return;
+      }
+      const r = exact ?? results[0];
       setForm({ ...emptyForm, ...r });
       lastSavedRef.current = { ...emptyForm, ...r };
       setItemId(r.id);
       setMode("edit");
       toast.success("Loaded");
     } catch {
-      toast.error("No yarn card found with that code");
+      toast.error("No yarn card found matching that code or name");
       setItemId(null);
       setForm(emptyForm);
       lastSavedRef.current = emptyForm;
@@ -338,7 +361,7 @@ export default function YarnCardPage() {
                 <Search className="h-3.5 w-3.5 text-muted-foreground" />
               </InputGroupAddon>
               <InputGroupInput
-                placeholder="Find by code..."
+                placeholder="Search by code or name..."
                 value={codeInput}
                 onChange={(e) => setCodeInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && search()}

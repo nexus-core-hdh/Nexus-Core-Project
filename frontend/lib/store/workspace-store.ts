@@ -52,6 +52,7 @@ interface WorkspaceState extends WorkspacePersisted {
   // without the tab bar knowing anything about that screen.
   saveHandlers: Record<string, SaveHandler | undefined>;
   openTab: (tab: OpenTabInput) => void;
+  updateTabHref: (key: string, href: string) => void;
   closeTab: (key: string) => void;
   closeTabs: (keys: string[]) => void;
   activateTab: (key: string) => void;
@@ -154,6 +155,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           activeKey: tab.key,
         });
       },
+
+      // Patches one tab's own href IN PLACE — unlike openTab, never touches activeKey. For a
+      // background/inactive tab that self-corrects its own stale state (e.g. a "New Work Order"
+      // tab dropping a styleCardId that no longer resolves), this must not steal focus or touch
+      // the live browser URL, which openTab's "reopen" branch does as a side effect.
+      updateTabHref: (key, href) =>
+        set((state) => {
+          const current = state.tabs.find((t) => t.key === key);
+          if (!current || current.href === href) return state;
+          return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, href } : t)) };
+        }),
 
       closeTab: (key) => {
         const { tabs, activeKey } = get();

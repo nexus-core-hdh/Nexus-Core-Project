@@ -25,6 +25,7 @@ export class UpdateMarkerPlanDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
   efficiencyPct?: number;
 
   @ApiPropertyOptional()

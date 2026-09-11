@@ -3386,6 +3386,12 @@ model ColorCard {
   inUse                    Boolean  @default(true)
   branchId                 String
   createdAt                DateTime @default(now())
+
+  // BOM's "Choose Color" cell (bom-tab.tsx) -- Style/Sample Card BOM lines bind here, not to
+  // SwatchCard (a separate, unrelated fabric-swatch-sample master -- see StyleBomLine's own
+  // comment on the 20260909130000 migration that repointed this FK).
+  styleBomLines  StyleBomLine[]
+  sampleBomLines SampleBomLine[]
 }
 
 model BrandCard {
@@ -3761,7 +3767,7 @@ model StyleBomLine {
   process         String?
   variant         String?
   rowColumn       String?
-  swatchCardId    String?
+  colorCardId     String?
   willBeCut       Boolean @default(false)
   mainFabric      Boolean @default(false)
   unit            String?
@@ -3814,8 +3820,8 @@ model StyleBomLine {
   dyeingProcess     String?
   sortOrder       Int     @default(0)
 
-  styleCard  StyleCard   @relation(fields: [styleCardId], references: [id], onDelete: Cascade)
-  swatchCard SwatchCard? @relation(fields: [swatchCardId], references: [id])
+  styleCard StyleCard  @relation(fields: [styleCardId], references: [id], onDelete: Cascade)
+  colorCard ColorCard? @relation(fields: [colorCardId], references: [id])
 
   @@index([styleCardId])
 }
@@ -3934,7 +3940,7 @@ model SampleBomLine {
   process           String?
   variant           String?
   rowColumn         String?
-  swatchCardId      String?
+  colorCardId       String?
   willBeCut         Boolean @default(false)
   mainFabric        Boolean @default(false)
   unit              String?
@@ -3970,8 +3976,8 @@ model SampleBomLine {
   dyeingProcess     String?
   sortOrder         Int     @default(0)
 
-  sampleCard SampleCard  @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)
-  swatchCard SwatchCard? @relation(fields: [swatchCardId], references: [id])
+  sampleCard SampleCard @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)
+  colorCard  ColorCard? @relation(fields: [colorCardId], references: [id])
 
   @@index([sampleCardId])
 }
@@ -4002,8 +4008,6 @@ model SwatchCard {
   updatedAt    DateTime @updatedAt
 
   productCards   ProductCardSwatch[]
-  bomLines       StyleBomLine[]
-  sampleBomLines SampleBomLine[]
 }
 
 model ProductCard {

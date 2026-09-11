@@ -29,6 +29,7 @@ export class CreateFabricRollDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
   costPerMeter?: number;
 
   @ApiPropertyOptional()

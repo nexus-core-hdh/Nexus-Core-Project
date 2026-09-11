@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FabricCardService } from './fabric-card.service';
 import { YarnCardService } from './yarn-card.service';
+import { assertAllNonNegative } from './numeric-guards.util';
 
 // A row with no Yarn selected and no % typed yet (a just-added, still-empty grid row) is dropped
 // before validation/save rather than treated as an invalid 0% line — the same "don't validate an
@@ -37,6 +38,7 @@ export class FabricYarnRecipeService {
       if (!Number.isFinite(pct) || pct < 0) {
         throw new BadRequestException(`Invalid % for Yarn row "${l.yarnCode || l.yarnName || ''}" — must be a number >= 0`);
       }
+      assertAllNonNegative({ 'Waste %': l.wastePct, 'Dye Wastage %': l.dyeWastagePct });
       // Reuses YarnCardService.get's own existence check (AccessCode='YARN', not deleted) —
       // throws NotFoundException for an invalid/foreign id, never trusts the client's id alone.
       if (l.yarnInventoryId != null) await this.yarnCardSvc.get(Number(l.yarnInventoryId));

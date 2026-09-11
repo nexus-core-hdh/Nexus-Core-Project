@@ -110,9 +110,9 @@ export function ExpensesTab({ styleCardId }: { styleCardId: string; card: any; o
       case "explanation":
         return <GridInput value={r.explanation} onChange={(v) => update(r.id, { explanation: v })} />;
       case "quantity":
-        return <GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
       case "unitPrice":
-        return <GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
       case "forex":
         return <GridInput value={r.forex} onChange={(v) => update(r.id, { forex: v })} />;
       case "amount":

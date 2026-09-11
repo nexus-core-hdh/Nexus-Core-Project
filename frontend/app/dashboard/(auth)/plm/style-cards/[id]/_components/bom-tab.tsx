@@ -10,16 +10,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import { Plus, Save, Trash2, ListOrdered, Search, Scissors } from "lucide-react";
 import { plmApi, legacyErpApi } from "@/lib/nexuscore-api";
+import { getCurrentUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { YarnRecipeDialog } from "@/components/legacy-erp/yarn-recipe-dialog";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { applyWaste } from "@/lib/legacy-erp/waste-calc";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
+import { normalizeNonNegative } from "@/lib/numeric-guards";
 
 type BomRow = {
   id: string;
@@ -39,7 +43,20 @@ type BomRow = {
   // columnDefsForTab's own comment) — always blank/unused for Style/Sample Card.
   variant2: string;
   rowColumn: string;
-  swatchCardId: string;
+  // ColorCard.id (text/cuid) — the "Choose Color" cell's real FK. `color` is the denormalized
+  // display copy (Code, falling back to Name — same convention purchase-order-line-grid.tsx's own
+  // Color cell already uses) resolved from the loaded ColorCard list; not persisted itself, only
+  // colorCardId is sent on save (see BOM_LINE_FIELDS server-side).
+  colorCardId: string;
+  color: string;
+  // Style/Sample Card mode only (never Work Order — see the Choose Color cell's own comment on
+  // why): additional ColorCard ids beyond `colorCardId` selected for this SAME physical BOM item,
+  // matching the reference screen's own "one row, colours listed together" look. Client-side/
+  // in-memory only — save() expands one BomRow with N extra ids into N+1 real StyleBomLine/
+  // SampleBomLine rows (one colorCardId each, the only real per-row identity the schema has), and
+  // load() collapses those same sibling rows back into this one array on the way back in. Always
+  // [] in Work Order mode.
+  extraColorCardIds: string[];
   willBeCut: boolean;
   mainFabric: boolean;
   // The selected card's own configured Item Unit (IM_ItemUnitItemSize.RecId, resolved via
@@ -97,7 +114,7 @@ const LINE_TYPES = [
 
 const blankRow = (lineType: string): BomRow => ({
   id: uid(), lineType, fabricInventoryId: null, fabricCode: "", fabricName: "", explanation: "", placement: "", process: "",
-  variant: "", variant2: "", rowColumn: "", swatchCardId: "", willBeCut: false, mainFabric: false, unitId: null, unit: "",
+  variant: "", variant2: "", rowColumn: "", colorCardId: "", color: "", extraColorCardIds: [], willBeCut: false, mainFabric: false, unitId: null, unit: "",
   marketLength: 0, marketWidth: 0, marketWeight: 0,
   quantity: 0, wastePct: 0, dyeWastagePct: 0, otherWastagePct: 0, unitPrice: 0, component: "",
   dia: "", gauge: "", finishWidth: "", finishRoute: "", revision: "",
@@ -105,6 +122,90 @@ const blankRow = (lineType: string): BomRow => ({
   orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
   category: "", bodyColor: "", printColor: "", dyeingProcess: "",
 });
+
+// Choose Color multi-select — the ColorCard master (same `colors` list every other Choose Color
+// cell in this file already loads), a search box, and a checkbox per card. Apply hands back the
+// full set of selected ColorCard ids; applyMultiColorSelection (above) is what turns that into
+// one BOM row per color — this component itself never touches `rows` directly, so it stays a
+// plain, reusable "pick some cards" dialog with no BOM-specific logic of its own.
+function ColorMultiSelectDialog({ open, materialLabel, colors, initialSelectedIds, onClose, onApply, onCreateColor }: {
+  open: boolean; materialLabel: string; colors: any[]; initialSelectedIds: string[];
+  onClose: () => void; onApply: (ids: string[]) => void; onCreateColor: (text: string) => Promise<string>;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set(initialSelectedIds));
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+  const term = search.trim().toLowerCase();
+  const filtered = term
+    ? colors.filter((c: any) => (c.code || "").toLowerCase().includes(term) || (c.name || "").toLowerCase().includes(term))
+    : colors;
+  const toggle = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const createAndSelect = async () => {
+    const text = search.trim();
+    if (!text) return;
+    setCreating(true);
+    try {
+      const id = await onCreateColor(text);
+      if (id) { setSelected((prev) => new Set(prev).add(id)); setSearch(""); }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create color");
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Choose Material Colors — {materialLabel}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          <div className="flex gap-1.5">
+            <Input
+              autoFocus placeholder="Search by code or name..." value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !filtered.length && search.trim()) createAndSelect(); }}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="max-h-72 overflow-y-auto rounded-md border">
+            {filtered.length === 0 ? (
+              <div className="flex items-center justify-between gap-2 p-3 text-xs text-muted-foreground">
+                <span>No existing Color Card matches "{search.trim()}".</span>
+                {search.trim() && (
+                  <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" disabled={creating} onClick={createAndSelect}>
+                    <Plus className="h-3 w-3 mr-1" />Create &amp; select
+                  </Button>
+                )}
+              </div>
+            ) : (
+              filtered.map((c: any) => {
+                const id = String(c.id);
+                const checked = selected.has(id);
+                return (
+                  <label key={id} className="flex cursor-pointer items-center gap-2 border-b px-3 py-1.5 text-xs last:border-b-0 hover:bg-accent/50">
+                    <Checkbox checked={checked} onCheckedChange={() => toggle(id)} />
+                    <span className="h-3.5 w-3.5 shrink-0 rounded-full border" style={{ backgroundColor: c.color || "#e5e7eb" }} />
+                    <span className="min-w-0 flex-1 truncate">{c.code || c.name}{c.code && c.name && c.code !== c.name ? ` — ${c.name}` : ""}</span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground">{selected.size} color{selected.size === 1 ? "" : "s"} selected.</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => onApply(Array.from(selected))}>Apply</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // Automatic Fabric quantity calculation — Area (m²) = MarketWidth * MarketLength / 10,000, then
 // PhysicalGrams = Area * MarketWeight (Weight/m²). Equivalently PhysicalGrams =
@@ -222,7 +323,7 @@ function yarnConsumptionBreakdown(calculatedQuantity: number, card: any): { labe
 // other legacy-erp grids also have, which this grid never had and isn't part of this feature.
 type ColKey =
   | "fabricCode" | "fabricName" | "explanation" | "placement" | "process" | "variant" | "variant2"
-  | "rowColumn" | "swatchCardId" | "willBeCut" | "mainFabric" | "unit"
+  | "rowColumn" | "colorCardId" | "willBeCut" | "mainFabric" | "unit"
   | "marketLength" | "marketWidth" | "marketWeight" | "quantity"
   | "wastePct" | "dyeWastagePct" | "otherWastagePct" | "totalWaste" | "calculatedQty"
   | "unitPrice" | "component" | "dia" | "gauge" | "finishWidth" | "finishRoute" | "revision"
@@ -279,7 +380,7 @@ const COLUMNS: ColumnDef[] = [
   { key: "variant2", label: "Variant-2" },
   { key: "variant2Explanation", label: "Variant-2 Explanation" },
   { key: "rowColumn", label: "Row/Column" },
-  { key: "swatchCardId", label: "Choose Color" },
+  { key: "colorCardId", label: "Choose Color" },
   { key: "selectSize", label: "Select Size" },
   { key: "productionVariants", label: "Production Variants" },
   { key: "willBeCut", label: "Will be Cut", align: "center" },
@@ -381,6 +482,18 @@ const TRIM_HIDDEN_COLS: ColKey[] = [
 function columnDefsForTab(lineType: string, columnDefs: ColumnDef[], isWorkOrderMode: boolean): ColumnDef[] {
   let defs = columnDefs;
   if (!isWorkOrderMode) defs = defs.filter((c) => c.key !== "variant2");
+  // Variant-1 is NEVER relabeled or repurposed — it stays this row's own Material Variant/Type
+  // field (e.g. "Fleece", "Rib", "Twill Tape"), the same meaning it has always had, in every mode.
+  // Variant-2 (Work Order mode only — the only mode with a Manufacturing Quantities/production-
+  // color concept at all; StyleBomLine/SampleBomLine don't even have a variant2 column) IS
+  // relabeled here to "Production Color", because that is genuinely and transparently what it
+  // holds once a row is mapped via the Production Color panel below — see materialGroups' own
+  // comment, and fabric-yarn-requirements.service.ts's resolveApplicableQuantity, which reads
+  // Variant2 (never Variant1) as the match key against the Work Order's own production colors.
+  // Variant2 had no established meaning anywhere else in this codebase before this feature (blank/
+  // unused on every real Work Order BOM row) — unlike Variant-1, relabeling it doesn't overload or
+  // hide any pre-existing business meaning.
+  if (isWorkOrderMode) defs = defs.map((c) => (c.key === "variant2" ? { ...c, label: "Production Color" } : c));
   if (lineType !== "trim") return defs;
   return defs
     .filter((c) => !TRIM_HIDDEN_COLS.includes(c.key))
@@ -396,7 +509,7 @@ function columnDefsForTab(lineType: string, columnDefs: ColumnDef[], isWorkOrder
 
 const DEFAULT_WIDTHS: Record<ColKey, number> = {
   fabricCode: 130, fabricName: 200, explanation: 200, placement: 130, process: 130, variant: 110, variant2: 110,
-  rowColumn: 110, swatchCardId: 200, willBeCut: 100, mainFabric: 100, unit: 90,
+  rowColumn: 110, colorCardId: 200, willBeCut: 100, mainFabric: 100, unit: 90,
   marketLength: 110, marketWidth: 110, marketWeight: 120, quantity: 100,
   wastePct: 90, dyeWastagePct: 110, otherWastagePct: 110, totalWaste: 110, calculatedQty: 110,
   unitPrice: 100, component: 130, dia: 90, gauge: 90, finishWidth: 120, finishRoute: 120, revision: 110,
@@ -411,7 +524,7 @@ const DEFAULT_WIDTHS: Record<ColKey, number> = {
 };
 const MIN_WIDTHS: Record<ColKey, number> = {
   fabricCode: 100, fabricName: 140, explanation: 130, placement: 90, process: 90, variant: 80, variant2: 80,
-  rowColumn: 80, swatchCardId: 140, willBeCut: 80, mainFabric: 80, unit: 70,
+  rowColumn: 80, colorCardId: 140, willBeCut: 80, mainFabric: 80, unit: 70,
   marketLength: 80, marketWidth: 80, marketWeight: 90, quantity: 80,
   wastePct: 70, dyeWastagePct: 80, otherWastagePct: 80, totalWaste: 80, calculatedQty: 80,
   unitPrice: 80, component: 90, dia: 70, gauge: 70, finishWidth: 90, finishRoute: 90, revision: 80,
@@ -429,7 +542,7 @@ const DEL_W = 40;
 // Extra per-column TableCell classes — the same overrides the original hardcoded markup used
 // (select cells get "p-1", the two read-only computed columns get right-aligned mono text).
 const cellClassFor = (key: ColKey): string | undefined => {
-  if (key === "process" || key === "swatchCardId" || key === "forex") return "p-1";
+  if (key === "process" || key === "forex") return "p-1";
   if (
     key === "totalWaste" || key === "calculatedQty" || key === "fabricSupplierCode" ||
     key === "fabricSupplierName" || key === "fabricType" || key === "processCode" ||
@@ -493,7 +606,11 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
   const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
   useEffect(() => { ensureDecimalParamsLoaded(); }, [ensureDecimalParamsLoaded]);
-  const [swatches, setSwatches] = useState<any[]>([]);
+  // ColorCard master ("Choose Color" cell) — the SAME master + API (plmApi.colors -> /plm/color-cards)
+  // already used by Purchase Order/Inventory Receipt lines and Style/Sample Card General tabs.
+  // This cell was previously bound to SwatchCard (a separate, unrelated master that is empty in
+  // production), which is why it rendered blank despite the user's real Color Cards existing.
+  const [colors, setColors] = useState<any[]>([]);
   const [processCards, setProcessCards] = useState<any[]>([]);
   // Fabric/Trim Card options for the grid's own search cell — AutocompleteTextCell (not
   // MasterAutocompleteField: that one's absolutely-positioned dropdown gets silently clipped by
@@ -599,35 +716,67 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   // Trim. Name-only picker: the <select>'s own visible text is always the Route's `name`, never
   // its id or code.
   const [routeCards, setRouteCards] = useState<any[]>([]);
+  // Production Colors — Work Order mode only, the SAME Manufacturing Quantities data the
+  // Fabric/Trim/Yarn Requirements screen's own "Production Quantities" strip and
+  // resolveApplicableQuantity() already read (legacyErpApi.workOrders.requirements.
+  // getManufacturingQuantity — no second Work Order color source). This is the real list of
+  // production colors the Material -> Production Color mapping panel below offers; a Work Order
+  // with none entered yet simply has nothing to map (the material stays a plain/common row).
+  const [productionColors, setProductionColors] = useState<{ color: string; quantity: number }[]>([]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [lines, sw, pc, fab, trim, routes, fabTypes, forexList] = await Promise.all([
+      const [lines, colorList, pc, fab, trim, routes, fabTypes, forexList, mfgQty] = await Promise.all([
         isWorkOrderMode
           ? Promise.all(BOM_LINE_TYPE_VALUES.map((lt) => legacyErpApi.workOrders.listBom(workOrder!.workOrderId, lt).catch(() => [])))
               .then((byType) => byType.flatMap((rowsOfType: any[], i) => (rowsOfType || []).map((l: any) => ({ ...l, lineType: BOM_LINE_TYPE_VALUES[i] }))))
           : isSampleMode
           ? plmApi.sampleBom.get(sampleCardId!)
           : plmApi.styleBom.get(styleCardId!),
-        plmApi.swatchCards.list().catch(() => ({ data: [] })),
+        plmApi.colors.list().catch(() => []),
         plmApi.processCards.list().catch(() => ({ data: [] })),
         legacyErpApi.fabricCards.list().catch(() => []),
         legacyErpApi.trimInventoryCards.list().catch(() => []),
         plmApi.routeCards.list().catch(() => []),
         legacyErpApi.masterLookup.list('fabric').catch(() => []),
         legacyErpApi.masterLookup.list('forex').catch(() => []),
+        isWorkOrderMode ? legacyErpApi.workOrders.requirements.getManufacturingQuantity(workOrder!.workOrderId).catch(() => null) : Promise.resolve(null),
       ]);
       const fabList = Array.isArray(fab) ? fab : [];
       const trimList = Array.isArray(trim) ? trim : [];
       fabList.forEach((row: any) => { fabricCardCacheRef.current[String(row.id)] = row; });
       trimList.forEach((row: any) => { fabricCardCacheRef.current[String(row.id)] = row; });
-      const loadedRows = (Array.isArray(lines) ? lines : []).map((l: any) => {
-        if (!isWorkOrderMode) {
+      // Style/Sample Card mode: GROUP raw lines sharing the same material identity (Variant-1
+      // text, falling back to the linked Fabric/Trim Card when Variant-1 is blank — the same key
+      // materialKeyFor uses below) into ONE BomRow, collapsing every sibling color-only line's
+      // colorCardId into extraColorCardIds. This is the load-side half of the "one row, colours
+      // listed together" round trip — save() below does the matching expansion back into real
+      // rows on write. Work Order mode is completely unaffected: each MA_RecipeItem row stays its
+      // own BomRow, exactly as before (its own multi-color mechanism is the existing Material x
+      // Production Color matrix, keyed by Variant-2, not this).
+      const rawLines = Array.isArray(lines) ? lines : [];
+      let loadedRows: BomRow[];
+      if (!isWorkOrderMode) {
+        const rawMaterialKey = (l: any) => {
+          const v1 = String(l.variant || "").trim();
+          return v1 ? `${l.lineType}:variant:${v1.toLowerCase()}` : `${l.lineType}:card:${l.fabricInventoryId}`;
+        };
+        const groups = new Map<string, any[]>();
+        for (const l of rawLines) {
+          const key = rawMaterialKey(l);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(l);
+        }
+        loadedRows = Array.from(groups.values()).map((groupLines): BomRow => {
+          const l = groupLines[0];
+          const extraColorCardIds = groupLines.slice(1).map((x) => x.colorCardId).filter(Boolean);
           return {
             id: l.id, lineType: l.lineType, fabricInventoryId: l.fabricInventoryId ?? null, fabricCode: l.fabricCode || "", fabricName: l.fabricName || "",
             explanation: l.explanation || "", placement: l.placement || "", process: l.process || "",
-            variant: l.variant || "", variant2: "", rowColumn: l.rowColumn || "", swatchCardId: l.swatchCardId || "",
+            variant: l.variant || "", variant2: "", rowColumn: l.rowColumn || "", colorCardId: l.colorCardId || "",
+            color: l.colorCard?.code || l.colorCard?.name || "",
+            extraColorCardIds,
             willBeCut: !!l.willBeCut, mainFabric: !!l.mainFabric, unitId: l.unitId ?? null, unit: l.unit || "",
             marketLength: num(l.marketLength), marketWidth: num(l.marketWidth), marketWeight: num(l.marketWeight),
             quantity: num(l.quantity),
@@ -640,31 +789,40 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             dyeingInstruction: l.dyeingInstruction || "", remarks: l.remarks || "", category: l.category || "",
             bodyColor: l.bodyColor || "", printColor: l.printColor || "", dyeingProcess: l.dyeingProcess || "",
           };
-        }
-        // Work Order / MA_RecipeItem — fabricCode/fabricName/unit have no denormalized column
-        // here, resolved live from the just-populated fabricCardCacheRef (unit text is patched
-        // in separately below, once ensureItemUnits resolves for this card).
-        const src = l.inventoryId != null ? fabricCardCacheRef.current[String(l.inventoryId)] : null;
-        return {
-          id: l.id, lineType: l.lineType, fabricInventoryId: l.inventoryId ?? null,
-          fabricCode: src?.inventoryCode || "", fabricName: src?.inventoryName || "",
-          explanation: l.explanation || "", placement: l.uD_Placement || "", process: l.uD_Remarks || "",
-          variant: l.variant1 || "", variant2: l.variant2 || "", rowColumn: "", swatchCardId: l.swatchCardId != null ? String(l.swatchCardId) : "",
-          willBeCut: !!l.isCutting, mainFabric: !!l.isMaster, unitId: l.unitId ?? null, unit: "",
-          marketLength: num(l.markerLength), marketWidth: num(l.markerWidth), marketWeight: num(l.m2Weight),
-          quantity: num(l.quantity),
-          wastePct: num(l.wastage), dyeWastagePct: 0, otherWastagePct: 0,
-          unitPrice: num(l.price), component: l.uD_Component || "", dia: l.uD_Dia || "", gauge: l.uD_Guage || "",
-          finishWidth: l.uD_FinishWidth || "", finishRoute: l.uD_FinishRoute || "", revision: l.uD_Revision || "",
-          // MA_RecipeItem has no equivalent columns for this task's extension (see BomRow's own
-          // comment) — always blank/false here, and save() never sends these in Work Order mode.
-          notForRequirement: false, useFixQuantity: false, printWastagePct: 0, forex: "", manProductCode: "",
-          orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
-          category: "", bodyColor: "", printColor: "", dyeingProcess: "",
-        };
-      });
+        });
+      } else {
+        loadedRows = rawLines.map((l: any): BomRow => {
+          // Work Order / MA_RecipeItem — fabricCode/fabricName/unit have no denormalized column
+          // here, resolved live from the just-populated fabricCardCacheRef (unit text is patched
+          // in separately below, once ensureItemUnits resolves for this card).
+          const src = l.inventoryId != null ? fabricCardCacheRef.current[String(l.inventoryId)] : null;
+          return {
+            id: l.id, lineType: l.lineType, fabricInventoryId: l.inventoryId ?? null,
+            fabricCode: src?.inventoryCode || "", fabricName: src?.inventoryName || "",
+            explanation: l.explanation || "", placement: l.uD_Placement || "", process: l.uD_Remarks || "",
+            variant: l.variant1 || "", variant2: l.variant2 || "", rowColumn: "", colorCardId: l.colorCardId || "",
+            // No relation join available here (MA_RecipeItem is a raw legacy table) — the display
+            // label is backfilled from `colors` once it loads, same as Work Order mode already does
+            // for `unit` below via itemUnitsByCard.
+            color: "",
+            extraColorCardIds: [],
+            willBeCut: !!l.isCutting, mainFabric: !!l.isMaster, unitId: l.unitId ?? null, unit: "",
+            marketLength: num(l.markerLength), marketWidth: num(l.markerWidth), marketWeight: num(l.m2Weight),
+            quantity: num(l.quantity),
+            wastePct: num(l.wastage), dyeWastagePct: 0, otherWastagePct: 0,
+            unitPrice: num(l.price), component: l.uD_Component || "", dia: l.uD_Dia || "", gauge: l.uD_Guage || "",
+            finishWidth: l.uD_FinishWidth || "", finishRoute: l.uD_FinishRoute || "", revision: l.uD_Revision || "",
+            // MA_RecipeItem has no equivalent columns for this task's extension (see BomRow's own
+            // comment) — always blank/false here, and save() never sends these in Work Order mode.
+            notForRequirement: false, useFixQuantity: false, printWastagePct: 0, forex: "", manProductCode: "",
+            orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
+            category: "", bodyColor: "", printColor: "", dyeingProcess: "",
+          };
+        });
+      }
       setRows(loadedRows);
-      setSwatches(Array.isArray(sw) ? sw : (sw as any)?.data || []);
+      setProductionColors(Array.isArray((mfgQty as any)?.byColor) ? (mfgQty as any).byColor : []);
+      setColors(Array.isArray(colorList) ? colorList : (colorList as any)?.data || []);
       setProcessCards(Array.isArray(pc) ? pc : (pc as any)?.data || []);
       setRouteCards(Array.isArray(routes) ? routes : (routes as any)?.data || []);
       setFabricTypes(Array.isArray(fabTypes) ? fabTypes : (fabTypes as any)?.data || []);
@@ -697,6 +855,18 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       return match ? { ...r, unit: match.code || match.name || "" } : r;
     }));
   }, [isWorkOrderMode, itemUnitsByCard]);
+  // Work Order mode only — MA_RecipeItem has no ColorCard relation join (raw legacy table), so a
+  // reloaded row's own `color` display text starts blank; once `colors` loads, patch it in from
+  // the matching colorCardId. Style/Sample Card mode never runs this (color is already resolved
+  // via the Prisma include in load() above).
+  useEffect(() => {
+    if (!isWorkOrderMode || !colors.length) return;
+    setRows((rs) => rs.map((r) => {
+      if (r.color || !r.colorCardId) return r;
+      const match = colors.find((c: any) => String(c.id) === String(r.colorCardId));
+      return match ? { ...r, color: match.code || match.name || "" } : r;
+    }));
+  }, [isWorkOrderMode, colors]);
   useEffect(() => {
     setHeader({
       bomRouteCode: card?.bomRouteCode || "",
@@ -792,6 +962,19 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     });
   };
 
+  // Save-side half of the "one visible row, colours listed together" round trip (see BomRow's own
+  // comment on extraColorCardIds and load()'s matching collapse-on-read). Every extra selected
+  // color becomes a REAL additional StyleBomLine/SampleBomLine row — a full clone of the visible
+  // row's own fields, differing only in colorCardId — never a comma-string or array crammed into
+  // the scalar colorCardId column itself. Work Order mode never calls this (extraColorCardIds is
+  // always [] there).
+  const expandMultiColorRows = <T extends { extraColorCardIds: string[]; colorCardId: string }>(rs: T[]): Omit<T, "extraColorCardIds">[] =>
+    rs.flatMap((r) => {
+      const { extraColorCardIds, ...base } = r;
+      if (!extraColorCardIds.length) return [base];
+      return [base, ...extraColorCardIds.map((colorCardId) => ({ ...base, colorCardId }))];
+    });
+
   const save = async () => {
     setSaving(true);
     try {
@@ -807,7 +990,10 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             inventoryId: r.fabricInventoryId ?? undefined, explanation: r.explanation || undefined,
             variant1: r.variant || undefined, variant2: r.variant2 || undefined, isCutting: r.willBeCut ? 1 : 0, isMaster: r.mainFabric ? 1 : 0,
             unitId: r.unitId ?? undefined, quantity: r.quantity, price: r.unitPrice,
-            swatchCardId: r.swatchCardId ? Number(r.swatchCardId) : undefined,
+            // Real ColorCard.id (text/uuid) as of the 20260909130000 migration — previously this
+            // was wrongly cast with Number(), which silently produced NaN for every UUID and meant
+            // Work Order's own "Choose Color" selection never actually persisted.
+            colorCardId: r.colorCardId || undefined,
             // Same combined-total mapping transferBomFromStyleCard uses — see RECIPE_ITEM_COLUMNS'
             // own comment on why only one Wastage column exists here.
             wastage: (r.wastePct || 0) + (r.dyeWastagePct || 0) + (r.otherWastagePct || 0) + (r.printWastagePct || 0),
@@ -820,14 +1006,14 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         }
       } else if (isSampleMode) {
         // No header strip in this mode (see the prop comment above) — just the lines themselves.
-        await plmApi.sampleBom.upsertLines(sampleCardId!, roundedRows);
+        await plmApi.sampleBom.upsertLines(sampleCardId!, expandMultiColorRows(roundedRows));
       } else {
         await Promise.all([
           // bomRouteCardId must be sent as an explicit null (not "", and not simply omitted) to
           // actually clear the FK on the server — "" would fail the RouteCard foreign key
           // constraint, and omitting the key entirely would leave the previous value untouched.
           plmApi.styleCards.update(styleCardId!, { ...header, bomRouteCardId: header.bomRouteCardId || null }),
-          plmApi.styleBom.upsertLines(styleCardId!, roundedRows),
+          plmApi.styleBom.upsertLines(styleCardId!, expandMultiColorRows(roundedRows)),
         ]);
       }
       toast.success("BOM saved");
@@ -845,6 +1031,117 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     rows.forEach((r) => { (g[r.lineType] ||= []).push(r); });
     return g;
   }, [rows]);
+
+  // Shared by the grid's own "Choose Color" cell AND the Material Color picker inside the
+  // Production Color mapping panel below — the ONE place that resolves typed text against the
+  // existing ColorCard master, or auto-creates a new one on commit (same payload shape as
+  // purchase-order-line-grid.tsx's own Color cell). Never a second color-resolution path.
+  const resolveOrCreateColor = async (text: string): Promise<{ colorCardId: string; color: string }> => {
+    const trimmed = text.trim();
+    if (!trimmed) return { colorCardId: "", color: "" };
+    const match = colors.find((c: any) =>
+      (c.code || "").toLowerCase() === trimmed.toLowerCase() || (c.name || "").toLowerCase() === trimmed.toLowerCase());
+    if (match) return { colorCardId: String(match.id), color: match.code || match.name || trimmed };
+    const user = getCurrentUser();
+    const created: any = await plmApi.colors.create({ code: trimmed, name: trimmed, color: "#000000", branchId: user?.branchId });
+    setColors((prev) => [...prev, created]);
+    return { colorCardId: String(created.id), color: created.code || created.name || trimmed };
+  };
+
+  // Which row's Search icon opened the full ColorCard grid lookup (CardLookupDialog) — same
+  // pattern/component as the Fabric/Trim Card lookup just above (lookupTarget), a proper
+  // searchable multi-row table instead of only typing to filter the inline AutocompleteTextCell.
+  const [colorLookupRowId, setColorLookupRowId] = useState<string | null>(null);
+  const applyColorSelection = (rowId: string, colorCardId: string, code: string, name: string) =>
+    update(rowId, { colorCardId, color: code || name || "" });
+
+  // Choose Color multi-select (Style/Sample Card mode only — Work Order mode keeps its existing
+  // single-select-per-row cell: there, one row is one Production Color mapping via Variant-2,
+  // which a generic "just pick N colors" flow has no way to set correctly; Work Order's own
+  // multi-color entry point is the C/S Details / BOM "Material x Production Color" matrix,
+  // unaffected by this). Opened by the Choose Color cell; on Apply, this is a single, ordinary
+  // `update()` of ONE row's own colorCardId/extraColorCardIds fields — no row splitting/merging
+  // here at all. The one-row-per-item BomRow stays exactly one row in `rows`/on screen, matching
+  // the reference screen's own look (colours listed together against one item); save()'s
+  // expandMultiColorRows is what turns the extra ids into real additional persisted rows.
+  const [colorMultiSelectRowId, setColorMultiSelectRowId] = useState<string | null>(null);
+  const applyMultiColorSelection = (targetRowId: string, selectedColorCardIds: string[]) => {
+    const [first, ...rest] = selectedColorCardIds;
+    const cc = first ? colors.find((c: any) => String(c.id) === first) : null;
+    update(targetRowId, { colorCardId: first || "", color: cc?.code || cc?.name || "", extraColorCardIds: rest });
+  };
+
+  // Material -> Production Color mapping (Work Order mode only — Style/Sample Card BOM has no
+  // Manufacturing Quantities/production-color concept at all). GROUPS every row sharing the same
+  // real material identity (lineType + fabricInventoryId) — every material that has a selected
+  // Fabric/Trim/Ornament Card gets an entry here, not just ones that already have multiple rows,
+  // so a plain single/common row can be "split" into per-color mappings from the same panel.
+  //
+  // Editing here only ever touches TWO fields on ordinary `rows` entries: Variant-2 (the
+  // production-color match key fabric-yarn-requirements.service.ts's resolveApplicableQuantity
+  // reads) and colorCardId (Material Color) — no new persistence, no schema change, the exact same
+  // row-per-color storage the working/tested calculation already depends on. Variant-1 (Material
+  // Variant/Type, e.g. "Fleece") is NEVER touched by anything in this panel — see splitToProduction
+  // Color/addColorMapping below, both of which explicitly preserve it. `isSplit` is the panel's own
+  // invariant: a material is EITHER fully common (every row's Variant-2 blank, one row, uses the
+  // Work Order's TOTAL quantity) OR fully color-mapped (every row's Variant-2 is a real production
+  // color) — never both at once for the same material, which would double-count that color's
+  // quantity (once via the color-specific row, again via the common row's own TOTAL fallback).
+  // GROUPING KEY — the real material identity a user actually means by "one material" is Variant-1
+  // (e.g. "MAIN FAB"/"STRAIGHT ROD"/"VELCRO"), NOT which specific Fabric/Trim Card happens to be
+  // linked to a given row. Previously this grouped (and required!) `fabricInventoryId`, which had
+  // two real consequences confirmed against production-shaped data: (1) any BOM row with a
+  // Variant-1 typed but NO Fabric/Trim Card selected (common for accessory/trim items with no
+  // dedicated master card, and for rows transferred from a Style Card whose own line likewise had
+  // no card) was silently DROPPED from this panel entirely — it never appeared as a column at all,
+  // which is the exact "material columns not appearing" bug; (2) two rows sharing the same
+  // Variant-1 but pointing at two different physical cards (plausible — different colors of "MAIN
+  // FAB" can legitimately be different IM_Item records) were wrongly split into two columns instead
+  // of being recognized as one material. Keying by Variant-1 first (falling back to
+  // fabricInventoryId only when Variant-1 is blank, so a legacy/edge row with no material name
+  // typed still gets its own group instead of disappearing) fixes both without touching how
+  // Variant-1/Variant-2/colorCardId are stored — same rows, same columns (RECIPE_ITEM_COLUMNS),
+  // same save/read path.
+  const materialGroups = useMemo(() => {
+    if (!isWorkOrderMode) return [];
+    const map = new Map<string, { key: string; lineType: string; materialLabel: string; fabricInventoryId: number | null; fabricCode: string; fabricName: string; rows: BomRow[] }>();
+    for (const r of rows) {
+      const v1 = r.variant.trim();
+      if (!v1 && r.fabricInventoryId == null) continue; // nothing to identify this row as a material by
+      const key = v1 ? `${r.lineType}:variant:${v1.toLowerCase()}` : `${r.lineType}:card:${r.fabricInventoryId}`;
+      const existing = map.get(key);
+      if (existing) existing.rows.push(r);
+      else {
+        const materialLabel = v1 || r.fabricCode || r.fabricName || (r.fabricInventoryId != null ? `Item #${r.fabricInventoryId}` : "Material");
+        map.set(key, { key, lineType: r.lineType, materialLabel, fabricInventoryId: r.fabricInventoryId, fabricCode: r.fabricCode, fabricName: r.fabricName, rows: [r] });
+      }
+    }
+    return Array.from(map.values()).map((g) => ({ ...g, isSplit: g.rows.some((r) => r.variant2.trim() !== "") }));
+  }, [rows, isWorkOrderMode]);
+
+  // Converts a material's single common row into the first Production Color mapping — writes ONLY
+  // Variant-2 (the production-color match key). Variant-1 (this row's own Material Variant/Type,
+  // e.g. "Fleece") is passed through completely untouched — see materialGroups' own comment on why
+  // a material is never both common AND color-mapped at once.
+  const splitToProductionColor = (group: (typeof materialGroups)[number]) => {
+    if (!productionColors.length) { toast.error("Enter Manufacturing Quantities on this Work Order's C/S Details tab first."); return; }
+    update(group.rows[0].id, { variant2: productionColors[0].color });
+  };
+
+  // Adds one new row for `color`, cloning the group's own material identity (fabricInventoryId/
+  // Code/Name/Unit AND, critically, Variant-1 itself — "Fleece" stays "Fleece" on every color-
+  // mapped row for this material) from its first existing row — the exact same fields
+  // applyCardSelection already sets when a Fabric/Trim Card is first picked, so a mapping-panel-
+  // created row behaves identically to one created by hand in the grid. Only Variant-2 (Production
+  // Color) differs per row.
+  const addColorMapping = (group: (typeof materialGroups)[number], color: string) => {
+    const template = group.rows[0];
+    setRows((rs) => [...rs, {
+      ...blankRow(group.lineType),
+      fabricInventoryId: template.fabricInventoryId, fabricCode: template.fabricCode, fabricName: template.fabricName,
+      unitId: template.unitId, unit: template.unit, variant: template.variant, variant2: color,
+    }]);
+  };
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
   const gridColumnDefs = useMemo(
@@ -927,7 +1224,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       case "useFixQuantity":
         return <GridCheckbox checked={r.useFixQuantity} onChange={(v) => update(r.id, { useFixQuantity: v })} />;
       case "printWastagePct":
-        return <GridInput type="number" align="right" value={r.printWastagePct} onChange={(v) => update(r.id, { printWastagePct: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.printWastagePct} onChange={(v) => update(r.id, { printWastagePct: parseFloat(v) || 0 })} />;
       case "forex":
         return (
           <select value={r.forex} onChange={(e) => update(r.id, { forex: e.target.value })} className="h-7 w-full text-xs bg-transparent outline-none rounded focus:bg-accent/50">
@@ -1028,13 +1325,69 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         return <GridInput value={r.variant2} onChange={(v) => update(r.id, { variant2: v })} />;
       case "rowColumn":
         return <GridInput value={r.rowColumn} onChange={(v) => update(r.id, { rowColumn: v })} />;
-      case "swatchCardId":
+      case "colorCardId": {
+        // Style/Sample Card mode: multi-select — one BOM item (one visible row) can carry any
+        // number of Material Colors at once, shown together in THIS row's own cell (comma-joined
+        // codes, matching the reference screen's own look) — never split into separate visible
+        // rows. `extraColorCardIds` is client-side/in-memory only; save()'s expandMultiColorRows
+        // is what turns it into real additional StyleBomLine/SampleBomLine rows on write, and
+        // load() collapses those same sibling rows back into this one array on read. Work Order
+        // mode keeps its existing single-select-per-row cell unchanged: there, a row is a specific
+        // Production Color mapping (Variant-2), which a generic "pick N colors" action has no
+        // correct value to set — Work Order's own multi-color entry point is the C/S Details / BOM
+        // "Material x Production Color" matrix, already built and untouched here.
+        if (!isWorkOrderMode) {
+          const allIds = [r.colorCardId, ...r.extraColorCardIds].filter(Boolean);
+          const label = allIds.length === 0
+            ? "Select..."
+            : allIds.map((id) => colors.find((c: any) => String(c.id) === id)?.code).filter(Boolean).join(", ") || r.color || `${allIds.length} colors`;
+          return (
+            <button
+              type="button"
+              title="Choose one or more Material Colors for this item"
+              onClick={() => setColorMultiSelectRowId(r.id)}
+              className="flex h-full w-full items-center gap-1.5 px-2 text-xs hover:bg-accent"
+            >
+              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{label}</span>
+            </button>
+          );
+        }
         return (
-          <select value={r.swatchCardId} onChange={(e) => update(r.id, { swatchCardId: e.target.value })} className="h-7 w-full text-xs bg-transparent outline-none rounded focus:bg-accent/50">
-            <option value="">—</option>
-            {swatches.map((s) => <option key={s.id} value={s.id}>{s.colorName}{s.pantoneCode ? ` (${s.pantoneCode})` : ""}</option>)}
-          </select>
+          <div className="flex h-full w-full items-stretch">
+            <div className="min-w-0 flex-1">
+              <AutocompleteTextCell
+                value={r.color}
+                options={colors.map((c: any) => ({ id: String(c.id), code: c.code, name: c.name }))}
+                placeholder="Type to Search"
+                startOpen={false}
+                onChange={(v) => update(r.id, { color: v })}
+                onCancel={() => {}}
+                onCommit={async (finalValue) => {
+                  try {
+                    const resolved = await resolveOrCreateColor(finalValue);
+                    update(r.id, resolved);
+                  } catch (e: any) {
+                    toast.error(e.message || "Failed to create color");
+                  }
+                }}
+                onSelectOption={(o) => update(r.id, { colorCardId: String(o.id), color: o.code || o.name || "" })}
+              />
+            </div>
+            {/* Opens the full ColorCard grid lookup (CardLookupDialog) — a proper searchable,
+                multi-row table (search by Code or Name), the same reusable pattern the Fabric/
+                Trim Card Search icon above already uses, not a second lookup implementation. */}
+            <button
+              type="button"
+              title="Browse Color Cards"
+              onClick={() => setColorLookupRowId(r.id)}
+              className="flex w-7 shrink-0 items-center justify-center border-l text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Search className="h-3.5 w-3.5" />
+            </button>
+          </div>
         );
+      }
       case "willBeCut":
         return <GridCheckbox checked={r.willBeCut} onChange={(v) => update(r.id, { willBeCut: v })} />;
       case "mainFabric":
@@ -1094,15 +1447,15 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       }
       case "marketLength":
         return r.lineType === "fabric"
-          ? <GridInput type="number" align="right" value={r.marketLength} onChange={(v) => update(r.id, { marketLength: parseFloat(v) || 0 })} />
+          ? <GridInput type="number" align="right" nonNegative value={r.marketLength} onChange={(v) => update(r.id, { marketLength: parseFloat(v) || 0 })} />
           : <span className="block px-2 text-right text-xs text-muted-foreground">—</span>;
       case "marketWidth":
         return r.lineType === "fabric"
-          ? <GridInput type="number" align="right" value={r.marketWidth} onChange={(v) => update(r.id, { marketWidth: parseFloat(v) || 0 })} />
+          ? <GridInput type="number" align="right" nonNegative value={r.marketWidth} onChange={(v) => update(r.id, { marketWidth: parseFloat(v) || 0 })} />
           : <span className="block px-2 text-right text-xs text-muted-foreground">—</span>;
       case "marketWeight":
         return r.lineType === "fabric"
-          ? <GridInput type="number" align="right" value={r.marketWeight} onChange={(v) => update(r.id, { marketWeight: parseFloat(v) || 0 })} />
+          ? <GridInput type="number" align="right" nonNegative value={r.marketWeight} onChange={(v) => update(r.id, { marketWeight: parseFloat(v) || 0 })} />
           : <span className="block px-2 text-right text-xs text-muted-foreground">—</span>;
       case "quantity": {
         // Fabric rows: Quantity is derived (Market Length/Width/Weight, re-expressed in the
@@ -1110,7 +1463,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         // its right. Trim/Ornament/Process rows are unaffected: still a plain manually-entered
         // (or, for Trim with a selected card, ratio-converted on Unit change) value.
         if (r.lineType !== "fabric") {
-          return <GridInput type="number" align="right" value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
+          return <GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
         }
         const card = r.fabricInventoryId != null ? fabricCardCacheRef.current[String(r.fabricInventoryId)] : null;
         // Dedicated Yarn Recipe (yarn-recipe-dialog.tsx) is authoritative once it has rows;
@@ -1136,17 +1489,17 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         return <span className="block px-2 text-right font-mono text-xs text-muted-foreground" title={title}>{r.quantity.toFixed(2)}</span>;
       }
       case "wastePct":
-        return <GridInput type="number" align="right" value={r.wastePct} onChange={(v) => update(r.id, { wastePct: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.wastePct} onChange={(v) => update(r.id, { wastePct: parseFloat(v) || 0 })} />;
       case "dyeWastagePct":
-        return <GridInput type="number" align="right" value={r.dyeWastagePct} onChange={(v) => update(r.id, { dyeWastagePct: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.dyeWastagePct} onChange={(v) => update(r.id, { dyeWastagePct: parseFloat(v) || 0 })} />;
       case "otherWastagePct":
-        return <GridInput type="number" align="right" value={r.otherWastagePct} onChange={(v) => update(r.id, { otherWastagePct: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.otherWastagePct} onChange={(v) => update(r.id, { otherWastagePct: parseFloat(v) || 0 })} />;
       case "totalWaste":
         return <>{applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.printWastagePct, r.otherWastagePct).totalWastePct.toFixed(2)}</>;
       case "calculatedQty":
         return <>{applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.printWastagePct, r.otherWastagePct).finalQty.toFixed(2)}</>;
       case "unitPrice":
-        return <GridInput type="number" align="right" value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
+        return <GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => update(r.id, { unitPrice: parseFloat(v) || 0 })} />;
       case "component":
         return <GridInput value={r.component} onChange={(v) => update(r.id, { component: v })} />;
       case "dia":
@@ -1208,11 +1561,11 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">CMT Price</Label>
-            <Input type="number" className="h-8 text-sm font-mono" value={header.bomCmtPrice} onChange={(e) => setHeader((h) => ({ ...h, bomCmtPrice: parseFloat(e.target.value) || 0 }))} />
+            <Input type="number" min={0} className="h-8 text-sm font-mono" value={header.bomCmtPrice} onChange={(e) => setHeader((h) => ({ ...h, bomCmtPrice: normalizeNonNegative(e.target.value) }))} />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Running Quantity</Label>
-            <Input type="number" className="h-8 text-sm font-mono" value={header.bomRunningQuantity} onChange={(e) => setHeader((h) => ({ ...h, bomRunningQuantity: parseFloat(e.target.value) || 0 }))} />
+            <Input type="number" min={0} className="h-8 text-sm font-mono" value={header.bomRunningQuantity} onChange={(e) => setHeader((h) => ({ ...h, bomRunningQuantity: normalizeNonNegative(e.target.value) }))} />
           </div>
         </div>
       )}
@@ -1233,6 +1586,136 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           const tabColumnDefs = columnDefsForTab(t.value, displayColumnDefs, isWorkOrderMode);
           return (
           <TabsContent key={t.value} value={t.value} className="pt-3">
+            {/* Material x Production Color matrix — BOM materials (Variant-1) as HORIZONTAL
+                columns, this Work Order's own production colors (from Manufacturing Quantities)
+                as VERTICAL rows, per the reference screen's own layout. Editing a cell writes
+                straight into the ordinary `rows` array (same Variant-1/Choose Color fields the
+                grid below shows) — this is a friendlier cross-tab editor for that same data, not
+                a second one; Save/Reload/BOM transfer all keep working unchanged. Variant-1 itself
+                is never read/written by anything in this matrix — only Variant-2 (Production Color
+                match key) and colorCardId (Material Color) are. */}
+            {(() => {
+              const tabGroups = materialGroups.filter((g) => g.lineType === t.value);
+              if (!tabGroups.length) return null;
+              // Column header is the group's own Variant-1 (e.g. "MAIN FAB") — the real material
+              // identity this matrix groups by (see materialGroups' own comment) — with the linked
+              // Fabric/Trim Card's code as secondary info when one exists and differs from the
+              // Variant-1 text itself; a material with no card selected still gets a clean header.
+              const groupMeta = tabGroups.map((g) => {
+                const cardLabel = g.fabricCode || g.fabricName;
+                const materialLabel = cardLabel && cardLabel !== g.materialLabel ? `${g.materialLabel} (${cardLabel})` : g.materialLabel;
+                // Rows whose Variant-2 (Production Color) doesn't (case-insensitively) match any of
+                // the Work Order's OWN Manufacturing Quantity colors — a stale/removed color, or a
+                // legacy free-typed value. Never hidden or discarded; surfaced below the matrix so
+                // the user can still see/edit/remove them (same mapping-warning concept
+                // fabric-yarn-requirements.service.ts's own getMappingWarnings already surfaces on
+                // the Requirements screen).
+                const matched = new Set<string>();
+                const rowFor = (color: string) => g.rows.find((r) => { const m = r.variant2.trim().toLowerCase() === color.toLowerCase(); if (m) matched.add(r.id); return m; });
+                if (g.isSplit) productionColors.forEach((pc) => rowFor(pc.color));
+                const staleRows = g.isSplit ? g.rows.filter((r) => !matched.has(r.id)) : [];
+                return { g, materialLabel, rowFor, staleRows };
+              });
+              return (
+                <div className="mb-2 rounded-md border bg-muted/30 p-2 text-xs">
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <span className="font-medium">Material x Production Color Mapping</span>
+                    <span className="text-muted-foreground">— each material column can hold a different Material Color per production color row; an unsplit ("Common") material still applies to the Work Order's total quantity, every production color</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-separate border-spacing-y-1">
+                      <thead>
+                        <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+                          <th className="w-28 pr-2 font-medium">Production Color</th>
+                          {groupMeta.map(({ g, materialLabel }) => (
+                            <th key={g.key} className="pr-2 font-medium">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span>{materialLabel}</span>
+                                {!g.isSplit && (
+                                  <Button
+                                    variant="outline" size="sm" className="h-5 px-1.5 text-[10px] font-normal normal-case tracking-normal"
+                                    disabled={!productionColors.length}
+                                    title={!productionColors.length ? "Enter Manufacturing Quantities on this Work Order's C/S Details tab first" : "Map this material's own color per production color"}
+                                    onClick={() => splitToProductionColor(g)}
+                                  >
+                                    Split by Color
+                                  </Button>
+                                )}
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {!productionColors.length ? (
+                          <tr><td colSpan={groupMeta.length + 1} className="bg-background p-2 text-muted-foreground">Enter Manufacturing Quantities on this Work Order's C/S Details tab first.</td></tr>
+                        ) : productionColors.map((pc) => (
+                          <tr key={pc.color} className="[&>td]:bg-background [&>td]:p-1 [&>td]:first:rounded-l-md [&>td]:last:rounded-r-md">
+                            <td className="align-top font-medium">{pc.color}</td>
+                            {groupMeta.map(({ g, rowFor }) => {
+                              if (!g.isSplit) return <td key={g.key} className="align-top text-muted-foreground">— common —</td>;
+                              const row = rowFor(pc.color);
+                              return (
+                                <td key={g.key} className="align-top">
+                                  {row ? (
+                                    <div className="flex h-7 items-stretch">
+                                      <div className="min-w-0 flex-1">
+                                        <AutocompleteTextCell
+                                          value={row.color}
+                                          options={colors.map((c: any) => ({ id: String(c.id), code: c.code, name: c.name }))}
+                                          placeholder="Type to Search"
+                                          startOpen={false}
+                                          onChange={(v) => update(row.id, { color: v })}
+                                          onCancel={() => {}}
+                                          onCommit={async (finalValue) => {
+                                            try { update(row.id, await resolveOrCreateColor(finalValue)); }
+                                            catch (e: any) { toast.error(e.message || "Failed to create color"); }
+                                          }}
+                                          onSelectOption={(o) => update(row.id, { colorCardId: String(o.id), color: o.code || o.name || "" })}
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        title="Browse Color Cards"
+                                        onClick={() => setColorLookupRowId(row.id)}
+                                        className="flex w-6 shrink-0 items-center justify-center border-l text-muted-foreground hover:bg-accent hover:text-foreground"
+                                      >
+                                        <Search className="h-3 w-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        title="Remove this production color's mapping"
+                                        onClick={() => removeRow(row.id)}
+                                        className="flex w-6 shrink-0 items-center justify-center border-l text-muted-foreground hover:bg-accent hover:text-destructive"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button type="button" className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={() => addColorMapping(g, pc.color)}>
+                                      + Add mapping
+                                    </button>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {groupMeta.some(({ staleRows }) => staleRows.length > 0) && (
+                    <div className="mt-1.5 space-y-0.5">
+                      {groupMeta.filter(({ staleRows }) => staleRows.length > 0).map(({ g, materialLabel, staleRows }) => (
+                        <p key={g.key} className="text-[10px] text-amber-700 dark:text-amber-400">
+                          {materialLabel}: {staleRows.length} row{staleRows.length > 1 ? "s" : ""} (Production Color: {staleRows.map((r) => r.variant2.trim() || "(blank)").join(", ")}) don't match any of this Work Order's current production colors — edit or remove them directly in the grid below if they're no longer needed.
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="rounded-md border overflow-x-auto">
               <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
                 <colgroup>
@@ -1326,6 +1809,48 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           }}
         />
       )}
+
+      {colorLookupRowId && (
+        <CardLookupDialog<CardLookupRow>
+          open={!!colorLookupRowId}
+          onOpenChange={(open) => !open && setColorLookupRowId(null)}
+          title="Select Color Card"
+          // Always a fresh server round trip (not the locally-cached `colors` state) so a
+          // ColorCard created moments ago through ANY workflow — the auto-create-on-commit inline
+          // cell, another browser tab, the standalone Color Cards screen — is guaranteed visible
+          // here without a manual page refresh. Also refreshes the local `colors` cache as a side
+          // effect, so every inline "Choose Color" AutocompleteTextCell across this whole BOM (not
+          // just the row that opened the dialog) picks up the same new record immediately too.
+          fetchOptions={async (search) => {
+            const all: any = await plmApi.colors.list().catch(() => []);
+            const list = Array.isArray(all) ? all : [];
+            setColors(list);
+            const term = (search || "").trim().toLowerCase();
+            const filtered = term ? list.filter((c: any) => (c.code || "").toLowerCase().includes(term) || (c.name || "").toLowerCase().includes(term)) : list;
+            return filtered.map((c: any) => ({ id: c.id, inventoryCode: c.code, inventoryName: c.name, inUse: c.inUse }));
+          }}
+          onSelect={(row: any) => applyColorSelection(colorLookupRowId, String(row.id), row.inventoryCode || "", row.inventoryName || "")}
+        />
+      )}
+
+      {colorMultiSelectRowId && (() => {
+        const targetRow = rows.find((r) => r.id === colorMultiSelectRowId);
+        if (!targetRow) return null;
+        const materialLabel = (targetRow.variant.trim() || targetRow.fabricCode || targetRow.fabricName || "this item");
+        return (
+          <ColorMultiSelectDialog
+            open materialLabel={materialLabel}
+            colors={colors}
+            initialSelectedIds={Array.from(new Set([targetRow.colorCardId, ...targetRow.extraColorCardIds].filter(Boolean)))}
+            onClose={() => setColorMultiSelectRowId(null)}
+            onApply={(ids) => { applyMultiColorSelection(colorMultiSelectRowId, ids); setColorMultiSelectRowId(null); }}
+            onCreateColor={async (text) => {
+              const resolved = await resolveOrCreateColor(text);
+              return resolved.colorCardId;
+            }}
+          />
+        );
+      })()}
 
       {yarnRecipeRowId && (() => {
         const row = rows.find((r) => r.id === yarnRecipeRowId);

@@ -19,7 +19,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "fix:fabric-card-yarn-names": "ts-node scripts/fix-fabric-card-yarn-names.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",

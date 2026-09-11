@@ -135,10 +135,13 @@ export class FabricCardService {
           // Yarn Count has no active/inactive concept (see legacy-master-lookup.service.ts's
           // own comment on why Yarn Card isn't in that generic table) — YarnCardService.get()
           // already only requires the Yarn Card to exist and not be deleted, unaffected by
-          // `unchanged`.
+          // `unchanged`. inventoryName (not inventoryCode) — the auto-generated Fabric Card Name
+          // must show the Yarn Card's actual Name (e.g. "30/1 combed"), not its Code
+          // (e.g. "YARN-00003"); every other segment of this same Name already uses its
+          // master's `name`, not its code (see the `f.kind === 'master'` branch above).
           const rec = await this.yarnCardsSvc.get(ids[f.col]).catch(() => null);
           if (!rec) invalid.push(f.label);
-          else names[f.col] = rec.inventoryCode;
+          else names[f.col] = rec.inventoryName;
         }
       }),
     );
@@ -151,8 +154,9 @@ export class FabricCardService {
   // Fabric Card has no pre-existing naming convention of its own to reuse (verified — Yarn/
   // Trim Card names are plain user-typed text, and nothing in this codebase already composes
   // a Fabric Card name). This is the one convention: FabType | GSM | DyeType | Composition |
-  // the 4 Yarn Card codes — every segment sourced from the resolved master/Yarn Card record
-  // (never client-typed text), so the Name always reflects the real current selections.
+  // the 4 Yarn Card NAMES — every segment sourced from the resolved master/Yarn Card record's
+  // own `name` (never client-typed text, never a code), so the Name always reflects the real
+  // current selections in human-readable form.
   private buildIdentityName(names: Record<string, string>): string {
     const yarns = ['UD_FabYarnCount', 'UD_FabYarnCount1', 'UD_FabYarnCount2', 'UD_FabYarnCount3']
       .map((c) => names[c])

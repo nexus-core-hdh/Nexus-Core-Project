@@ -8,6 +8,7 @@ import { nexuscoreValidationPipe } from './common/pipes/validation.pipe';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PrismaService } from './prisma/prisma.service';
 import { BpmService } from './modules/bpm/bpm.service';
+import { RolesService } from './modules/roles/roles.service';
 
 async function bootstrap() {
   const logger = new Logger('[NexusCore] Bootstrap');
@@ -49,6 +50,21 @@ async function bootstrap() {
     logger.log('BPM processes seeded');
   } catch (e) {
     logger.warn(`BPM seed skipped: ${(e as Error).message}`);
+  }
+
+  // ── Seed the Requirements lock/unlock permissions ────────────────────────────
+  // RolesService.seedPermissions() already existed for exactly this ("ensure these Permission
+  // rows exist so an admin can grant them via the existing Role/Permission UI") but was never
+  // actually called anywhere — same idempotent-upsert-at-boot shape as the BPM seed above.
+  try {
+    const rolesService = app.get(RolesService);
+    await rolesService.seedPermissions([
+      { module: 'requirements', action: 'lock', description: 'Lock a Fabric/Yarn/Trim Requirement on a Work Order' },
+      { module: 'requirements', action: 'unlock', description: 'Unlock a Fabric/Yarn/Trim Requirement on a Work Order (also required to Calculate/Save/Delete a currently-locked one)' },
+    ]);
+    logger.log('Requirements lock/unlock permissions seeded');
+  } catch (e) {
+    logger.warn(`Requirements permission seed skipped: ${(e as Error).message}`);
   }
 
   // ── Start ────────────────────────────────────────────────────────────────────
