@@ -379,44 +379,136 @@ export class WorkOrderService {
   // own BOM tab) and copies them into this Work Order's OWN MA_RecipeItem rows. This is a one-way
   // copy: the Work Order's copy is then independently editable and never writes back to
   // StyleBomLine/StyleCard, satisfying "Work Order BOM is a Work-Order-specific COPY".
+  // Key names here must match camel(col) exactly (upsertBom looks each column up via
+  // line[camel(c)]) — a UD_ column camelizes to "uD_Xxx" (first char lowercased, rest untouched),
+  // not "udXxx". Extracted out of transferBomFromStyleCard so transferBomFromStyleCardForType
+  // (fabric-yarn-requirements.service.ts's own per-line Material Color edit) can reuse the exact
+  // same field mapping for a single lineType instead of duplicating this list.
+  private styleLineToRecipeLine(l: any) {
+    return {
+      inventoryId: l.fabricInventoryId ?? undefined,
+      explanation: l.explanation ?? undefined,
+      variant1: l.variant ?? undefined,
+      isCutting: l.willBeCut ? 1 : 0,
+      isMaster: l.mainFabric ? 1 : 0,
+      unitId: l.unitId ?? undefined,
+      quantity: l.quantity ?? undefined,
+      price: l.unitPrice ?? undefined,
+      colorCardId: l.colorCardId ?? undefined,
+      // StyleBomLine's 3-way wastePct/dyeWastagePct/otherWastagePct combine into MA_RecipeItem's
+      // single Wastage column — same non-compound sum this component's own applyWaste() uses
+      // (matches how BomTab's own Work Order save path combines them client-side too).
+      wastage: (Number(l.wastePct) || 0) + (Number(l.dyeWastagePct) || 0) + (Number(l.otherWastagePct) || 0),
+      uD_Component: l.component ?? undefined,
+      uD_Dia: l.dia ?? undefined,
+      uD_Guage: l.gauge ?? undefined,
+      uD_FinishWidth: l.finishWidth ?? undefined,
+      uD_FinishRoute: l.finishRoute ?? undefined,
+      uD_Revision: l.revision ?? undefined,
+      uD_Placement: l.placement ?? undefined,
+      uD_Remarks: l.process ?? undefined, // Process has no free-text column here — see RECIPE_ITEM_COLUMNS' own comment
+      // MarkerWidth/MarkerLength/M2Weight are NOT transferred — StyleBomLine has no columns
+      // for them at all (they're calculator-only inputs in StyleCard mode), so there is
+      // nothing to copy; a Work Order user re-enters them directly if needed.
+    };
+  }
+
+  // Matches fabric-yarn-requirements.service.ts's/work-orders/page.tsx's own COLOR_SIZE_SEP
+  // exactly — the existing client-side convention encoding Manufacturing Quantities' Color+Size
+  // into MA_WorkOrderItemVariant.Explanation.
+  private static readonly COLOR_SIZE_SEP = '‖';
+
+  // This Work Order's own real, saved Production Colors (Manufacturing Quantities), in the order
+  // each first appears — never invented, never a Style Card colorway. Used only to CYCLE a
+  // multi-color Style BOM material's own colors across those rows at transfer time (see
+  // assignProductionColorCycle below) — the exact same formula work-orders/page.tsx's own
+  // loadBomMaterialGroups already uses for its C/S Details material-column DISPLAY cycling,
+  // applied here so the same assignment is actually PERSISTED (Variant-2) instead of only ever
+  // being a live, unsaved display default.
+  private async resolveProductionColors(workOrderId: number): Promise<string[]> {
+    const items = await this.listItems(workOrderId);
+    const primaryItemId = items[0]?.id;
+    if (primaryItemId == null) return [];
+    const variants = await this.listItemVariants(primaryItemId);
+    const seen = new Set<string>();
+    const colors: string[] = [];
+    for (const v of variants as any[]) {
+      const [colorRaw] = String(v.explanation || '').split(WorkOrderService.COLOR_SIZE_SEP);
+      const color = colorRaw.trim();
+      if (color && !seen.has(color.toLowerCase())) { seen.add(color.toLowerCase()); colors.push(color); }
+    }
+    return colors;
+  }
+
+  // A Style BOM material that was given several Material Colors (bom-tab.tsx's own multi-select —
+  // saved as several sibling StyleBomLine rows sharing the same Variant-1/material identity, one
+  // per color) has, until now, transferred into the Work Order with every one of those lines'
+  // own Variant-2 left null — meaning Requirements calculation had no way to attribute each
+  // color-specific line to its own Production Color, and fell back to the WHOLE Work Order's
+  // total for all of them (the existing, correct "no Variant-2 = applies to every color" rule —
+  // just triggered here by missing data, not a real "common material"). Fixes that at the moment
+  // of transfer: within each material (grouped the same way loadBomMaterialGroups groups C/S
+  // Details' own material columns — Variant-1 text, or the linked Fabric/Trim Card id when
+  // Variant-1 is blank), a material with MORE THAN ONE distinct Material Color gets each of its
+  // own lines' Variant-2 cycled across this Work Order's real Production Colors by position
+  // (Nth distinct color -> Nth Production Color, wrapping if there are more colors than rows) —
+  // the identical rule already used for display-only cycling, now actually persisted. A material
+  // with only one color (or none) is untouched — it stays a genuine "common" line applying to
+  // every color, exactly as before.
+  private assignProductionColorCycle(lines: any[], productionColors: string[]): any[] {
+    if (!productionColors.length) return lines;
+    const byMaterial = new Map<string, any[]>();
+    for (const l of lines) {
+      const v1 = String(l.variant1 || '').trim();
+      const key = v1 ? `variant:${v1.toLowerCase()}` : `card:${l.inventoryId ?? 'none'}`;
+      (byMaterial.get(key) ?? byMaterial.set(key, []).get(key)!).push(l);
+    }
+    for (const groupLines of byMaterial.values()) {
+      const distinctColorCount = new Set(groupLines.map((l) => l.colorCardId).filter(Boolean)).size;
+      if (distinctColorCount <= 1) continue; // genuine common material — leave Variant-2 as-is (null)
+      groupLines.forEach((l, idx) => { l.variant2 = productionColors[idx % productionColors.length]; });
+    }
+    return lines;
+  }
+
   async transferBomFromStyleCard(workOrderId: number, styleCardId: string, userId: number) {
     await this.get(workOrderId);
-    const styleLines = await this.prisma.styleBomLine.findMany({ where: { styleCardId } });
+    const [styleLines, productionColors] = await Promise.all([
+      this.prisma.styleBomLine.findMany({ where: { styleCardId } }),
+      this.resolveProductionColors(workOrderId),
+    ]);
     const result: Record<string, any[]> = {};
     for (const lineType of BOM_LINE_TYPES) {
-      // Key names here must match camel(col) exactly (upsertBom looks each column up via
-      // line[camel(c)]) — a UD_ column camelizes to "uD_Xxx" (first char lowercased, rest
-      // untouched), not "udXxx".
-      const lines = styleLines
-        .filter((l) => l.lineType === lineType)
-        .map((l) => ({
-          inventoryId: l.fabricInventoryId ?? undefined,
-          explanation: l.explanation ?? undefined,
-          variant1: l.variant ?? undefined,
-          isCutting: l.willBeCut ? 1 : 0,
-          isMaster: l.mainFabric ? 1 : 0,
-          unitId: l.unitId ?? undefined,
-          quantity: l.quantity ?? undefined,
-          price: l.unitPrice ?? undefined,
-          colorCardId: l.colorCardId ?? undefined,
-          // StyleBomLine's 3-way wastePct/dyeWastagePct/otherWastagePct combine into MA_RecipeItem's
-          // single Wastage column — same non-compound sum this component's own applyWaste() uses
-          // (matches how BomTab's own Work Order save path combines them client-side too).
-          wastage: (Number(l.wastePct) || 0) + (Number(l.dyeWastagePct) || 0) + (Number(l.otherWastagePct) || 0),
-          uD_Component: l.component ?? undefined,
-          uD_Dia: l.dia ?? undefined,
-          uD_Guage: l.gauge ?? undefined,
-          uD_FinishWidth: l.finishWidth ?? undefined,
-          uD_FinishRoute: l.finishRoute ?? undefined,
-          uD_Revision: l.revision ?? undefined,
-          uD_Placement: l.placement ?? undefined,
-          uD_Remarks: l.process ?? undefined, // Process has no free-text column here — see RECIPE_ITEM_COLUMNS' own comment
-          // MarkerWidth/MarkerLength/M2Weight are NOT transferred — StyleBomLine has no columns
-          // for them at all (they're calculator-only inputs in StyleCard mode), so there is
-          // nothing to copy; a Work Order user re-enters them directly if needed.
-        }));
+      const lines = this.assignProductionColorCycle(
+        styleLines.filter((l) => l.lineType === lineType).map((l) => this.styleLineToRecipeLine(l)),
+        productionColors,
+      );
       result[lineType] = await this.upsertBom(workOrderId, lineType, lines, userId);
     }
     return result;
+  }
+
+  // Scoped, single-lineType version of the above — transfers ONLY the given lineType's Style BOM
+  // lines into the Work Order's own real BOM, never touching the other three types (a full
+  // transferBomFromStyleCard() would silently overwrite an already-owned Trim/Ornament/Process
+  // BOM the user separately edited, just because Fabric needed to be promoted). Used by
+  // fabric-yarn-requirements.service.ts's setMaterialColorForLine() to implicitly promote a
+  // Style-Card-fallback Requirements row into a real, independently-editable BOM line the moment
+  // its Material Color is changed — the same "first edit promotes the fallback" rule the Work
+  // Order's own C/S Details material columns already apply. Ordered by StyleBomLine's own
+  // sortOrder so the Nth line here is always the Nth line resolveBomLines()/getMaterialRequirements
+  // would have shown, letting the caller match a clicked row back to its newly-created own line by
+  // position.
+  async transferBomFromStyleCardForType(workOrderId: number, styleCardId: string, lineType: BomLineType, userId: number) {
+    await this.get(workOrderId);
+    const [styleLines, productionColors] = await Promise.all([
+      this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } }),
+      this.resolveProductionColors(workOrderId),
+    ]);
+    // assignProductionColorCycle only ever mutates each line's own `variant2` in place — array
+    // order (and therefore position, which the caller's own implicit-promotion matching depends
+    // on) is completely unchanged.
+    const lines = this.assignProductionColorCycle(styleLines.map((l) => this.styleLineToRecipeLine(l)), productionColors);
+    return this.upsertBom(workOrderId, lineType, lines, userId);
   }
 }

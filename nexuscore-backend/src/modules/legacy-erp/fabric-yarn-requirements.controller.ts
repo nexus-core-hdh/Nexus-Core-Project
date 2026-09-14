@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { FabricYarnRequirementsService, RequirementTab } from './fabric-yarn-requirements.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -35,8 +35,46 @@ export class FabricYarnRequirementsController {
     return this.svc.getMappingWarnings(id, asTab(type));
   }
 
-  @Get('transactions') getTransactionDetails(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.getTransactionDetails(id);
+  // Optional ?inventoryId=&colorCardId= — when the user clicks a specific item on the
+  // Requirements/Total Requirements grid, this scopes the receipts shown to exactly that
+  // material (and, if the clicked row had one, that Material Color) instead of every receipt
+  // linked to the whole Work Order. Omitted (the default, e.g. the initial page load), every
+  // receipt for this Work Order is still returned, unchanged from before.
+  @Get('transactions') getTransactionDetails(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('inventoryId') inventoryId?: string,
+    @Query('colorCardId') colorCardId?: string,
+  ) {
+    return this.svc.getTransactionDetails(id, inventoryId ? Number(inventoryId) : undefined, colorCardId || undefined);
+  }
+
+  // Manual Material Color selection directly on this Requirements screen — Fabric/Trim only (the
+  // `type` query param is validated the same way every other route here already does; a bad/yarn
+  // value simply falls through to "fabric" via asTab, matching this route's own DirectBomTab
+  // restriction on the service side). `lineId` is a live requirement row's own `id` (see
+  // getMaterialRequirements' own comment on what that id actually is).
+  @Post('material-color') setMaterialColorForLine(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('type') type: string | undefined,
+    @Body() body: { lineId: string; colorCardId: string | null },
+    @CurrentUser('id') userId: string,
+  ) {
+    const tab = asTab(type);
+    const lineType = tab === 'yarn' ? 'fabric' : tab;
+    return this.svc.setMaterialColorForLine(id, lineType, String(body.lineId), body.colorCardId ?? null, Number(userId) || 1, userId);
+  }
+
+  // Manual Consumption edit directly on this Requirements screen — Fabric/Trim only, same
+  // fallback-promotion rules as material-color above.
+  @Post('consumption') setConsumptionForLine(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('type') type: string | undefined,
+    @Body() body: { lineId: string; quantity: number },
+    @CurrentUser('id') userId: string,
+  ) {
+    const tab = asTab(type);
+    const lineType = tab === 'yarn' ? 'fabric' : tab;
+    return this.svc.setConsumptionForLine(id, lineType, String(body.lineId), Number(body.quantity) || 0, Number(userId) || 1, userId);
   }
 
   // Visible to any authenticated user (same baseline as every other GET here) — canUnlock in the

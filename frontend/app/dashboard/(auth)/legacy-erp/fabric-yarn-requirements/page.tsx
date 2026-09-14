@@ -21,9 +21,10 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ImageOff, ExternalLink, Lock, LockOpen, Trash2, ListX } from "lucide-react";
+import { ImageOff, ExternalLink, Lock, LockOpen, Trash2, ListX, Search } from "lucide-react";
 import { toast } from "sonner";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { normalizeNonNegative } from "@/lib/numeric-guards";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
@@ -74,6 +75,11 @@ interface RequirementRow {
 interface TotalRow {
   id: string | number; inventoryId: any; inventoryCode: string | null; inventoryName: string | null; quantity: number;
   colorCardId?: string | null; colorCode?: string | null; colorName?: string | null;
+  // Server-computed (fabric-yarn-requirements.service.ts's own getTotalRequirements) Grand Total
+  // row for one Item, summed across every one of its own per-color rows above it — present only
+  // for an Item that genuinely has more than one color-split row (a single-row Item's own row
+  // already IS its total). Never derived client-side, so it can never disagree with the DB.
+  isCumulative?: boolean;
 }
 
 interface ManufacturingQtySummary { hasAny: boolean; total: number; byColor: { color: string; quantity: number }[]; extraCuttingPercent?: number }
@@ -122,6 +128,11 @@ export default function FabricYarnRequirementsPage() {
   const [requirementRows, setRequirementRows] = useState<RequirementRow[]>([]);
   const [totalRows, setTotalRows] = useState<TotalRow[]>([]);
   const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+  // Which item's own receipts Transaction Details is currently scoped to — set by clicking a row
+  // on either the Requirements or the Total Requirements grid below. `null` means unfiltered
+  // (every receipt for this Work Order, the original/default behavior).
+  const [transactionFilter, setTransactionFilter] = useState<{ inventoryId: number | null; colorCardId: string | null; label: string } | null>(null);
   const [mfgQty, setMfgQty] = useState<ManufacturingQtySummary | null>(null);
   // Multi-Color BOM mapping validation — non-fatal warnings only (see the backend's own comment
   // on why this never blocks Calculate/Save). Scoped by (workOrderId, type) exactly like every
@@ -145,9 +156,11 @@ export default function FabricYarnRequirementsPage() {
   // backend's own comment on why the previous canUnlock-bypass was a real bug, not a feature).
   const mutationBlocked = !!lockStatus?.isLocked;
 
-  // Row selection — the "Requirements" grid only (the "Total Requirements Table" always reflects
-  // a LIVE recomputation, never a stable MA_Requirement id, so it never gets row-level actions).
+  // Row selection — highlight only (no row-level actions on Total Requirements: it always
+  // reflects a LIVE recomputation, never a stable MA_Requirement id). Clicking either grid's row
+  // ALSO scopes Transaction Details to that item — see transactionFilter/loadTransactions above.
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | number | null>(null);
+  const [selectedTotalRowId, setSelectedTotalRowId] = useState<string | number | null>(null);
   // True only when `requirementRows` is currently showing the last SAVED requirement (its `id` is
   // then a real MA_Requirement.RecId) rather than a freshly-recomputed live preview (whose `id` is
   // just a BOM line id, nothing persisted to delete) — see loadGrids' own comment. Gates whether
@@ -159,6 +172,14 @@ export default function FabricYarnRequirementsPage() {
   const [pendingDeleteRow, setPendingDeleteRow] = useState<RequirementRow | null>(null);
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // Manual Material Color selection directly on this screen (Fabric/Trim only — Yarn's color is
+  // inherited from the Fabric line it was exploded from, nothing of its own to edit here). Only
+  // offered on a live-preview row (requirementRowsAreSaved === false), whose `id` is always a real,
+  // resolvable BOM line — see setMaterialColorForLine's own comment on what a saved MA_Requirement
+  // row's id would mean instead (nothing editable).
+  const [colorLookupRowId, setColorLookupRowId] = useState<string | number | null>(null);
+  const [settingColorRowId, setSettingColorRowId] = useState<string | number | null>(null);
+  const [settingConsumptionRowId, setSettingConsumptionRowId] = useState<string | number | null>(null);
 
   const loadWorkOrder = async (id: number) => {
     setLoadingHeader(true);
@@ -218,10 +239,33 @@ export default function FabricYarnRequirementsPage() {
       // A reload can legitimately drop the row the user had selected (it may no longer be saved,
       // or the list may have changed shape) — never leave a stale selection pointing at nothing.
       setSelectedRequirementId(null);
+      setSelectedTotalRowId(null);
+      // A new/reloaded Work Order's own items are a completely different set — any item-scoped
+      // Transaction filter from a previous Order (or a previous Calculate) no longer applies.
+      setTransactionFilter(null);
     } finally {
       setLoadingGrids(false);
     }
   };
+
+  // Re-fetches Transaction Details scoped to whichever item was clicked (or unfiltered, the
+  // default) — deliberately its OWN fetch, not folded into loadGrids/Calculate, so clicking a row
+  // to inspect its receipts never triggers a full BOM/requirement recalculation.
+  const loadTransactions = async (id: number, filter: typeof transactionFilter) => {
+    setLoadingTransactions(true);
+    try {
+      const rows: any = await legacyErpApi.workOrders.requirements.getTransactions(id, filter ? { inventoryId: filter.inventoryId, colorCardId: filter.colorCardId } : undefined);
+      setTransactionRows(Array.isArray(rows) ? rows : []);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to load Transaction Details");
+    } finally {
+      setLoadingTransactions(false);
+    }
+  };
+  useEffect(() => {
+    if (workOrderId) loadTransactions(workOrderId, transactionFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workOrderId, transactionFilter]);
 
   // Real DB round trip, scoped by (workOrderId, type) exactly like every other fetch on this
   // screen — never trusts stale state from a previous Order or the other two Requirement tabs.
@@ -362,6 +406,40 @@ export default function FabricYarnRequirementsPage() {
     }
   };
 
+  // Applies a manually-chosen Material Color to one Requirements row. `type` here is always
+  // "fabric" or "trim" (the Material Color column is only rendered for those two tabs — see
+  // requirementColumns below), matching setMaterialColorForLine's own DirectBomTab restriction.
+  const setMaterialColorForRow = async (row: RequirementRow, colorCardId: string | null) => {
+    if (!workOrderId || type === "yarn") return;
+    setSettingColorRowId(row.id);
+    try {
+      await legacyErpApi.workOrders.requirements.setMaterialColor(workOrderId, type, row.id, colorCardId);
+      toast.success("Material Color saved");
+      await loadGrids(workOrderId);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save Material Color");
+    } finally {
+      setSettingColorRowId(null);
+    }
+  };
+
+  // Applies a manually-typed Consumption (this BOM line's own per-unit Quantity) to one
+  // Requirements row — same Fabric/Trim-only restriction and implicit fallback-promotion as
+  // Material Color above.
+  const setConsumptionForRow = async (row: RequirementRow, quantity: number) => {
+    if (!workOrderId || type === "yarn") return;
+    setSettingConsumptionRowId(row.id);
+    try {
+      await legacyErpApi.workOrders.requirements.setConsumption(workOrderId, type, row.id, quantity);
+      toast.success("Consumption saved");
+      await loadGrids(workOrderId);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save Consumption");
+    } finally {
+      setSettingConsumptionRowId(null);
+    }
+  };
+
   const openTransactionDetail = () => {
     // Opens the existing generic Inventory Receipts screen — no separate Transaction Detail
     // screen exists anywhere in this codebase; reusing this one rather than building a new one,
@@ -411,15 +489,15 @@ export default function FabricYarnRequirementsPage() {
     },
   ];
 
-  // Three deliberately separate identities, per BOM line:
+  // Three deliberately separate identities, per BOM line — never mixed with each other:
   // - Variant-1 — the BOM item's own Material Variant/Type (e.g. "Fleece", "Rib", "Twill Tape").
   //   Unchanged meaning/label; never touched by the requirement engine's own matching logic.
-  // - Variant-2 — the Production Color this line applies to (matched, case-insensitively, against
-  //   this Work Order's own Manufacturing Quantities by fabric-yarn-requirements.service.ts's own
-  //   resolveApplicableQuantity — see Applicable Qty's own tooltip just below for which color
-  //   actually matched). Relabeled here (unlike Variant-1) because it has no other established
-  //   meaning anywhere in this codebase to protect — see bom-tab.tsx's own columnDefsForTab
-  //   comment for the same relabel on the BOM edit grid itself.
+  // - Variant-2 — its own existing matching role only: the color text this line applies to
+  //   (matched, case-insensitively, against this Work Order's own Manufacturing Quantities by
+  //   fabric-yarn-requirements.service.ts's own resolveApplicableQuantity — see Applicable Qty's
+  //   own tooltip just below for which color actually matched). Shown under its real name here,
+  //   not relabeled "Production Color" — that label belongs only to the Manufacturing Quantities
+  //   row/color itself (C/S Details), a different concept, kept separate per product decision.
   // - Material Color — the real ColorCard selection ("Choose Color" on the BOM grid), e.g. "NAVY".
   // The previous Variant-1/2 Explanation columns are removed here, not just hidden — the backend
   // has never populated them (always null/"—"), so they were pure clutter, not a technical detail
@@ -431,10 +509,52 @@ export default function FabricYarnRequirementsPage() {
     { key: "variant1", label: "Variant-1", defaultWidth: 110, render: (r) => r.variant1 || "—" },
     {
       key: "colorCardId", label: "Material Color", defaultWidth: 140,
-      render: (r) => (r.colorCode || r.colorName ? <span>{r.colorCode || r.colorName}{r.colorCode && r.colorName && r.colorCode !== r.colorName ? ` — ${r.colorName}` : ""}</span> : <span className="text-muted-foreground">—</span>),
+      render: (r) => {
+        const label = r.colorCode || r.colorName
+          ? <span>{r.colorCode || r.colorName}{r.colorCode && r.colorName && r.colorCode !== r.colorName ? ` — ${r.colorName}` : ""}</span>
+          : <span className="text-muted-foreground">—</span>;
+        // Editable only on Fabric/Trim's live preview (a saved MA_Requirement row's `id` is not a
+        // resolvable BOM line — see setMaterialColorForLine's own comment) and only when unlocked.
+        if (type === "yarn" || requirementRowsAreSaved) return label;
+        return (
+          <button
+            type="button"
+            className="flex w-full items-center gap-1 text-left hover:underline disabled:pointer-events-none disabled:opacity-50"
+            disabled={mutationBlocked || settingColorRowId === r.id}
+            onClick={(e) => { e.stopPropagation(); setColorLookupRowId(r.id); }}
+            title="Set Material Color"
+          >
+            <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
+            {settingColorRowId === r.id ? <span className="text-muted-foreground">Saving...</span> : label}
+          </button>
+        );
+      },
     },
-    { key: "variant2", label: "Production Color", defaultWidth: 130, render: (r) => r.variant2 || <span className="text-muted-foreground">All Colors</span> },
-    { key: "consumption", label: "Consumption", defaultWidth: 110, align: "right", render: (r) => round(r.consumption, "quantity").toLocaleString() },
+    { key: "variant2", label: "Variant-2", defaultWidth: 130, render: (r) => r.variant2 || <span className="text-muted-foreground">All Colors</span> },
+    {
+      key: "consumption", label: "Consumption", defaultWidth: 110, align: "right",
+      render: (r) => {
+        // Editable only on Fabric/Trim's live preview (see setMaterialColorForRow's own comment
+        // on why a saved MA_Requirement row's `id` isn't a resolvable BOM line) and only when
+        // unlocked — same restrictions as Material Color, since both write to the same BOM line.
+        if (type === "yarn" || requirementRowsAreSaved) return round(r.consumption, "quantity").toLocaleString();
+        return (
+          <input
+            type="number"
+            min={0}
+            defaultValue={r.consumption}
+            disabled={mutationBlocked || settingConsumptionRowId === r.id}
+            className="h-7 w-full rounded border border-transparent bg-transparent px-1 text-right font-mono hover:border-input focus:border-input focus:outline-none disabled:opacity-50"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => { if (e.key === "-") e.preventDefault(); }}
+            onBlur={(e) => {
+              const next = normalizeNonNegative(e.target.value);
+              if (next !== r.consumption) setConsumptionForRow(r, next);
+            }}
+          />
+        );
+      },
+    },
     {
       key: "applicableQuantity", label: "Applicable Qty", defaultWidth: 150, align: "right",
       render: (r) => (
@@ -447,14 +567,32 @@ export default function FabricYarnRequirementsPage() {
     { key: "quantity", label: "Requirement", defaultWidth: 120, align: "right", render: (r) => <span className="font-medium">{round(r.quantity, "quantity").toLocaleString()}</span> },
   ];
 
+  // Shared by both grids' own onRowClick below — scopes Transaction Details to the clicked
+  // item's real InventoryId (+ Material Color, when the row has one), and reveals the section if
+  // it was collapsed, since clicking an item to inspect its receipts implies wanting to see them.
+  const selectTransactionItem = (r: { inventoryId: number | null; inventoryCode: string | null; inventoryName: string | null; colorCardId?: string | null; colorCode?: string | null; colorName?: string | null }) => {
+    setTransactionFilter({
+      inventoryId: r.inventoryId,
+      colorCardId: r.colorCardId ?? null,
+      label: [r.inventoryCode || r.inventoryName || "this item", (r.colorCode || r.colorName) ? `[${r.colorCode || r.colorName}]` : ""].filter(Boolean).join(" "),
+    });
+    setShowTransactions(true);
+  };
+
+  // Grand Total rows (`isCumulative: true`) are server-computed and appended after each Item's
+  // own per-color rows by getTotalRequirements itself — rendered here distinctly (bold, "TOTAL"
+  // in place of a Material Color, no color breakdown to show) within this SAME grid, never a
+  // second table or a second fetch.
   const totalColumns: ReportColumn<TotalRow>[] = [
     { key: "inventoryCode", label: "Inventory Code", defaultWidth: 160, render: (r) => r.inventoryCode || "—" },
     { key: "inventoryName", label: "Inventory Name", defaultWidth: 260, render: (r) => r.inventoryName || "—" },
     {
       key: "colorCardId", label: "Material Color", defaultWidth: 140,
-      render: (r) => (r.colorCode || r.colorName ? <span>{r.colorCode || r.colorName}{r.colorCode && r.colorName && r.colorCode !== r.colorName ? ` — ${r.colorName}` : ""}</span> : <span className="text-muted-foreground">—</span>),
+      render: (r) => r.isCumulative
+        ? <span className="font-semibold uppercase tracking-wide text-[10.5px] text-muted-foreground">Cumulative Total</span>
+        : (r.colorCode || r.colorName ? <span>{r.colorCode || r.colorName}{r.colorCode && r.colorName && r.colorCode !== r.colorName ? ` — ${r.colorName}` : ""}</span> : <span className="text-muted-foreground">—</span>),
     },
-    { key: "quantity", label: "Quantity", defaultWidth: 130, align: "right", render: (r) => round(r.quantity, "quantity").toLocaleString() },
+    { key: "quantity", label: "Quantity", defaultWidth: 130, align: "right", render: (r) => <span className={r.isCumulative ? "font-semibold" : undefined}>{round(r.quantity, "quantity").toLocaleString()}</span> },
   ];
 
   const transactionColumns: ReportColumn<TransactionRow>[] = [
@@ -516,10 +654,19 @@ export default function FabricYarnRequirementsPage() {
           <label className="text-xs text-muted-foreground">Order No</label>
           <MasterAutocompleteField
             label="" compact masterKey="manufacturing-order"
+            // "manufacturing-order" is a search-only lookup (no activeColumn/label/codeColumn —
+            // see legacy-master-lookup.service.ts's own manageable() guard), not a generic
+            // "Manageable Master" with its own CRUD screen — Work Orders already have their own
+            // real management screen (Work Orders List). Without this override, the field's F2/
+            // search-icon button would try to open the generic Master Lookup screen and hit that
+            // guard's own 400 error. lookupPath is exactly the escape hatch this component already
+            // supports for this case (see work-orders/page.tsx's own Customer field, which points
+            // at CURRENT_ACCOUNTS_LIST_PATH the same way).
+            lookupPath="/dashboard/legacy-erp/work-orders-list"
             displayValue={workOrder?.workOrderNo || ""}
             fetchOptions={(t) => legacyErpApi.lookupTable("manufacturing-order", t) as Promise<MasterOption[]>}
             onSelect={(o) => loadWorkOrder(Number(o.id))}
-            onClear={() => { setWorkOrder(null); setWorkOrderId(null); setRequirementRows([]); setTotalRows([]); setTransactionRows([]); setMfgQty(null); setMappingWarnings([]); }}
+            onClear={() => { setWorkOrder(null); setWorkOrderId(null); setRequirementRows([]); setTotalRows([]); setTransactionRows([]); setMfgQty(null); setMappingWarnings([]); setTransactionFilter(null); setSelectedRequirementId(null); setSelectedTotalRowId(null); }}
           />
         </div>
         <div className="col-span-4 space-y-1">
@@ -601,6 +748,7 @@ export default function FabricYarnRequirementsPage() {
       <div>
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
           Requirements{requirementRowsAreSaved && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(saved — right-click a row to delete it)</span>}
+          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row to see its Transaction Details below</span>
         </p>
         <ReportGrid
           storageKey={`requirementsGrid-${type}`}
@@ -610,31 +758,52 @@ export default function FabricYarnRequirementsPage() {
           emptyLabel={workOrderId ? "No requirements yet — add BOM lines on this Work Order's own BOM tab first." : "Select an Order No above to load its requirements."}
           getRowActions={rowActionsFor}
           selectedId={selectedRequirementId}
-          onRowClick={(r) => setSelectedRequirementId(r.id)}
+          onRowClick={(r) => { setSelectedRequirementId(r.id); setSelectedTotalRowId(null); selectTransactionItem(r); }}
         />
       </div>
 
       <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Total Requirements Table</p>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+          Total Requirements Table
+          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row to see its Transaction Details below</span>
+        </p>
         <ReportGrid
           storageKey="totalRequirementsGrid"
           columns={totalColumns}
           rows={totalRows}
+          selectedId={selectedTotalRowId}
+          onRowClick={(r) => { setSelectedTotalRowId(r.id); setSelectedRequirementId(null); selectTransactionItem(r); }}
           loading={loadingGrids}
           emptyLabel={workOrderId ? "No totals yet — click Calculate." : "Select an Order No above to load its totals."}
         />
       </div>
 
-      {/* Transactions checkbox above now actually controls this section, instead of being inert. */}
+      {/* Transactions checkbox above now actually controls this section, instead of being inert.
+          Also auto-shown by clicking a Requirements/Total Requirements row (selectTransactionItem
+          above), since that click's whole point is to see that item's own receipts. */}
       {showTransactions && (
         <div>
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Transaction Details</p>
+          <div className="mb-1 flex items-center gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Transaction Details</p>
+            {transactionFilter ? (
+              <span className="flex items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
+                Showing receipts for <span className="font-medium">{transactionFilter.label}</span>
+                <button type="button" className="text-muted-foreground hover:text-foreground underline" onClick={() => setTransactionFilter(null)}>Clear</button>
+              </span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground/70">(showing every receipt for this Work Order — click a Requirements/Total Requirements row to narrow down)</span>
+            )}
+          </div>
           <ReportGrid
             storageKey="transactionDetailsGrid"
             columns={transactionColumns}
             rows={transactionRows}
-            loading={loadingGrids}
-            emptyLabel={workOrderId ? "No outside-process receipts linked to this Work Order yet." : "Select an Order No above to load its transactions."}
+            loading={loadingGrids || loadingTransactions}
+            emptyLabel={
+              !workOrderId ? "Select an Order No above to load its transactions."
+                : transactionFilter ? `No receipts found for ${transactionFilter.label}.`
+                : "No outside-process receipts linked to this Work Order yet."
+            }
           />
         </div>
       )}
@@ -662,6 +831,29 @@ export default function FabricYarnRequirementsPage() {
           return rows.map((c: any): StyleCardLookupRow => ({ id: c.id, inventoryCode: c.styleNumber, inventoryName: c.title, inUse: c.status !== "archived", raw: c }));
         }}
         onSelect={onStyleSelected}
+      />
+
+      {/* Material Color lookup for the Requirements grid's own editable column — same reusable
+          CardLookupDialog + ColorCard master every other "Choose Color" search icon in this app
+          already uses (work-orders/page.tsx's own C/S Details material columns, bom-tab.tsx),
+          not a second implementation. */}
+      <CardLookupDialog<CardLookupRow>
+        open={colorLookupRowId != null}
+        onOpenChange={(open) => { if (!open) setColorLookupRowId(null); }}
+        title="Select Material Color"
+        fetchOptions={async (search) => {
+          const all: any = await plmApi.colors.list().catch(() => []);
+          const list = Array.isArray(all) ? all : [];
+          const term = (search || "").trim().toLowerCase();
+          const filtered = term ? list.filter((c: any) => (c.code || "").toLowerCase().includes(term) || (c.name || "").toLowerCase().includes(term)) : list;
+          return filtered.map((c: any): CardLookupRow => ({ id: c.id, inventoryCode: c.code, inventoryName: c.name, inUse: c.inUse !== false }));
+        }}
+        onSelect={(row) => {
+          const targetId = colorLookupRowId;
+          setColorLookupRowId(null);
+          const targetRow = requirementRows.find((r) => r.id === targetId);
+          if (targetRow) setMaterialColorForRow(targetRow, String(row.id));
+        }}
       />
 
       {/* Delete ONE selected record — the confirmation text names the actual record, never the

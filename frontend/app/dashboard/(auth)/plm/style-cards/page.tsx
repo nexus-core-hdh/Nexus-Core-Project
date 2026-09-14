@@ -8,9 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { plmApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
-import { Plus, Search, ExternalLink, Copy } from "lucide-react";
+import { Plus, Search, ExternalLink, Copy, Trash2 } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
   concept: 'bg-slate-100 text-slate-700', design: 'bg-blue-100 text-blue-700',
@@ -52,6 +56,27 @@ export default function StyleCardsPage() {
     try { await plmApi.styleCards.duplicate(id); toast.success("Duplicated"); load(); } catch (e: any) { toast.error(e.message); }
   };
 
+  // Real backend delete (plm-cards.service.ts's deleteStyleCard) — guarded server-side via
+  // deleteGuard.assertDeletable('StyleCard', id), so a Style Card still linked to real Sample
+  // Cards/Orders/etc. is refused with a clear message (surfaced below via toast) rather than
+  // silently cascading or leaving orphaned records.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await plmApi.styleCards.delete(deleteTarget.id);
+      toast.success("Style Card deleted");
+      setDeleteTarget(null);
+      load();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to delete Style Card");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -84,6 +109,13 @@ export default function StyleCardsPage() {
                 <TableCell>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => duplicate(row.id, e)} title="Duplicate"><Copy className="h-3.5 w-3.5" /></Button>
+                    <Button
+                      variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                      onClick={(e) => { e.preventDefault(); setDeleteTarget({ id: row.id, title: row.title }); }}
+                      title="Delete"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </TableCell>
               </TableRow>
@@ -101,6 +133,23 @@ export default function StyleCardsPage() {
           </div>
         </div>
       )}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Style Card</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{deleteTarget?.title}"? This cannot be undone. If this Style Card still has linked Sample Cards, Orders, or other records, deletion will be refused until those are removed first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>No</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={confirmDelete} disabled={deleting}>
+              {deleting ? "Deleting..." : "Yes, Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

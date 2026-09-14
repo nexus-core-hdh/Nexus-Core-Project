@@ -469,6 +469,38 @@ export const legacyErpApi = {
     listBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process") => api.get(`/legacy-erp/work-orders/${id}/bom/${lineType}`),
     upsertBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process", lines: any[]) => api.put(`/legacy-erp/work-orders/${id}/bom/${lineType}`, lines),
     transferBomFromStyleCard: (id: number, styleCardId: string) => api.post(`/legacy-erp/work-orders/${id}/bom/transfer-from-style-card`, { styleCardId }),
+    // Cutting Card / Cutting Entry — one per (Work Order, Production Color, Fabric); see
+    // cutting-card.service.ts. get() is also the get-or-create call (idempotent, safe to call on
+    // every screen open — it never creates a duplicate card for the same Work Order + Color + Fabric).
+    cuttingCard: {
+      // Main screen — every real Production Color on this Work Order, with per-size Order/Will-Be-Cut.
+      getMatrix: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/matrix`),
+      // Applicable Fabrics for one color — populates the Cutting Entry screen's own Fabric dropdown.
+      listFabrics: (workOrderId: number, productionColor: string) =>
+        api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/fabrics?color=${encodeURIComponent(productionColor)}`),
+      // Already-saved Cut Qty summed across every Fabric for one color — the main screen's own
+      // read-only preview panel for the currently-selected color.
+      getColorTotals: (workOrderId: number, productionColor: string) =>
+        api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/color-totals?color=${encodeURIComponent(productionColor)}`),
+      get: (workOrderId: number, productionColor: string, materialKey: string, materialLabel?: string) =>
+        api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel || "")}`),
+      // Cutting Analysis Detail panel (Marker No/Spreader/CAD Operator/Cutter/Special Code/
+      // Explanation/Fabric Type/Marker Weight/Plies/Count/Sent for Cutting/Increase/Return/End of
+      // Roll/Clipping/Marker+Actual Grams) — one flat save for the whole panel.
+      saveDetail: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, detail: Record<string, any>) =>
+        api.post(`/legacy-erp/work-orders/${workOrderId}/cutting-card/detail?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`, detail),
+      // Cutting Entries log — one real, persisted row per actual cutting batch (Date/Factory/Party
+      // No/Document/Explanation + its own per-size quantities). Cut Qty on the summary grid is
+      // always the SUM of these, never a second independently-editable number.
+      addEntry: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string) =>
+        api.post(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`, {}),
+      updateEntry: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string, patch: { date?: string | null; factoryId?: number | null; partyNo?: string | null; document?: string | null; explanation?: string | null }) =>
+        api.put(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`, patch),
+      setEntrySize: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string, sizeCode: string, quantity: number) =>
+        api.post(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}/size?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`, { sizeCode, quantity }),
+      deleteEntry: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string) =>
+        api.delete(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`),
+    },
     // Fabric/Yarn Requirements — reuses the Work Order's own BOM (fabric) and Fabric Card Yarn
     // Recipe (yarn) as its data source; see fabric-yarn-requirements.service.ts.
     requirements: {
@@ -479,7 +511,15 @@ export const legacyErpApi = {
       // Multi-Color BOM mapping validation — additive, non-fatal warnings only (see the service's
       // own comment on why Calculate/Save never throw for this).
       getMappingWarnings: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/mapping-warnings?type=${type}`),
-      getTransactions: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/transactions`),
+      // inventoryId/colorCardId optional — when passed (clicking a specific item on the
+      // Requirements/Total Requirements grid), scopes receipts down to exactly that material.
+      getTransactions: (workOrderId: number, filter?: { inventoryId?: number | null; colorCardId?: string | null }) => {
+        const qs = new URLSearchParams();
+        if (filter?.inventoryId != null) qs.set("inventoryId", String(filter.inventoryId));
+        if (filter?.colorCardId) qs.set("colorCardId", filter.colorCardId);
+        const q = qs.toString();
+        return api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/transactions${q ? `?${q}` : ""}`);
+      },
       calculate: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/calculate?type=${type}`, {}),
       save: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/save?type=${type}`, {}),
       // Requirement locking — real, persistent, database-enforced (MA_WorkOrder's own per-type
@@ -492,6 +532,16 @@ export const legacyErpApi = {
       // (getSaved's own `id` field), never a bulk "delete everything of this type" call.
       deleteRecord: (workOrderId: number, type: "fabric" | "trim" | "yarn", recordId: number | string) => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/${recordId}?type=${type}`),
       deleteAll: (workOrderId: number) => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/all`),
+      // Manual Material Color selection on this screen (Fabric/Trim only) — lineId is a live
+      // requirement row's own `id` (a real MA_RecipeItem.id when the Work Order already owns this
+      // lineType's BOM, or a StyleBomLine.id while still on the Style Card fallback; the backend
+      // transparently promotes the fallback into a real, independently-editable BOM line on first edit).
+      setMaterialColor: (workOrderId: number, type: "fabric" | "trim", lineId: string | number, colorCardId: string | null) =>
+        api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/material-color?type=${type}`, { lineId: String(lineId), colorCardId }),
+      // Manual Consumption edit (this BOM line's own per-unit Quantity) — same fallback-promotion
+      // rules as setMaterialColor above.
+      setConsumption: (workOrderId: number, type: "fabric" | "trim", lineId: string | number, quantity: number) =>
+        api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/consumption?type=${type}`, { lineId: String(lineId), quantity }),
     },
   },
   fabricCards: {

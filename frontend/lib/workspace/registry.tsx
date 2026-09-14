@@ -44,6 +44,12 @@ export function isWorkspaceRoute(pathname: string): boolean {
 // Inventory Receipts screen, still uses — that one deliberately reuses a single tab).
 const MULTI_KEY_ROUTES: Record<string, string> = {
   "/dashboard/legacy-erp/fabric-yarn-requirements": "type",
+  // Same precedent as above (keyed on one param, not "id") — each Production Color gets its own
+  // open Cutting Entry tab, matching "each color must have its own independent Cutting context".
+  // The Cutting Card MAIN screen (search + color matrix, no color param yet) is deliberately NOT
+  // in this map — it behaves like the plain Work Orders List screen, one shared tab reused across
+  // whichever Work Order is currently being searched.
+  "/dashboard/legacy-erp/cutting-card/entry": "color",
 };
 
 /** Computes a tab's key for a given module path + the href being opened. Returns `pathname`

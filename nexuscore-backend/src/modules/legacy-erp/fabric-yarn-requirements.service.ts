@@ -5,6 +5,7 @@ import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { WorkOrderService } from './work-order.service';
 import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
+import { assertNonNegative } from './numeric-guards.util';
 
 // Fabric/Trim/Yarn Requirements — NOT a new entity. Reuses the exact same Work Order BOM data
 // (MA_Recipe/MA_RecipeItem, already served by WorkOrderService.listBom) as its Requirements
@@ -183,7 +184,11 @@ export class FabricYarnRequirementsService {
   // information_schema — IsSample/UD_SampleRevision on MA_WorkOrder describe the Work Order
   // itself, not a link to a SampleCard row), so there is no Work Order to resolve a Sample BOM
   // from even though SampleBomLine itself is a real table.
-  private async resolveBomLines(workOrderId: number, lineType: DirectBomTab): Promise<any[]> {
+  // Not private — cutting-card.service.ts's own listApplicableFabrics() reuses this exact same
+  // WO-owns-else-Style-Card-fallback resolution (including raw fields like markerWidth/
+  // markerLength/m2Weight that getMaterialRequirements' own mapped shape below doesn't carry) so
+  // the Cutting Entry screen's Fabric list can never diverge from what Requirements itself sees.
+  async resolveBomLines(workOrderId: number, lineType: DirectBomTab): Promise<any[]> {
     const ownLines = await this.workOrderSvc.listBom(workOrderId, lineType);
     if (ownLines.length) return ownLines;
     const wo = await this.workOrderSvc.get(workOrderId).catch(() => null);
@@ -200,7 +205,10 @@ export class FabricYarnRequirementsService {
   // sum bom-tab.tsx's own applyWaste() already does for these columns, not a new formula. variant2
   // has no StyleBomLine equivalent (it only carries one `variant` field) and is left null.
   private async getStyleCardBomLinesAsWorkOrderShape(styleCardId: string, lineType: DirectBomTab) {
-    const rows = await this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType } });
+    // Ordered by StyleBomLine's own sortOrder — must match transferBomFromStyleCardForType's own
+    // identical orderBy exactly, since setMaterialColorForLine below matches a clicked Requirements
+    // row back to its newly-transferred own BOM line by POSITION in this same list.
+    const rows = await this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } });
     return rows.map((r: any) => ({
       id: r.id,
       inventoryId: r.fabricInventoryId,
@@ -279,6 +287,55 @@ export class FabricYarnRequirementsService {
         quantity: Math.round(consumption * applicableQuantity * 10000) / 10000,
       };
     });
+  }
+
+  // Shared by every field this Requirements screen lets a user edit directly (Material Color,
+  // Consumption — Fabric/Trim only; Yarn has neither of its own, see each wrapper's own comment).
+  // `lineId` is a live-preview row's own `id` from getMaterialRequirements above, which is EITHER
+  // a real MA_RecipeItem.id (the Work Order already owns this lineType's BOM) or a StyleBomLine.id
+  // (still on the fallback — see resolveBomLines). Both cases are handled without disturbing the
+  // other lineType's own BOM or any other line already mapped: an own-BOM edit patches just that
+  // one row in place; a fallback edit promotes only THIS lineType's Style lines into the Work
+  // Order's own real BOM (never the other three — see transferBomFromStyleCardForType's own
+  // comment), then applies `patch` to whichever newly-created line is at the same position the
+  // originally-clicked Style line was at (both queries share the identical sortOrder ordering).
+  private async updateRequirementLine(workOrderId: number, lineType: DirectBomTab, lineId: string, patch: Record<string, any>, userId: number, currentUserId: string) {
+    await this.assertMutationAllowed(workOrderId, lineType, currentUserId);
+    const ownLines = await this.workOrderSvc.listBom(workOrderId, lineType);
+    const numericLineId = Number(lineId);
+    if (ownLines.length) {
+      if (!ownLines.some((l: any) => l.id === numericLineId)) {
+        throw new NotFoundException('This requirement line no longer exists — reload and try again.');
+      }
+      const updated = ownLines.map((l: any) => (l.id === numericLineId ? { ...l, ...patch } : l));
+      return this.workOrderSvc.upsertBom(workOrderId, lineType, updated, userId);
+    }
+    const wo = await this.workOrderSvc.get(workOrderId);
+    const styleCardId = (wo as any)?.styleCardId;
+    if (!styleCardId) throw new NotFoundException('This Work Order has no linked Style Card to transfer from.');
+    const styleLines = await this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } });
+    const clickedIndex = styleLines.findIndex((l: any) => l.id === lineId);
+    if (clickedIndex === -1) throw new NotFoundException('Requirement line not found — reload and try again.');
+    const created = await this.workOrderSvc.transferBomFromStyleCardForType(workOrderId, styleCardId, lineType, userId);
+    if (!created[clickedIndex]) throw new NotFoundException('Failed to transfer this BOM line.');
+    const finalLines = created.map((l: any, i: number) => (i === clickedIndex ? { ...l, ...patch } : l));
+    return this.workOrderSvc.upsertBom(workOrderId, lineType, finalLines, userId);
+  }
+
+  // Manual Material Color selection directly on the Requirements screen (Fabric/Trim only — Yarn
+  // has no color of its own, it inherits sourceColorCardId from the Fabric line it was exploded
+  // from, so editing it here would have nothing real to write to).
+  async setMaterialColorForLine(workOrderId: number, lineType: DirectBomTab, lineId: string, colorCardId: string | null, userId: number, currentUserId: string) {
+    return this.updateRequirementLine(workOrderId, lineType, lineId, { colorCardId }, userId, currentUserId);
+  }
+
+  // Manual Consumption (this BOM line's own per-unit Quantity — the exact same field bom-tab.tsx's
+  // own "Quantity" column already manages) edit directly on the Requirements screen. Fabric/Trim
+  // only — Yarn's own Consumption is derived by exploding the Fabric line's own Quantity through
+  // its Yarn Recipe %, not a field of its own to edit (see getYarnRequirements).
+  async setConsumptionForLine(workOrderId: number, lineType: DirectBomTab, lineId: string, quantity: number, userId: number, currentUserId: string) {
+    assertNonNegative(quantity, 'Consumption');
+    return this.updateRequirementLine(workOrderId, lineType, lineId, { quantity }, userId, currentUserId);
   }
 
   // Validation — "if a mapping is required but missing, surface it instead of silently calculating
@@ -434,7 +491,29 @@ export class FabricYarnRequirementsService {
         colorCardId: (r as any).colorCardId ?? null, colorCode: (r as any).colorCode ?? null, colorName: (r as any).colorName ?? null,
       });
     }
-    return Array.from(byInventory.values());
+    const perColorRows = Array.from(byInventory.values());
+
+    // Cumulative (Grand Total) per Item — computed here, server-side, from the exact same
+    // already-correct per-color rows above (DB-sourced, not re-derived client-side), so it can
+    // never disagree with what the per-color rows themselves show. Grouped purely by inventoryId
+    // (ignoring color) — a material with only ONE color-split row gets no cumulative row of its
+    // own added (that single row already IS its total; a second row repeating the same number
+    // would be pure clutter). `isCumulative: true` lets the frontend render/label these distinctly
+    // without a second table or a second fetch.
+    const byItem = new Map<string, { id: string; inventoryId: any; inventoryCode: any; inventoryName: any; quantity: number; count: number }>();
+    for (const r of perColorRows) {
+      const key = r.inventoryId != null ? String(r.inventoryId) : `unresolved:${r.id}`;
+      const existing = byItem.get(key);
+      if (existing) { existing.quantity += r.quantity; existing.count += 1; }
+      else byItem.set(key, { id: `cumulative-${key}`, inventoryId: r.inventoryId, inventoryCode: r.inventoryCode, inventoryName: r.inventoryName, quantity: r.quantity, count: 1 });
+    }
+    const cumulativeRows = Array.from(byItem.values())
+      .filter((it) => it.count > 1)
+      .map((it) => ({
+        id: it.id, inventoryId: it.inventoryId, inventoryCode: it.inventoryCode, inventoryName: it.inventoryName, quantity: it.quantity,
+        colorCardId: null, colorCode: null, colorName: null, isCumulative: true as const,
+      }));
+    return [...perColorRows, ...cumulativeRows];
   }
 
   // ── Requirement Locking ──────────────────────────────────────────────────────────────────────
@@ -624,15 +703,26 @@ export class FabricYarnRequirementsService {
   // system actually used cannot be confirmed here — this query joins through the direct
   // IM_ReceiptItem column (the simpler, one-hop reading) and is documented as such; see the final
   // report's "genuine missing DB/business logic" note.
-  async getTransactionDetails(workOrderId: number) {
+  // `inventoryId`/`colorCardId` are optional — omitted (the default), every receipt linked to
+  // this Work Order is returned exactly as before. When a caller clicks a specific item on the
+  // Requirements/Total Requirements grid, both (or just inventoryId, for a Material Color-less
+  // row) are passed through to scope this down to receipts for exactly that material, using
+  // IM_ReceiptItem's own real InventoryId/ColorCardId columns (confirmed via information_schema
+  // — the same physical columns this table already carries for every other receipt screen).
+  async getTransactionDetails(workOrderId: number, inventoryId?: number, colorCardId?: string) {
     const itemIds = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0
     `);
     const ids = itemIds.map((r) => Number(r.id));
     if (!ids.length) return [];
+    const filters = [Prisma.sql`ri."WorkOrderReceiptItemId" IN (${Prisma.join(ids)})`, Prisma.sql`ri."IsDeleted" = 0`];
+    if (inventoryId != null) filters.push(Prisma.sql`ri."InventoryId" = ${inventoryId}`);
+    if (colorCardId) filters.push(Prisma.sql`ri."ColorCardId" = ${colorCardId}`);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         ri."RecId" as id,
+        ri."InventoryId" as "inventoryId",
+        ri."ColorCardId" as "colorCardId",
         r."ReceiptDate" as "receiptDate",
         r."ReceiptType" as "receiptType",
         st."SubcontractTypeName" as subcontractor,
@@ -652,7 +742,7 @@ export class FabricYarnRequirementsService {
       LEFT JOIN "MD_SubcontractType" st ON st."RecId" = r."SubcontractTypeId"
       LEFT JOIN "FI_Account" acc ON acc."RecId" = r."CurrentAccountId"
       LEFT JOIN "IM_Warehouse" wh ON wh."RecId" = r."InWarehouseId"
-      WHERE ri."WorkOrderReceiptItemId" IN (${Prisma.join(ids)}) AND ri."IsDeleted" = 0
+      WHERE ${Prisma.join(filters, ' AND ')}
       ORDER BY r."ReceiptDate" DESC
     `);
     return sanitizeRawRow(rows);

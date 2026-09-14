@@ -130,9 +130,18 @@ const blankQtyRow = (): QtyRow => ({ id: uid(), color: "", price: 0, surplus: 0,
 // Colors are real, editable, quantity-bearing rows (not a derived value recomputed every render
 // like selectedSizes), so this is enforced at the few points qtyRows is actually initialized,
 // gated on "is this genuinely the untouched single blank row" — never on top of anything a user
-// (or a prior load()) has already put real data into.
+// (or a prior load()) has already put real data into. Restored per explicit product decision:
+// without it, Manufacturing Quantities' own Color rows stay blank until a user types one by hand,
+// which also means the C/S Details material columns (RIB/TERRY/...) have no Color to auto-fill
+// against — see loadBomMaterialGroups' own cycle rule just below, which only activates once
+// qtyRows actually has real Color text in it, however it got there.
+// Sizes are checked by VALUE (every entry zero/blank), not just "no keys at all" — a Work Order
+// whose grid was rendered/saved once with its size columns present but nothing actually typed in
+// (every cell still 0) is exactly as untouched as one with no size keys yet, and must be just as
+// eligible for the Style-Card-driven auto-population below (see load()'s own reconstruction of
+// qtyRows from saved MA_WorkOrderItemVariant rows for the case this specifically fixes).
 const isQtyRowsPristine = (rs: QtyRow[]): boolean =>
-  rs.length === 1 && !rs[0].color.trim() && !rs[0].price && !rs[0].surplus && !rs[0].lot.trim() && Object.keys(rs[0].sizes).length === 0;
+  rs.length === 1 && !rs[0].color.trim() && !rs[0].price && !rs[0].surplus && !rs[0].lot.trim() && Object.values(rs[0].sizes).every((v) => !num(v));
 // StyleCard.colorways ({swatchCardId, colorName, pantoneCode}[] — swatchCardId is actually a real
 // ColorCard.id despite the field's legacy name; see general-tab.tsx's own colorwayPick, sourced
 // from plmApi.colors.list()) is the Style's own already-working multi-color picker (search +
@@ -145,6 +154,43 @@ const qtyRowsFromColorways = (card: any): QtyRow[] | null => {
   const colorways = Array.isArray(card?.colorways) ? card.colorways : [];
   if (!colorways.length) return null;
   return colorways.map((cw: any) => ({ ...blankQtyRow(), color: String(cw?.colorName || "").trim() })).filter((r: QtyRow) => r.color);
+};
+// Second-tier color-row fallback for a Style Card that never had its own colorways set at all
+// (StyleCard.colorways === []) but DOES have Material Colors already selected on its BOM — e.g.
+// a fabric item with 2 colors chosen via Choose Color's own multi-select. With no colorways to go
+// on, that BOM color data is the only color information that exists for this Style, so it is used
+// to derive the Production Color rows instead — but ONLY from the material(s) marked "Main
+// Fabric" (bom-tab.tsx's own existing checkbox), never a blind union across every BOM line.
+// Reference-ERP evidence: a trim's own fixed Material Color (e.g. a reflector tape's grey swatch)
+// never becomes its own "production color" row just because it happens to have one set — only the
+// garment's actual Main Fabric colors represent real production colors. A Style Card with no
+// material marked Main Fabric has no reliable single source to draw from, so this returns null
+// rather than guessing from an arbitrary/irrelevant trim's own color. Only ever consulted when
+// qtyRowsFromColorways() itself returned null — a Style Card with real colorways always wins.
+const qtyRowsFromStyleBomColors = (bomLines: any[]): QtyRow[] | null => {
+  const seen = new Map<string, string>();
+  for (const l of Array.isArray(bomLines) ? bomLines : []) {
+    if (!l?.mainFabric) continue;
+    const id = l?.colorCardId;
+    if (!id || seen.has(id)) continue;
+    const label = String(l?.colorCard?.code || l?.colorCard?.name || "").trim();
+    if (label) seen.set(id, label);
+  }
+  if (!seen.size) return null;
+  return Array.from(seen.values()).map((color) => ({ ...blankQtyRow(), color }));
+};
+// Combines both tiers for a given Style Card — colorways first, BOM-color union only as a
+// fallback (and only fetched at all when colorways is genuinely empty, so a normal Style Card
+// with real colorways never pays for the extra request).
+const resolveQtyRowsForStyleCard = async (card: any): Promise<QtyRow[] | null> => {
+  const fromColorways = qtyRowsFromColorways(card);
+  if (fromColorways || !card?.id) return fromColorways;
+  try {
+    const bomLines: any = await plmApi.styleBom.get(card.id);
+    return qtyRowsFromStyleBomColors(Array.isArray(bomLines) ? bomLines : []);
+  } catch {
+    return null;
+  }
 };
 
 type NoteRow = { id: number; explanationText?: string; explanation?: string; quantity?: number; amount?: number };
@@ -222,48 +268,151 @@ export default function WorkOrderPage() {
   // same "text first, card id only as fallback" key BomTab's own materialGroups uses, so a
   // material with no linked Fabric/Trim Card still gets its own column instead of disappearing.
   const [bomMaterialGroups, setBomMaterialGroups] = useState<{
-    key: string; lineType: string; materialLabel: string; fabricInventoryId: number | null; variant: string; rows: any[];
+    key: string; lineType: string; materialLabel: string; fabricInventoryId: number | null; variant: string; rows: any[]; mainFabric: boolean;
   }[]>([]);
   const [colorCards, setColorCards] = useState<{ id: string; code: string; name: string }[]>([]);
   useEffect(() => {
     plmApi.colors.list().then((r: any) => setColorCards(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
+  // Same "Work Order owns it if it has any lines of that type, otherwise fall back to the linked
+  // Style Card's own BOM" priority fabric-yarn-requirements.service.ts's resolveBomLines() already
+  // enforces for Requirements calculation — applied here too, decided independently per lineType,
+  // so the C/S Details material columns populate automatically the moment a Work Order is linked
+  // to a Style Card with a BOM. No manual "Transfer from Style Card" click required; that button
+  // still exists for a user who wants to make the copy permanent/editable up front, but is no
+  // longer a precondition for the columns to appear. Style-sourced rows are normalized into the
+  // exact same shape a real MA_RecipeItem row already has (inventoryId/variant1/variant2/
+  // colorCardId/quantity/unitId/price/wastage) so nothing downstream needs to know or care which
+  // source a group's rows came from.
   const loadBomMaterialGroups = async (id: number) => {
     try {
       const lineTypes = ["fabric", "trim", "ornament", "process"] as const;
-      const results = await Promise.all(lineTypes.map((lt) => legacyErpApi.workOrders.listBom(id, lt).catch(() => [])));
-      const map = new Map<string, { key: string; lineType: string; materialLabel: string; fabricInventoryId: number | null; variant: string; rows: any[] }>();
+      const ownResults = await Promise.all(lineTypes.map((lt) => legacyErpApi.workOrders.listBom(id, lt).catch(() => [])));
+      const needsFallback = lineTypes.some((_, i) => !(Array.isArray(ownResults[i]) && (ownResults[i] as any[]).length));
+      const styleCardIdForFallback = styleRows[0]?.styleCardId;
+      const styleLinesByType: Record<string, any[]> = { fabric: [], trim: [], ornament: [], process: [] };
+      if (needsFallback && styleCardIdForFallback) {
+        try {
+          const styleBom: any = await plmApi.styleBom.get(styleCardIdForFallback);
+          for (const l of Array.isArray(styleBom) ? styleBom : []) (styleLinesByType[l.lineType] ||= []).push(l);
+        } catch { /* best-effort — no Style Card fallback available */ }
+      }
+      // Production Color rows already on screen — this function is only ever invoked (see the
+      // qtyColorsKey-keyed effect above) once qtyRows itself is current, so reading it directly
+      // here always reflects the right set, including right after auto-population resolves.
+      const productionColors = qtyRows.map((r) => r.color).map((c) => c.trim()).filter(Boolean);
+      const map = new Map<string, { key: string; lineType: string; materialLabel: string; fabricInventoryId: number | null; variant: string; rows: any[]; mainFabric: boolean }>();
       lineTypes.forEach((lt, i) => {
-        const lines = Array.isArray(results[i]) ? (results[i] as any[]) : [];
+        const ownLines = Array.isArray(ownResults[i]) ? (ownResults[i] as any[]) : [];
+        // Style Card BOM's own multi-color feature (bom-tab.tsx's extraColorCardIds) saves one
+        // material as SEVERAL raw StyleBomLine rows sharing the same variant1 (one per selectable
+        // Material Color). Reference-ERP behavior (screenshot-verified): those colors auto-fill
+        // the Work Order's cells immediately — a material with exactly ONE color broadcasts it to
+        // every Production Color row, and a material whose OWN distinct color count matches the
+        // row count zips them 1:1 in order. Generalized as one CYCLE rule (colorCardId = this
+        // material's Nth distinct color, N = row index mod its own color count) so both evidenced
+        // cases fall out of the same code path with no special-casing, and a material with no
+        // colorCardId at all still collapses to a single common/unmapped row exactly as before.
+        // This is purely a DISPLAY default over the Style Card fallback — nothing is written to
+        // the Work Order's own BOM until the user actually edits a cell (setMaterialColorForCell's
+        // existing implicit-promotion path), so it can never silently overwrite real saved data.
+        const lines = ownLines.length ? ownLines : (() => {
+          const byVariant = new Map<string, any[]>();
+          for (const l of styleLinesByType[lt]) {
+            const k = String(l.variant || "").trim().toLowerCase() || `card:${l.fabricInventoryId}`;
+            (byVariant.get(k) ?? byVariant.set(k, []).get(k)!).push(l);
+          }
+          const out: any[] = [];
+          for (const styleLinesForMaterial of byVariant.values()) {
+            const distinctColors: any[] = [];
+            const seen = new Set<string>();
+            for (const l of styleLinesForMaterial) {
+              const cid = l.colorCardId || "";
+              if (cid && seen.has(cid)) continue;
+              if (cid) seen.add(cid);
+              distinctColors.push(l);
+            }
+            const base = distinctColors[0];
+            if (!base) continue;
+            const toRow = (l: any, variant2: string, rowIdx: number) => ({
+              id: `${l.id}-${rowIdx}`, inventoryId: l.fabricInventoryId ?? null, variant1: l.variant || "", variant2,
+              colorCardId: l.colorCardId || "", quantity: num(l.quantity), unitId: l.unitId ?? null,
+              price: num(l.unitPrice), wastage: (Number(l.wastePct) || 0) + (Number(l.dyeWastagePct) || 0) + (Number(l.otherWastagePct) || 0),
+              mainFabric: !!l.mainFabric,
+            });
+            if (distinctColors.some((l) => l.colorCardId) && productionColors.length) {
+              productionColors.forEach((rowColor, idx) => out.push(toRow(distinctColors[idx % distinctColors.length], rowColor, idx)));
+            } else {
+              out.push(toRow(base, "", 0));
+            }
+          }
+          return out;
+        })();
         for (const l of lines) {
           const v1 = String(l.variant1 || "").trim();
           if (!v1 && l.inventoryId == null) continue;
+          // Own MA_RecipeItem rows carry this as isMaster (the DB column's real name, mirroring
+          // bom-tab.tsx's own `mainFabric: !!l.isMaster` for Work Order mode); Style Card fallback
+          // rows were already normalized to `mainFabric` above. Either source flows into the same
+          // per-GROUP flag below, which is what the final sort keys off of.
+          const isMainFabric = ownLines.length ? !!l.isMaster : !!l.mainFabric;
           const key = v1 ? `${lt}:variant:${v1.toLowerCase()}` : `${lt}:card:${l.inventoryId}`;
           const existing = map.get(key);
-          if (existing) existing.rows.push(l);
-          else map.set(key, { key, lineType: lt, materialLabel: v1 || `Item #${l.inventoryId}`, fabricInventoryId: l.inventoryId ?? null, variant: v1, rows: [l] });
+          if (existing) { existing.rows.push(l); existing.mainFabric = existing.mainFabric || isMainFabric; }
+          else map.set(key, { key, lineType: lt, materialLabel: v1 || `Item #${l.inventoryId}`, fabricInventoryId: l.inventoryId ?? null, variant: v1, rows: [l], mainFabric: isMainFabric });
         }
       });
-      setBomMaterialGroups(Array.from(map.values()));
+      // "Main Fabric" (Style BOM's own existing checkbox, e.g. marked on Terry/Rib) always sorts
+      // first, ahead of every other material — a fixed priority independent of BOM entry order.
+      // Array.from + sort is stable in every JS engine this app targets, so within each partition
+      // (main-fabric / not) materials keep their original relative order.
+      setBomMaterialGroups(Array.from(map.values()).sort((a, b) => (b.mainFabric ? 1 : 0) - (a.mainFabric ? 1 : 0)));
     } catch {
       // best-effort; the grid simply shows no material columns if this fails
     }
   };
+  // Loads independently of which secondary tab is active/default — the explicit call sites below
+  // (load(), Transfer from Style Card, switching TO C/S Details) cover the moments something
+  // actually changed, but "C/S Details" being the tab's own *default* value means Radix Tabs'
+  // onValueChange never fires for it on initial mount, so a Work Order opened straight to its
+  // default tab would otherwise never populate the material columns until the user clicked away
+  // and back. This is the standard/automatic load path — every existing call site above is still
+  // kept as-is for its own specific refresh moment.
+  // Stable string key derived from just the Color text of each qtyRow (never sizes/price/lot) —
+  // included in the effect's own deps below so it re-fires, with the CURRENT qtyRows already
+  // closed over, the moment Production Colors actually change (auto-population resolving, a user
+  // adding/renaming a Color row). Without this, the effect's closure could otherwise still be
+  // holding whatever qtyRows looked like the last time woId/styleCardId themselves changed — a
+  // real race that let a stale ("no colors yet") pass overwrite the correct cycled cell values
+  // moments after they were first computed.
+  const qtyColorsKey = useMemo(() => qtyRows.map((r) => r.color.trim()).join("‖"), [qtyRows]);
+  useEffect(() => { if (woId) loadBomMaterialGroups(woId); }, [woId, styleRows[0]?.styleCardId, qtyColorsKey]);
   // Choose Color lookup dialog for a C/S Details material cell (group + the row's own Color text).
   const [matColorLookupTarget, setMatColorLookupTarget] = useState<{ groupKey: string; rowColor: string } | null>(null);
   const setMaterialColorForCell = async (group: (typeof bomMaterialGroups)[number], rowColor: string, colorCardId: string) => {
     if (!woId) { toast.error("Save the Work Order first"); return; }
     const key = rowColor.trim().toLowerCase();
+    const isSplit = group.rows.some((r: any) => String(r.variant2 || "").trim() !== "");
     const existingRow = group.rows.find((r: any) => String(r.variant2 || "").trim().toLowerCase() === key);
     const groupsOfType = bomMaterialGroups.filter((g) => g.lineType === group.lineType);
     const lines: any[] = [];
     for (const g of groupsOfType) {
       for (const r of g.rows) {
-        if (existingRow && r.id === existingRow.id) lines.push({ ...r, colorCardId });
-        else lines.push({ ...r });
+        if (g.key === group.key && existingRow && r.id === existingRow.id) {
+          lines.push({ ...r, colorCardId });
+        } else if (g.key === group.key && !existingRow && !isSplit && r.id === group.rows[0].id) {
+          // Material was still "common" (one row, blank Production Color) — repurpose that ONE
+          // row into the first mapping instead of leaving it behind as a stale common row
+          // alongside the new color-specific one (same rule the BOM matrix's own
+          // splitToProductionColor already enforces: never both common AND color-mapped at once,
+          // which would double-count every color against this material's total quantity).
+          lines.push({ ...r, variant2: rowColor, colorCardId });
+        } else {
+          lines.push({ ...r });
+        }
       }
     }
-    if (!existingRow) {
+    if (!existingRow && isSplit) {
       const template = group.rows[0];
       lines.push({ ...template, variant2: rowColor, colorCardId });
     }
@@ -357,7 +506,12 @@ export default function WorkOrderPage() {
       setHeader(f);
       setLastSaved(f);
       setWoId((wo as any).id);
-      loadBomMaterialGroups((wo as any).id);
+      // Material-columns load is deferred to right after qtyRows is resolved further down (see
+      // finalQtyRows) — calling it here too, before Production Colors are known, only produced a
+      // throwaway "no colors yet" pass immediately superseded by the real one, and doubling every
+      // fetch this function makes was enough extra load to trip the API's rate limiter during
+      // create-then-save (where load() itself, several other effects, and a component remount can
+      // all fire in the same second). One correctly-timed call is both cheaper and correct.
 
       // Resolve the 8 FK ids stored on the header (Warehouse/Factory/Country/Customer Represent/
       // Certification/Initial Cost/Project/Commissioner/CMT Forex) back to display labels — the
@@ -438,10 +592,21 @@ export default function WorkOrderPage() {
         row.sizes[size] = num(v.quantity);
       }
       // Same priority as selectedSizes just below: this Work Order's OWN saved Manufacturing
-      // Quantity rows always win; the linked Style Card's colorways are only used to pre-populate
-      // blank Color rows when this record genuinely has none saved yet (a brand-new/never-entered
-      // Work Order) — never merged with, and never overwrites, real saved data.
-      setQtyRows(byColor.size ? Array.from(byColor.values()) : (qtyRowsFromColorways(linkedStyleCard) || [blankQtyRow()]));
+      // Quantity rows always win; the linked Style Card's colors are only used to pre-populate
+      // blank Color rows when this record genuinely has none saved yet — never merged with, and
+      // never overwrites, real saved data. "Genuinely none saved yet" now also covers a Work Order
+      // that was already saved once with its size columns rendered but every cell still at 0 (a
+      // single blank-color row, isQtyRowsPristine's broadened definition) — that grid state is
+      // exactly as untouched as a brand-new Work Order's, so it stays eligible for auto-population
+      // instead of getting permanently stuck showing a bare, colorless grid.
+      const reconstructedRows = byColor.size ? Array.from(byColor.values()) : [blankQtyRow()];
+      const finalQtyRows = isQtyRowsPristine(reconstructedRows) ? ((await resolveQtyRowsForStyleCard(linkedStyleCard)) || reconstructedRows) : reconstructedRows;
+      // Material-columns cycle-fill re-runs on its own once this lands — see qtyColorsKey's own
+      // comment on the loadBomMaterialGroups effect just above, which is what actually reacts to
+      // this. No explicit call needed here (nor is it safe to add one back: a second concurrent
+      // pass here, on top of that effect's own, is exactly what caused a request-storm/rate-limit
+      // during create-then-save before this was fixed).
+      setQtyRows(finalQtyRows);
       // Feeds the selectedSizes derivation above -- this record's own real saved sizes when it
       // has any (MA_WorkOrderItemVariant), else the derivation itself falls through to the linked
       // Style Card's current sizes (styleCardFull was just set above, if f.styleCardId was
@@ -523,7 +688,9 @@ export default function WorkOrderPage() {
         // Brand-new Work Order — qtyRows is still its untouched initial blank row at this point,
         // so this always fires for the "+ Create Order" flow; the pristine check is still applied
         // (not skipped) so it stays inert if a race ever left real data in place first.
-        setQtyRows((prev) => (isQtyRowsPristine(prev) ? (qtyRowsFromColorways(card) || prev) : prev));
+        const fallbackRows = await resolveQtyRowsForStyleCard(card);
+        if (cancelled) return;
+        setQtyRows((prev) => (isQtyRowsPristine(prev) ? (fallbackRows || prev) : prev));
       } catch {
         if (cancelled) return;
         // Genuinely valid case, not a transient network failure: this tab's own styleCardId was
@@ -584,7 +751,8 @@ export default function WorkOrderPage() {
         // Same pristine-only guard as the other two initialization points — only ever fills in
         // the still-blank default row; a Work Order already carrying real (even unsaved) Color/
         // Size entries is left completely untouched by switching Style Card.
-        setQtyRows((prev) => (isQtyRowsPristine(prev) ? (qtyRowsFromColorways(full) || prev) : prev));
+        const fallbackRows = await resolveQtyRowsForStyleCard(full);
+        setQtyRows((prev) => (isQtyRowsPristine(prev) ? (fallbackRows || prev) : prev));
         // Deliberately NOT calling normalizeTabStyleCardParam here: patching tab.href re-keys
         // WorkspaceContentStack's Provider and remounts this whole component immediately, which
         // would discard the in-memory selection just made above before the user ever gets to Save
@@ -807,6 +975,15 @@ export default function WorkOrderPage() {
     navigateOrOpenTab(router, `/dashboard/legacy-erp/fabric-yarn-requirements?type=${type}&id=${woId}`, { title: label });
   };
 
+  // Opens the Cutting Card for one Production Color row — requires the Work Order to already be
+  // saved (a real woId), same gate openRequirements uses above. The row's own Color text IS the
+  // Production Color identity everywhere else on this screen (Requirements' own Variant2 match,
+  // BOM material-color mapping), so it's reused as-is here too — never a second color concept.
+  const openCuttingCard = (row: QtyRow) => {
+    if (!woId || !row.color.trim()) return;
+    navigateOrOpenTab(router, `/dashboard/legacy-erp/cutting-card/entry?id=${woId}&color=${encodeURIComponent(row.color.trim())}`, { title: `Cutting — ${row.color.trim()}` });
+  };
+
   // ── Right-click menu — RowContextMenu/RowActionsMenu, the SAME existing ERP context-menu
   // primitive every other Legacy ERP screen already uses (purchase-orders/page.tsx, the Sizes
   // panel above, etc.) — not a new menu system. Each entry calls the exact handler this screen
@@ -1011,6 +1188,7 @@ export default function WorkOrderPage() {
                   styleRow={styleRows[0]} round={round} onSelectSize={() => setSizeGroupDialogOpen(true)}
                   bomMaterialGroups={bomMaterialGroups} colorCards={colorCards}
                   onOpenColorLookup={(groupKey, rowColor) => setMatColorLookupTarget({ groupKey, rowColor })}
+                  onOpenCutting={openCuttingCard}
                 />
               </TabsContent>
 
@@ -1358,7 +1536,7 @@ function AddNoteRow({ onAdd, disabled, placeholder }: { onAdd: (text: string) =>
 // columns) — edit those on the Style Info grid above; Price/Surplus/Lot are real per-row values.
 function ManufacturingQuantitiesGrid({
   readOnly, qtyRows, setQtyRows, selectedSizes, styleRow, round, onSelectSize,
-  bomMaterialGroups, colorCards, onOpenColorLookup,
+  bomMaterialGroups, colorCards, onOpenColorLookup, onOpenCutting,
 }: {
   readOnly: boolean; qtyRows: QtyRow[]; setQtyRows: (fn: (rs: QtyRow[]) => QtyRow[]) => void; selectedSizes: string[];
   styleRow?: StyleRow; round: (v: unknown, k: any) => number; onSelectSize: () => void;
@@ -1369,6 +1547,11 @@ function ManufacturingQuantitiesGrid({
   bomMaterialGroups?: { key: string; lineType: string; materialLabel: string; rows: any[] }[];
   colorCards?: { id: string; code: string; name: string }[];
   onOpenColorLookup?: (groupKey: string, rowColor: string) => void;
+  // Opens the Cutting Card for this ONE row's own Production Color — see work-orders/page.tsx's
+  // own openCuttingCard, which requires the Work Order to already be saved (a real id) exactly
+  // like openRequirements does. Optional so this component still renders unchanged for any caller
+  // that doesn't pass it (e.g. a future reuse with no Cutting Card concept at all).
+  onOpenCutting?: (row: QtyRow) => void;
 }) {
   const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
@@ -1411,6 +1594,7 @@ function ManufacturingQuantitiesGrid({
           {materialGroups.map((g) => <th key={g.key} className={th} style={{ width: 130 }} title={g.materialLabel}>{g.materialLabel}</th>)}
           {selectedSizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 70 }}>{s}</th>)}
           <th className={`${th} text-right`} style={{ width: 90 }}>Total</th>
+          <th className={th} style={{ width: 80 }} />
           <th className={th} style={{ width: 32 }} />
         </tr></thead>
         <tbody>
@@ -1458,6 +1642,15 @@ function ManufacturingQuantitiesGrid({
                 </td>
               ))}
               <td className={td}><span className="flex h-6 items-center justify-end px-1.5 font-mono">{rowTotal(r)}</span></td>
+              <td className={`${td} text-center`}>
+                <Button
+                  variant="outline" size="sm" className="h-6 px-2 text-[10.5px]"
+                  disabled={!r.color.trim()} title={!r.color.trim() ? "Enter a Color for this row first" : `Open Cutting Card for ${r.color}`}
+                  onClick={() => onOpenCutting?.(r)}
+                >
+                  Cutting
+                </Button>
+              </td>
               <td className={`${td} text-center`}><Button variant="ghost" size="icon" className="h-6 w-6" disabled={readOnly} onClick={() => setQtyRows((rs) => rs.filter((x) => x.id !== r.id))}><Trash2 className="h-3 w-3 text-muted-foreground" /></Button></td>
             </tr>
           ))}
@@ -1472,6 +1665,7 @@ function ManufacturingQuantitiesGrid({
               </td>
             ))}
             <td className={td}><span className="flex h-6 items-center justify-end px-1.5 font-mono">{grandTotal}</span></td>
+            <td className={td} />
             <td className={td} />
           </tr>
         </tfoot>

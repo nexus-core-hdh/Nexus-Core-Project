@@ -56,6 +56,8 @@ import { WorkOrderController } from './work-order.controller';
 import { WorkOrderService } from './work-order.service';
 import { FabricYarnRequirementsController } from './fabric-yarn-requirements.controller';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
+import { CuttingCardController } from './cutting-card.controller';
+import { CuttingCardService } from './cutting-card.service';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { ApprovalModule } from '../approval/approval.module';
@@ -102,6 +104,8 @@ import { ApprovalModule } from '../approval/approval.module';
     // Activities/Expenses satellites) would otherwise swallow '/:id/requirements' first, since
     // Nest/Express match same-specificity routes in controller registration order.
     FabricYarnRequirementsController,
+    // Same reasoning — '/:id/cutting-card' would otherwise be swallowed by the same catch-all.
+    CuttingCardController,
     WorkOrderController,
   ],
   providers: [
@@ -136,6 +140,7 @@ import { ApprovalModule } from '../approval/approval.module';
     ItemStatementService,
     WorkOrderService,
     FabricYarnRequirementsService,
+    CuttingCardService,
     DeleteDependencyService,
     ReceiptTraceabilityService,
   ],

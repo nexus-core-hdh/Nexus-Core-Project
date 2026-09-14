@@ -3826,6 +3826,104 @@ model StyleBomLine {
   @@index([styleCardId])
 }
 
+// Cutting Card — one per (Work Order, Production Color). Work Order itself is a raw legacy table
+// (MA_WorkOrder, not a Prisma model — see work-order.service.ts's own header comment), so
+// workOrderId here is a plain Int FK reference, the same convention StyleBomLine.fabricInventoryId
+// already uses for a legacy IM_Item id it doesn't have a Prisma relation to. Get-or-create keyed on
+// the unique (workOrderId, productionColor) pair — opening the Cutting Card screen never creates a
+// duplicate for the same Work Order + Color.
+//
+// Deliberately does NOT persist Order Qty or Will-Be-Cut Qty — both remain fully derived, on every
+// read, from the Work Order's own already-authoritative sources (MA_WorkOrderItemVariant for Order
+// Qty per Color/Size, and the existing willBeCutQty() formula in fabric-yarn-requirements.service.ts
+// for Will-Be-Cut), exactly like Yarn Requirements are derived from Fabric Requirements rather than
+// re-stored. Only the genuinely new piece of information — the actual entered Cut Qty per Size —
+// needs its own persisted row (CuttingCardSize below); duplicating Order/Will-Be-Cut here would risk
+// them silently drifting out of sync with the real source the moment Manufacturing Quantities or
+// Extra Cutting % change after this card was first created.
+// One row per (Work Order, Production Color, Fabric) — a Work Order with multiple applicable
+// Fabrics under the same Production Color (e.g. "MAIN FAB" and "RIB") gets one independent
+// CuttingCard per Fabric, never one shared row across Fabrics (that would let Cut quantities for
+// two different materials silently overwrite each other). `materialKey`/`materialLabel` identify
+// the Fabric using the exact same formula work-orders/page.tsx's own C/S Details material columns
+// already group by (see cutting-card.service.ts's materialKeyFor) — materialLabel is a display
+// snapshot only, never the match key.
+//
+// The "Cutting Analysis Detail" fields below (markerNo..actualGrams) are real, manually entered,
+// persisted values — the reference legacy screen's own right-side panel. They describe the
+// cutting operation for this ONE (Work Order, Color, Fabric) context as a whole (one Marker No,
+// one Cutter, etc.), not per cutting batch — that's what CuttingCardEntry is for. cuttingLossPercent
+// is deliberately NOT a column: it is always (markerGrams - actualGrams) / markerGrams * 100,
+// computed live from the two real stored gram values — storing a third, derivable number would let
+// it silently drift from the two it's computed from.
+model CuttingCard {
+  id              String             @id @default(uuid())
+  workOrderId     Int
+  productionColor String
+  materialKey     String
+  materialLabel   String
+  markerNo        String?
+  spreader        String?
+  cadOperator     String?
+  cutter          String?
+  specialCode     String?
+  explanation     String?
+  fabricType      String?
+  markerWeight    Decimal?           @db.Decimal(14, 4)
+  markerPlies     Decimal?           @db.Decimal(14, 4)
+  markerCount     Decimal?           @db.Decimal(14, 4)
+  sentForCutting  Decimal?           @db.Decimal(14, 4)
+  increase        Decimal?           @db.Decimal(14, 4)
+  returnQty       Decimal?           @db.Decimal(14, 4)
+  endOfRoll       Decimal?           @db.Decimal(14, 4)
+  clipping        Decimal?           @db.Decimal(14, 4)
+  markerGrams     Decimal?           @db.Decimal(14, 4)
+  actualGrams     Decimal?           @db.Decimal(14, 4)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  createdBy       String?
+  entries         CuttingCardEntry[]
+
+  @@unique([workOrderId, productionColor, materialKey])
+  @@index([workOrderId, productionColor])
+}
+
+// One row per actual cutting batch/transaction (the reference screen's own top "Cutting Entries"
+// log — Date/Factory/Party No/Document/Explanation + per-size quantities cut in that one batch).
+// The Cutting Summary's own "Cut" row (cutting-card.service.ts's getCuttingCard) is ALWAYS the sum
+// of every entry's own CuttingCardEntrySize rows for a given size — never a second, independently
+// editable number — so Cut can never drift from what was actually logged here.
+model CuttingCardEntry {
+  id            String                 @id @default(uuid())
+  cuttingCardId String
+  cuttingCard   CuttingCard            @relation(fields: [cuttingCardId], references: [id], onDelete: Cascade)
+  date          DateTime?
+  // FI_Account.RecId — the same real Factory master (an Account record) MA_WorkOrder.FactoryId
+  // already uses (see work-order.service.ts's own HEADER_COLUMNS comment), not a new Factory table.
+  factoryId     Int?
+  partyNo       String?
+  document      String?
+  explanation   String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  sizes         CuttingCardEntrySize[]
+
+  @@index([cuttingCardId])
+}
+
+// One persisted Cut Quantity per Size within one Cutting Entry batch. Upserted by (entryId,
+// sizeCode) — saving never duplicates a size row, and re-saving simply updates the existing one in
+// place.
+model CuttingCardEntrySize {
+  id       String           @id @default(uuid())
+  entryId  String
+  entry    CuttingCardEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  sizeCode String
+  quantity Decimal          @default(0) @db.Decimal(14, 4)
+
+  @@unique([entryId, sizeCode])
+}
+
 // Fabric Card Yarn Recipe — the detailed, multi-row yarn composition for a Fabric Card. The
 // legacy IM_Item columns (UD_FabYarnCount1-4 / UD_FyarnRatio1-4) only ever support a fixed 4
 // slots with no room for Explanation/Variant/Process/Waste%/Dye Wastage% per yarn, so they can't
