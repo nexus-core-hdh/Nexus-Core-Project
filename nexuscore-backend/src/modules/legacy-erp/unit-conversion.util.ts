@@ -129,6 +129,24 @@ export function baseQuantityJoinSql(invIdExpr: Prisma.Sql, unitIdExpr: Prisma.Sq
   `;
 }
 
+// Pure, synchronous mirrors of the two formulas above, for a caller that has ALREADY resolved the
+// specific IM_ItemUnitItemSize row it needs (its own UnitFactor/UnitDivisor) — e.g.
+// fabric-yarn-requirements.service.ts's own batched unit resolution, which joins the relevant rows
+// once for many lines/items at a time and would otherwise have to re-query this table a second
+// time per row just to reuse the DB-hitting versions below. Same fallback rules (an unusable
+// factor/divisor leaves the quantity unconverted) as toBaseQuantity/convertFromBaseUnit.
+export function toBaseAmount(quantity: number, unitFactor: number | null | undefined, unitDivisor: number | null | undefined): number {
+  const factor = Number(unitFactor);
+  if (!factor) return quantity;
+  return quantity * (Number(unitDivisor) / factor);
+}
+
+export function applyUnitFactor(quantity: number, unitFactor: number | null | undefined, unitDivisor: number | null | undefined): number {
+  const divisor = Number(unitDivisor);
+  if (!divisor) return quantity;
+  return quantity * (Number(unitFactor) / divisor);
+}
+
 // Single-value helper for call sites that only need one converted number (not embedded in a
 // larger query) — e.g. assertPendingQty's own requestedQty. Same fallback rules as
 // baseQuantitySql/baseQuantityJoinSql above.
@@ -140,10 +158,7 @@ export async function toBaseQuantity(prisma: PrismaService, inventoryId: any, un
     LIMIT 1
   `);
   if (!rows.length) return quantity;
-  const factor = Number(rows[0].unitFactor);
-  const divisor = Number(rows[0].unitDivisor);
-  if (!factor) return quantity;
-  return quantity * (divisor / factor);
+  return toBaseAmount(quantity, rows[0].unitFactor, rows[0].unitDivisor);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -171,8 +186,5 @@ export async function convertFromBaseUnit(prisma: PrismaService, itemId: any, ba
     LIMIT 1
   `);
   if (!rows.length) return baseQuantity;
-  const factor = Number(rows[0].unitFactor);
-  const divisor = Number(rows[0].unitDivisor);
-  if (!divisor) return baseQuantity;
-  return baseQuantity * (factor / divisor);
+  return applyUnitFactor(baseQuantity, rows[0].unitFactor, rows[0].unitDivisor);
 }

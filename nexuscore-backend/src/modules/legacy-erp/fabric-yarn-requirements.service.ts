@@ -6,6 +6,7 @@ import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { WorkOrderService } from './work-order.service';
 import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 import { assertNonNegative } from './numeric-guards.util';
+import { toBaseAmount, applyUnitFactor } from './unit-conversion.util';
 
 // Fabric/Trim/Yarn Requirements — NOT a new entity. Reuses the exact same Work Order BOM data
 // (MA_Recipe/MA_RecipeItem, already served by WorkOrderService.listBom) as its Requirements
@@ -82,7 +83,7 @@ export class FabricYarnRequirementsService {
   // MA_WorkOrderItemVariant per Color x Size cell — see ITEM_VARIANT_COLUMNS's own comment), so
   // applying willBeCutQty() per row here IS applying it per size independently, exactly as
   // required — total/byColor are sums of already-rounded per-size values, never a rounded sum.
-  private async getManufacturingQuantityTotals(workOrderId: number): Promise<{ byColor: Map<string, number>; total: number; hasAny: boolean; extraCuttingPercent: number }> {
+  private async getManufacturingQuantityTotals(workOrderId: number): Promise<{ byColor: Map<string, number>; colorLabels: Map<string, string>; total: number; hasAny: boolean; extraCuttingPercent: number }> {
     const [items, headerRows] = await Promise.all([
       this.workOrderSvc.listItems(workOrderId),
       this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT "Quantity2" as "quantity2" FROM "MA_WorkOrder" WHERE "RecId" = ${workOrderId} AND "IsDeleted" = 0`),
@@ -90,18 +91,27 @@ export class FabricYarnRequirementsService {
     const extraCuttingPercent = Number(headerRows[0]?.quantity2) || 0;
     const primaryItemId = items[0]?.id;
     const byColor = new Map<string, number>();
+    // Original-casing display text per lowercased color key (e.g. "CRIMSON" for "crimson") — kept
+    // separate from `byColor`'s own lowercased keys (needed for case-insensitive matching) so a
+    // common-material expansion (resolveApplicableQuantityScopes) can label each generated row with
+    // the color exactly as the user typed it on Manufacturing Quantities, not a lowercased copy.
+    const colorLabels = new Map<string, string>();
     let total = 0;
-    if (primaryItemId == null) return { byColor, total, hasAny: false, extraCuttingPercent };
+    if (primaryItemId == null) return { byColor, colorLabels, total, hasAny: false, extraCuttingPercent };
     const variants = await this.workOrderSvc.listItemVariants(primaryItemId);
     for (const v of variants) {
       const originalQty = Number(v.quantity) || 0;
       const qty = this.willBeCutQty(originalQty, extraCuttingPercent);
       total += qty;
       const [colorRaw] = String(v.explanation || '').split(COLOR_SIZE_SEP);
-      const color = colorRaw.trim().toLowerCase();
-      if (color) byColor.set(color, (byColor.get(color) || 0) + qty);
+      const colorTrimmed = colorRaw.trim();
+      const color = colorTrimmed.toLowerCase();
+      if (color) {
+        byColor.set(color, (byColor.get(color) || 0) + qty);
+        if (!colorLabels.has(color)) colorLabels.set(color, colorTrimmed);
+      }
     }
-    return { byColor, total, hasAny: variants.length > 0, extraCuttingPercent };
+    return { byColor, colorLabels, total, hasAny: variants.length > 0, extraCuttingPercent };
   }
 
   // Resolves which production quantity applies to one BOM line: match its own Production Color
@@ -115,12 +125,13 @@ export class FabricYarnRequirementsService {
   // IMPORTANT: this reads `Variant2` (MA_RecipeItem's second variant column), NOT `Variant1`.
   // Variant1 is this BOM line's own Material Variant/Type (e.g. "Fleece", "Rib", "Twill Tape") —
   // a completely different, pre-existing concept that must never be overwritten or reinterpreted
-  // as a color. Variant2 has no established meaning anywhere else in this codebase (confirmed:
-  // blank/unused on every Work Order BOM row before this feature, and StyleBomLine/SampleBomLine
-  // have no equivalent column at all — see getStyleCardBomLinesAsWorkOrderShape's own comment on
-  // why a Style Card fallback line always resolves as "common"), which is exactly why it was
-  // chosen for this: an existing, real, currently-empty column on exactly the right table
-  // (MA_RecipeItem, Work Order's own BOM), needing zero schema migration.
+  // as a color. Variant2 had no established meaning anywhere else in this codebase before this
+  // feature (confirmed: blank/unused on every Work Order BOM row, and StyleBomLine/SampleBomLine
+  // have no equivalent column at all — a Style Card fallback line now gets one assigned live via
+  // getStyleCardBomLinesAsWorkOrderShape's own resolveProductionColors/assignProductionColorCycle
+  // reuse, see that method's own comment), which is exactly why it was chosen for this: an
+  // existing, real, currently-empty column on exactly the right table (MA_RecipeItem, Work Order's
+  // own BOM), needing zero schema migration.
   private resolveApplicableQuantity(
     productionColor: string | null | undefined,
     mfgQty: { byColor: Map<string, number>; total: number },
@@ -128,6 +139,74 @@ export class FabricYarnRequirementsService {
     const key = (productionColor || '').trim().toLowerCase();
     if (key && mfgQty.byColor.has(key)) return { quantity: mfgQty.byColor.get(key)!, matchedColor: (productionColor as string).trim() };
     return { quantity: mfgQty.total, matchedColor: null };
+  }
+
+  // ── Color-Wise Requirement Calculation (global rule) ────────────────────────────────────────
+  // A BOM line's color mapping resolves to one OR MORE independent quantity scopes, never a single
+  // blended figure that silently discards color identity:
+  //
+  // - This line has an EXPLICIT color mapping -> exactly one scope: that color's own Will-Be-Cut,
+  //   or the Work Order's total as a documented (buildMappingWarnings-surfaced) fallback when the
+  //   mapped text doesn't match any real Manufacturing Quantity color. A color-specific line NEVER
+  //   expands into other colors — RED-mapped fleece must never also generate a BLACK/ORANGE row.
+  //
+  //   "Explicit color mapping" means EITHER of the two real, existing fields this app lets a user
+  //   set on a BOM line (see the Color Mapping Rule this fix implements — reuse existing fields,
+  //   never invent a new one), Variant-2 taking priority when both happen to be set:
+  //     (a) Variant-2 (this line's own free-text Production-Color match key — see
+  //         resolveApplicableQuantity's own comment), or
+  //     (b) Material Color (colorCardId -> its ColorCard's own code/name — the "Choose Color" cell
+  //         on the BOM grid). THIS is the actual real-world mapping path most BOM lines use in
+  //         practice (Variant-2 has no dedicated single-cell editor anywhere outside the Material x
+  //         Production Color matrix/C-S Details grid — see bom-tab.tsx/work-orders page.tsx's own
+  //         "Choose Color" cells) — a BOM line whose user picked "DEEP LICHEN GREEN" as its Material
+  //         Color, with Variant-2 left blank, previously fell all the way through to the "common
+  //         material" branch below and was wrongly multiplied against EVERY Production Color
+  //         instead of only its own — this is the exact cross-join defect this fix corrects. This
+  //         is the ONLY resolver a single-Material-Color line ever gets: a Style Card fallback line
+  //         belonging to a material with MORE than one distinct Material Color is instead resolved
+  //         earlier, by getStyleCardBomLinesAsWorkOrderShape's own reuse of
+  //         resolveProductionColors/assignProductionColorCycle — the app's existing, already-
+  //         established "Nth Material Color -> Nth Production Color, by position" convention for a
+  //         multi-color Style material whose own color swatches don't share text with any
+  //         Production Color name at all (see that method's own comment) — so this text-match path
+  //         only ever needs to handle the single-color case. A Material Color whose text doesn't
+  //         match any real Manufacturing Quantity color (e.g. a fixed swatch like Reflector's own
+  //         "Medium Grey") is still an explicit mapping, just an unmatched one — same documented
+  //         total-quantity fallback as an unmatched Variant-2, not a silent reclassification as
+  //         "common".
+  // - NEITHER Variant-2 nor Material Color is set (a genuinely COMMON material — applies to every
+  //   garment color, e.g. a shared interlining with no color selection at all) -> one independent
+  //   scope PER real Production Color entered on this Work Order (mfgQty.byColor), each carrying
+  //   that color's own Will-Be-Cut quantity and its own display label — the already-established
+  //   common-material rule, unchanged by this fix. This is the business rule this feature exists to
+  //   enforce: "Fabric | RED | 2x100=200" + "Fabric | BLACK | 2x200=400" + "Fabric | ORANGE |
+  //   2x50=100", never a single "Fabric | Total(350) | 700" row that is numerically equal but has
+  //   silently discarded which color needs how much. A Work Order with exactly one Production Color
+  //   naturally yields exactly one scope here (byColor.size === 1) — no separate single-color branch
+  //   needed, it falls out of the same loop.
+  // - No usable Production Color data at all (byColor empty — a legacy/blank Manufacturing
+  //   Quantities grid) -> the pre-existing safe fallback, one scope against the Work Order's raw
+  //   total (0 when nothing is entered). Never invents a color that was never entered.
+  //
+  // Called by getMaterialRequirements (Fabric/Trim) and getYarnRequirements (per Fabric BOM line,
+  // BEFORE exploding through the Yarn Recipe — see that method's own comment on why the expansion
+  // must happen upstream of the recipe math, not downstream of it) — the ONE place this resolution
+  // happens, so Fabric/Trim/Yarn can never disagree on which colors a common material expands into.
+  private resolveApplicableQuantityScopes(
+    productionColor: string | null | undefined,
+    materialColorName: string | null | undefined,
+    mfgQty: { byColor: Map<string, number>; colorLabels: Map<string, string>; total: number },
+  ): { quantity: number; matchedColor: string | null }[] {
+    const explicitColorText = String(productionColor || '').trim() || String(materialColorName || '').trim();
+    if (explicitColorText) return [this.resolveApplicableQuantity(explicitColorText, mfgQty)];
+    if (mfgQty.byColor.size > 0) {
+      return Array.from(mfgQty.byColor.entries()).map(([colorKey, quantity]) => ({
+        quantity,
+        matchedColor: mfgQty.colorLabels.get(colorKey) ?? colorKey,
+      }));
+    }
+    return [{ quantity: mfgQty.total, matchedColor: null }];
   }
 
   // Public summary for the Requirement Planning screen's own "Production Quantities" readout —
@@ -172,6 +251,158 @@ export class FabricYarnRequirementsService {
     return new Map(rows.map((r) => [r.id, { code: r.code, name: r.name }]));
   }
 
+  // ── Requirement Calculation Unit ────────────────────────────────────────────────────────────
+  // An Inventory Item's Unit tab (Fabric/Trim/Yarn Card — "unit" satellite tab, backed by the
+  // real, pre-existing IM_ItemUnitItemSize table) can carry several units at once (e.g. KG, GRM,
+  // BAG), each independently a real row. That same table already carries a real, pre-existing
+  // "UseForRecipe" column — surfaced in the Unit tab's own UI as the "Requirement Calculation"
+  // switch (see unit-item-detail-grid.tsx) — which is the ONLY existing mechanism in this schema
+  // that identifies which ONE of an item's units the Requirements Engine should use. This is NOT
+  // an invented rule: confirmed via pg_catalog that this column already exists and is already
+  // wired into the Unit tab's own save path (yarn-card-satellites.service.ts's SATELLITES.unit
+  // config), just never previously read by anything. Deliberately NOT "first unit" / not
+  // IsMainUnit ("Base Unit" — a completely different, already-established concept used for unit
+  // *conversion*, not recipe/requirement calculation) / not any hardcoded code like "KG" — none
+  // of those are what this flag means, and assuming so would silently mislabel a correctly
+  // computed quantity for any item whose real Base Unit differs from its real Requirement
+  // Calculation Unit.
+  //
+  // IM_ItemUnitItemSize itself stores no Code/Name of its own — only a UnitItemId reference back
+  // to the Unit Set template row (MD_UnitSetItem) it was copied from (confirmed via schema
+  // inspection: SATELLITES.unit's own column list has no UnitCode/UnitName) — so resolving a
+  // real, displayable Code/Name requires this join.
+  //
+  // Resolution, per item: among this item's own In-Use (InUse=1), non-deleted units, the one(s)
+  // flagged UseForRecipe=1. Exactly one -> that's the resolved unit. Zero -> `unresolvedIds`
+  // (this item's real Unit configuration simply hasn't had this flag set on anything yet — a real
+  // data-completeness gap, confirmed empirically: as of this feature, every existing Item in this
+  // database has zero units flagged, see the final report's own note).
+  //
+  // More than one flagged -> `ambiguousIds`, and `units` gets NOTHING for that item — never a
+  // silent pick. The Item Unit save path itself now enforces exactly-zero-or-one
+  // (yarn-card-satellites.service.ts's own assertSingleRequirementUnit, unit-set.service.ts's own
+  // copy) BEFORE any write commits, so this case should be unreachable for any configuration saved
+  // through this app from here on; it is kept as an explicit, honest "don't guess" backstop only
+  // for legacy/bad data that predates that guard (or bypassed it via a direct DB write) — an
+  // earlier version of this method picked the lowest-RecId unit deterministically in this case,
+  // which is exactly the silent-fallback behavior this update removes: better to show `null`
+  // Requirement Unit with a loud warning than to quietly compute a real quantity against a unit
+  // nobody actually confirmed. Both `unresolvedIds`/`ambiguousIds` flow into getMappingWarnings
+  // (see buildUnitWarnings) as non-fatal, surfaced warnings — never blocking Calculate/Save,
+  // matching this file's own established color-mapping-warning precedent (buildMappingWarnings)
+  // for exactly this kind of "real but actionable gap".
+  // unitFactor/unitDivisor — this exact resolved row's OWN conversion pair (relative to the item's
+  // Base Unit, IsMainUnit=1 — the same "Base Unit + Unit Conversion" convention
+  // unit-conversion.util.ts already documents), additive alongside id/code/name. Lets
+  // getMaterialRequirements/getYarnRequirements convert the FINAL Requirement quantity into this
+  // unit (via that file's own applyUnitFactor) without a second query — this row was already the
+  // one being joined to find WHICH unit is flagged "Requirement Calculation" in the first place.
+  private async resolveRequirementUnits(inventoryIds: (number | null | undefined)[]): Promise<{
+    units: Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number }>;
+    unresolvedIds: Set<number>;
+    ambiguousIds: Set<number>;
+  }> {
+    const distinct = Array.from(new Set(inventoryIds.filter((id): id is number => id != null)));
+    const units = new Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number }>();
+    const ambiguousIds = new Set<number>();
+    if (distinct.length) {
+      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT u."InventoryId" as "inventoryId", u."RecId" as id, msi."UnitCode" as code, msi."UnitName" as name,
+          u."UnitFactor" as "unitFactor", u."UnitDivisor" as "unitDivisor"
+        FROM "IM_ItemUnitItemSize" u
+        JOIN "MD_UnitSetItem" msi ON msi."RecId" = u."UnitItemId"
+        WHERE u."InventoryId" IN (${Prisma.join(distinct)})
+          AND u."IsDeleted" = 0 AND u."InUse" = 1 AND u."UseForRecipe" = 1
+        ORDER BY u."InventoryId", u."RecId"
+      `);
+      const byItem = new Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number }[]>();
+      for (const r of sanitizeRawRow(rows)) {
+        const invId = Number(r.inventoryId);
+        const list = byItem.get(invId) ?? [];
+        list.push({ id: Number(r.id), code: r.code, name: r.name, unitFactor: Number(r.unitFactor), unitDivisor: Number(r.unitDivisor) });
+        byItem.set(invId, list);
+      }
+      for (const [invId, list] of byItem) {
+        if (list.length > 1) ambiguousIds.add(invId);
+        else units.set(invId, list[0]);
+      }
+    }
+    const unresolvedIds = new Set(distinct.filter((id) => !units.has(id) && !ambiguousIds.has(id)));
+    return { units, unresolvedIds, ambiguousIds };
+  }
+
+  // ── Final Requirement Unit Conversion ───────────────────────────────────────────────────────
+  // Resolves, batched across every distinct (InventoryId, UnitItemId) pair a page of BOM lines
+  // needs, that exact IM_ItemUnitItemSize row's own UnitFactor/UnitDivisor — used ONLY to convert a
+  // BOM line's own Consumption (entered in whatever Unit its own UnitId names — MA_RecipeItem.
+  // UnitId/StyleBomLine.unitId, e.g. GRM) into that item's Base Unit, as the first hop of the same
+  // "Base Unit + Unit Conversion" two-hop pattern unit-conversion.util.ts's own convertToBaseUnit/
+  // convertFromBaseUnit already establish (Consumption's own Unit -> Base -> Requirement
+  // Calculation Unit). The second hop reuses resolveRequirementUnits' own already-resolved
+  // unitFactor/unitDivisor directly (see convertRawRequirementToUnit below) rather than a second
+  // query, since that row was already fetched for an unrelated reason (finding which unit is
+  // flagged "Requirement Calculation"). No new table, no new column — the exact same
+  // IM_ItemUnitItemSize row every other Unit-tab consumer already reads.
+  private async resolveConsumptionUnitFactors(inventoryIds: (number | null | undefined)[]): Promise<Map<string, { unitFactor: number; unitDivisor: number }>> {
+    const distinct = Array.from(new Set(inventoryIds.filter((id): id is number => id != null).map(Number)));
+    const map = new Map<string, { unitFactor: number; unitDivisor: number }>();
+    if (!distinct.length) return map;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "InventoryId" as "inventoryId", "UnitItemId" as "unitItemId", "UnitFactor" as "unitFactor", "UnitDivisor" as "unitDivisor"
+      FROM "IM_ItemUnitItemSize"
+      WHERE "InventoryId" IN (${Prisma.join(distinct)}) AND "IsDeleted" = 0
+    `);
+    for (const r of sanitizeRawRow(rows)) {
+      map.set(`${Number(r.inventoryId)}:${Number(r.unitItemId)}`, { unitFactor: Number(r.unitFactor), unitDivisor: Number(r.unitDivisor) });
+    }
+    return map;
+  }
+
+  // Consumption × Applicable Qty (the RAW Requirement, in whatever Unit the BOM line's own
+  // Consumption was entered in — e.g. GRM) is left completely untouched by this: it converts the
+  // FINAL raw number, once, into the item's configured Requirement Calculation Unit — first hop
+  // (Consumption's own entered Unit -> item's Base Unit) via toBaseAmount, second hop (Base Unit ->
+  // Requirement Calculation Unit) via applyUnitFactor — both the exact, already-established
+  // unit-conversion.util.ts formulas, never re-derived. `unitInventoryId` is the item whose
+  // Requirement Unit this conversion targets — the SAME item for Fabric/Trim, but the YARN item
+  // (not the source Fabric's) for getYarnRequirements, per that method's own comment on why Yarn's
+  // Requirement Unit is always resolved from its own Inventory Item. Falls back to the raw,
+  // unconverted quantity whenever no Requirement Unit is configured (unresolvedIds/ambiguousIds —
+  // already surfaced separately via getMappingWarnings/buildUnitWarnings) or Consumption's own Unit
+  // has no matching per-item conversion row — never silently guesses a factor.
+  private convertRawRequirementToUnit(
+    rawQuantity: number,
+    unitInventoryId: number | null | undefined,
+    consumptionUnitId: number | null | undefined,
+    requirementUnit: { unitFactor: number; unitDivisor: number } | null | undefined,
+    consumptionUnitFactors: Map<string, { unitFactor: number; unitDivisor: number }>,
+  ): number {
+    if (!requirementUnit || unitInventoryId == null) return rawQuantity;
+    const consumptionFactors = consumptionUnitId != null ? consumptionUnitFactors.get(`${Number(unitInventoryId)}:${Number(consumptionUnitId)}`) : null;
+    const baseQuantity = consumptionFactors ? toBaseAmount(rawQuantity, consumptionFactors.unitFactor, consumptionFactors.unitDivisor) : rawQuantity;
+    return applyUnitFactor(baseQuantity, requirementUnit.unitFactor, requirementUnit.unitDivisor);
+  }
+
+  // Shared by getMappingWarnings for both the color-mapping check (buildMappingWarnings, above/
+  // unchanged) and this one — `rows` is any already-computed Requirements-grid rows array
+  // (getMaterialRequirements or getYarnRequirements' own output), which already carries
+  // `requirementUnit`/`inventoryId`/`inventoryCode` per row, so no second resolution pass is
+  // needed here beyond re-deriving the ambiguous-vs-unresolved distinction for the message text.
+  private buildUnitWarnings(rows: { inventoryId: any; inventoryCode: any }[], unresolvedIds: Set<number>, ambiguousIds: Set<number>): string[] {
+    const warnings: string[] = [];
+    const seen = new Set<number>();
+    for (const r of rows) {
+      if (r.inventoryId == null) continue;
+      const invId = Number(r.inventoryId);
+      if (seen.has(invId)) continue;
+      seen.add(invId);
+      const label = r.inventoryCode || `Inventory #${invId}`;
+      if (ambiguousIds.has(invId)) warnings.push(`${label}: multiple Requirement Calculation units are configured for this item — Requirement Unit is unresolved until only one Unit is flagged in its Unit tab.`);
+      else if (unresolvedIds.has(invId)) warnings.push(`${label}: no Unit is flagged "Requirement Calculation" in its Unit tab — this material's Requirement Unit could not be resolved.`);
+    }
+    return warnings;
+  }
+
   // ── BOM source resolution — Priority 1: the Work Order's OWN BOM (MA_Recipe/MA_RecipeItem via
   // WorkOrderService.listBom, unchanged). Priority 2: ONLY when the Work Order has zero lines of
   // THIS specific lineType, fall back to the linked Style Card's own BOM (StyleBomLine —
@@ -194,7 +425,7 @@ export class FabricYarnRequirementsService {
     const wo = await this.workOrderSvc.get(workOrderId).catch(() => null);
     const styleCardId = (wo as any)?.styleCardId;
     if (!styleCardId) return [];
-    return this.getStyleCardBomLinesAsWorkOrderShape(styleCardId, lineType);
+    return this.getStyleCardBomLinesAsWorkOrderShape(workOrderId, styleCardId, lineType);
   }
 
   // Reads StyleBomLine (the exact table/query style-extras.service.ts's own getBomLines() uses —
@@ -202,27 +433,50 @@ export class FabricYarnRequirementsService {
   // getMaterialRequirements()/getYarnRequirements() already read off a WorkOrderService.listBom()
   // row, so neither method needs to know which source it got. wastage sums StyleBomLine's own 4
   // percentage columns (wastePct/dyeWastagePct/otherWastagePct/printWastagePct) — the exact same
-  // sum bom-tab.tsx's own applyWaste() already does for these columns, not a new formula. variant2
-  // has no StyleBomLine equivalent (it only carries one `variant` field) and is left null.
-  private async getStyleCardBomLinesAsWorkOrderShape(styleCardId: string, lineType: DirectBomTab) {
+  // sum bom-tab.tsx's own applyWaste() already does for these columns, not a new formula.
+  //
+  // variant2 — StyleBomLine has no Variant-2 column of its own, so every line starts null here, but
+  // is then run through work-order.service.ts's own resolveProductionColors/
+  // assignProductionColorCycle (the SAME, already-existing, already-persisted-at-transfer-time
+  // resolver transferBomFromStyleCardForType uses the moment one of these fallback lines is
+  // actually promoted into a real Work Order BOM line — see that method's own comment). Reusing it
+  // here, rather than leaving every fallback line's Variant-2 permanently null, is what makes a
+  // material given SEVERAL Material Colors on the Style Card (e.g. two Fabric-00006 lines, one per
+  // color) resolve to its own ordinally-matched Production Color in the LIVE Requirements preview
+  // too — previously only true after the user had already opened the BOM tab and transferred/edited
+  // that line once. A material with only one (or zero) distinct Material Color is left untouched by
+  // the cycle (still null) and instead falls back to resolveApplicableQuantityScopes' own
+  // Material-Color-name match (see that method's own comment) — the two resolvers are complementary,
+  // never duplicated: the cycle only ever acts on genuinely multi-color materials.
+  private async getStyleCardBomLinesAsWorkOrderShape(workOrderId: number, styleCardId: string, lineType: DirectBomTab) {
     // Ordered by StyleBomLine's own sortOrder — must match transferBomFromStyleCardForType's own
     // identical orderBy exactly, since setMaterialColorForLine below matches a clicked Requirements
     // row back to its newly-transferred own BOM line by POSITION in this same list.
-    const rows = await this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } });
-    return rows.map((r: any) => ({
+    const [rows, productionColors] = await Promise.all([
+      this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } }),
+      this.workOrderSvc.resolveProductionColors(workOrderId),
+    ]);
+    const mapped = rows.map((r: any) => ({
       id: r.id,
       inventoryId: r.fabricInventoryId,
       quantity: Number(r.quantity) || 0,
       variant1: r.variant,
-      variant2: null,
+      variant2: null as string | null,
       // StyleBomLine's own real colorCardId (Choose Color -> ColorCard, same relation as
       // MA_RecipeItem's) -- carried through so a Fabric/Trim type the Work Order does NOT own
       // still resolves its real Material Color from the Style Card fallback, not just its garment-
       // color match key.
       colorCardId: r.colorCardId ?? null,
+      // StyleBomLine's own real unitId (Consumption's own entered Unit, e.g. "GRM") -- carried
+      // through so convertRawRequirementToUnit can resolve it the exact same way as an own-BOM
+      // line's MA_RecipeItem.UnitId (see RECIPE_ITEM_COLUMNS) — a Style-Card-fallback line's
+      // Consumption is no less real just because the Work Order hasn't promoted it into its own BOM
+      // yet.
+      unitId: r.unitId ?? null,
       wastage: (Number(r.wastePct) || 0) + (Number(r.dyeWastagePct) || 0) + (Number(r.otherWastagePct) || 0) + (Number(r.printWastagePct) || 0),
       uD_Remarks: r.process,
     }));
+    return this.workOrderSvc.assignProductionColorCycle(mapped, productionColors);
   }
 
   // ── Requirements grid — Fabric/Trim tabs: BOM lines resolved per the priority above. Trim
@@ -237,20 +491,48 @@ export class FabricYarnRequirementsService {
     ]);
     const names = await this.resolveInventoryNames(lines.map((l: any) => l.inventoryId));
     const colors = await this.resolveColorCards(lines.map((l: any) => l.colorCardId));
-    return lines.map((l: any) => {
+    const { units: requirementUnits } = await this.resolveRequirementUnits(lines.map((l: any) => l.inventoryId));
+    const consumptionUnitFactors = await this.resolveConsumptionUnitFactors(lines.map((l: any) => l.inventoryId));
+    // flatMap, not map — a single BOM line can now generate MULTIPLE Requirement rows. A
+    // color-specific line (Variant2 set) still yields exactly one row, unchanged. A COMMON line
+    // (Variant2 blank) on a Work Order with more than one Production Color expands into one row PER
+    // color (resolveApplicableQuantityScopes) — this is the Color-Wise Requirement Calculation rule:
+    // color identity must survive into the Requirements grid/persisted records, never collapse into
+    // one row carrying the Work Order's blended total. See that method's own comment for the full
+    // rule (including the single-color/no-color fallback cases, which fall out of the same loop).
+    return lines.flatMap((l: any) => {
       const consumption = Number(l.quantity) || 0;
-      // Garment/Production Color — which Work Order production color this line applies to
-      // (matched against Manufacturing Quantities via Variant2 — see resolveApplicableQuantity's
-      // own comment on why Variant2, never Variant1). Material Color — the REAL color of the
-      // material itself (colorCardId -> ColorCard, the BOM grid's own "Choose Color" cell). Three
-      // deliberately separate identities: Variant1 (Material Variant/Type, e.g. "Fleece"),
-      // Variant2/matchedColor (Production Color, e.g. "NAVY BLAZER"), colorCardId (Material Color,
-      // e.g. "NAVY") — see the Multi-Color BOM feature's own top-level design note in
-      // getTotalRequirements below.
-      const { quantity: applicableQuantity, matchedColor } = this.resolveApplicableQuantity(l.variant2, mfgQty);
       const color = l.colorCardId ? colors.get(String(l.colorCardId)) : null;
-      return {
-        id: l.id,
+      // Material Color's own resolved code/name feeds scope resolution as a fallback color-mapping
+      // key when Variant-2 is blank — see resolveApplicableQuantityScopes' own comment on why.
+      const scopes = this.resolveApplicableQuantityScopes(l.variant2, color?.code || color?.name || null, mfgQty);
+      const requirementUnit = l.inventoryId != null ? requirementUnits.get(Number(l.inventoryId)) ?? null : null;
+      return scopes.map((scope) => ({
+        // A common line expanded into N rows must still edit back to the SAME one real BOM line —
+        // Consumption and Material Color are properties of the BOM line itself, not of any one
+        // color scope (a "common" material has ONE consumption rate applied to every color's own
+        // quantity, by definition). `::` never appears in either a real MA_RecipeItem numeric id or
+        // a StyleBomLine UUID, so it's a safe, unambiguous separator; updateRequirementLine strips
+        // it back off before resolving which real line to patch (it strips everything from the
+        // first `::` onward regardless of what follows, so the literal marker text here doesn't
+        // matter to it).
+        //
+        // ALWAYS suffixed with `::` — even for a non-expanded line (scopes.length === 1) — not just
+        // the multi-color-expanded case. This is a real bug fix, not cosmetic: getSavedRequirements
+        // (below) overwrites a MATCHED row's `id` with the real MA_Requirement.RecId (a bare
+        // integer), while an UNMATCHED row keeps whatever this method returns. MA_RecipeItem.RecId
+        // and MA_Requirement.RecId are two completely independent auto-increment sequences on two
+        // different tables — nothing stops them from coinciding on a real Work Order with enough
+        // rows (confirmed live: WO 222's own Fabric grid produced two rows both id=253, one a
+        // matched MA_Requirement.RecId, the other an unmatched live row's own bare MA_RecipeItem.id
+        // — a real "Encountered two children with the same key" React warning, not a hypothetical
+        // one). A duplicate React list key silently conflates the two rows' component instances,
+        // which is what broke the right-click context menu for one of them — RowContextMenu itself
+        // was correctly wired all along; the actual failure was upstream, in `id` not being unique
+        // across the two different id-namespaces this method can draw from. Suffixing every
+        // unmatched row's id with `::` guarantees it can never again collide with a bare-integer
+        // MA_Requirement.RecId, which never contains `::`.
+        id: scopes.length > 1 ? `${l.id}::${scope.matchedColor}` : `${l.id}::line`,
         inventoryId: l.inventoryId,
         inventoryCode: l.inventoryId != null ? names.get(Number(l.inventoryId))?.code ?? null : null,
         inventoryName: l.inventoryId != null ? names.get(Number(l.inventoryId))?.name ?? null : null,
@@ -262,7 +544,12 @@ export class FabricYarnRequirementsService {
         process: l.uD_Remarks ?? null,
         variant1: l.variant1,
         variant1Explanation: null,
-        variant2: l.variant2,
+        // Variant2/Production Color — the BOM line's own explicit mapping when it has one
+        // (unchanged); for a common line, this is now the RESOLVED color this particular expanded
+        // row is for (never left blank) — Variant2's own established identity is "which production
+        // color this row is for," whether a user typed it or the system resolved it for a common
+        // material, so populating it here doesn't invent a new meaning for the field.
+        variant2: l.variant2 || scope.matchedColor,
         variant2Explanation: null,
         // Material Color — new, additive fields (existing consumers that don't know about them are
         // unaffected). colorCardId is the real FK; colorCode/colorName are resolved for display so
@@ -270,22 +557,42 @@ export class FabricYarnRequirementsService {
         colorCardId: l.colorCardId ?? null,
         colorCode: color?.code ?? null,
         colorName: color?.name ?? null,
+        // Requirement Calculation Unit — resolved once per Inventory Item (resolveRequirementUnits,
+        // never per color scope, since it's a property of the ITEM, not of any one color's own
+        // quantity), so every color-expansion of this one line always carries the identical unit —
+        // this is what keeps Total Requirements' per-item SUM always unit-safe by construction (see
+        // getTotalRequirements' own comment). `null` when this item's own Unit tab has no Unit
+        // flagged "Requirement Calculation" yet — see resolveRequirementUnits' own comment; never
+        // guessed/defaulted to Base Unit or any hardcoded code. Response shape kept to exactly
+        // {id,code,name} (unchanged) even though the resolved object also now carries
+        // unitFactor/unitDivisor for the conversion below — those two are an internal calculation
+        // input, not part of this field's own public contract.
+        requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name } : null,
         // Consumption — this BOM line's OWN existing Quantity field, unchanged (still exactly what
-        // bom-tab.tsx's own "Quantity" column already saved/shows on the Work Order's BOM tab).
+        // bom-tab.tsx's own "Quantity" column already saved/shows on the Work Order's BOM tab), the
+        // SAME value across every color-expansion of this one line. NEVER converted — see
+        // convertRawRequirementToUnit's own comment: only the FINAL Requirement below is.
         consumption,
-        // Applicable Quantity — the production quantity resolved for THIS line (Color-matched, or
-        // the Work Order's total when unmatched/fixed-variant) — see resolveApplicableQuantity.
-        applicableQuantity,
-        matchedColor,
+        // Applicable Quantity — THIS row's own resolved scope: one Production Color's Will-Be-Cut,
+        // or the Work Order's total only for the documented unmatched/no-color-data fallback cases.
+        applicableQuantity: scope.quantity,
+        matchedColor: scope.matchedColor,
         // Garment Color — explicit alias of matchedColor, for a caller that doesn't already know
         // the older field's name means the same thing.
-        garmentColor: matchedColor,
-        // Requirement = Consumption x Applicable Quantity — the task's own "Required Material =
-        // Applicable Production Quantity x BOM Item's Consumption" formula, per BOM line. This is
-        // the field getTotalRequirements/save() already sum/persist, so Total Requirements and the
-        // saved MA_Requirement now reflect the real requirement instead of a raw BOM-quantity echo.
-        quantity: Math.round(consumption * applicableQuantity * 10000) / 10000,
-      };
+        garmentColor: scope.matchedColor,
+        // Requirement = Consumption x this row's own Applicable Quantity — the task's own "Required
+        // Material = Applicable Production Quantity x BOM Item's Consumption" formula, per BOM
+        // line PER COLOR SCOPE, computed FIRST in whatever Unit Consumption was entered in (e.g.
+        // GRM) exactly as before — then, and ONLY then, converted ONCE into the item's configured
+        // Requirement Calculation Unit (convertRawRequirementToUnit — Consumption's own Unit -> item
+        // Base Unit -> Requirement Calculation Unit). An item with no Requirement Unit configured
+        // gets the identical raw number this method has always returned (requirementUnit is null,
+        // so convertRawRequirementToUnit's own first check passes it through unconverted) — zero
+        // behavior change for every item that hasn't been configured for this feature yet. This is
+        // the field getTotalRequirements/save() already sum/persist, so both now reflect the real,
+        // unit-converted requirement instead of a raw same-unit-as-Consumption echo.
+        quantity: Math.round(this.convertRawRequirementToUnit(consumption * scope.quantity, l.inventoryId, l.unitId, requirementUnit, consumptionUnitFactors) * 10000) / 10000,
+      }));
     });
   }
 
@@ -301,8 +608,14 @@ export class FabricYarnRequirementsService {
   // originally-clicked Style line was at (both queries share the identical sortOrder ordering).
   private async updateRequirementLine(workOrderId: number, lineType: DirectBomTab, lineId: string, patch: Record<string, any>, userId: number, currentUserId: string) {
     await this.assertMutationAllowed(workOrderId, lineType, currentUserId);
+    // A common-material row's id may be a color-expansion composite (`${realLineId}::${color}` —
+    // see getMaterialRequirements' own comment) rather than the real BOM line id itself. Every
+    // color-expansion of the same common line shares one real underlying id, so stripping the
+    // suffix here routes an edit made from ANY of its color rows back to that one real line —
+    // exactly right, since Consumption/Material Color belong to the line, not to any one color.
+    const realLineId = lineId.includes('::') ? lineId.slice(0, lineId.indexOf('::')) : lineId;
     const ownLines = await this.workOrderSvc.listBom(workOrderId, lineType);
-    const numericLineId = Number(lineId);
+    const numericLineId = Number(realLineId);
     if (ownLines.length) {
       if (!ownLines.some((l: any) => l.id === numericLineId)) {
         throw new NotFoundException('This requirement line no longer exists — reload and try again.');
@@ -314,7 +627,7 @@ export class FabricYarnRequirementsService {
     const styleCardId = (wo as any)?.styleCardId;
     if (!styleCardId) throw new NotFoundException('This Work Order has no linked Style Card to transfer from.');
     const styleLines = await this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } });
-    const clickedIndex = styleLines.findIndex((l: any) => l.id === lineId);
+    const clickedIndex = styleLines.findIndex((l: any) => l.id === realLineId);
     if (clickedIndex === -1) throw new NotFoundException('Requirement line not found — reload and try again.');
     const created = await this.workOrderSvc.transferBomFromStyleCardForType(workOrderId, styleCardId, lineType, userId);
     if (!created[clickedIndex]) throw new NotFoundException('Failed to transfer this BOM line.');
@@ -341,21 +654,53 @@ export class FabricYarnRequirementsService {
   // Validation — "if a mapping is required but missing, surface it instead of silently calculating
   // against the wrong color". Applies ONLY when the Work Order actually has Manufacturing
   // Quantities entered with more than one distinct color (mfgQty.byColor.size > 1) — a single-color
-  // (or zero-color, legacy) Work Order has no ambiguity to warn about, and a BOM line's blank
-  // Production Color (Variant2) is the pre-existing, intentional "common material" convention
+  // (or zero-color, legacy) Work Order has no ambiguity to warn about, and a BOM line with NEITHER
+  // Variant-2 nor a Material Color set is the pre-existing, intentional "common material" convention
   // (falls back to the Work Order's TOTAL quantity — correct, not a missing mapping). Deliberately
   // non-fatal: returned as warnings, never thrown, so Calculate/Save keep working exactly as before
   // for every case that isn't this specific new ambiguity (Test 1/Test 13's own "existing behavior
-  // still works").
-  private buildMappingWarnings(lines: any[], mfgQty: { byColor: Map<string, number>; total: number }): string[] {
+  // still works"). Resolves each line's own Material Color the same way resolveApplicableQuantityScopes
+  // itself now does (Variant-2 first, Material Color as fallback) so a warning is never missed for a
+  // line whose only color identity comes from "Choose Color" rather than Variant-2.
+  private async buildMappingWarnings(lines: any[], mfgQty: { byColor: Map<string, number>; total: number }): Promise<string[]> {
     if (mfgQty.byColor.size <= 1) return [];
+    const colors = await this.resolveColorCards(lines.map((l: any) => l.colorCardId));
     const warnings: string[] = [];
     for (const l of lines) {
-      const key = String(l.variant2 || '').trim().toLowerCase();
+      const color = l.colorCardId ? colors.get(String(l.colorCardId)) : null;
+      const explicitColorText = String(l.variant2 || '').trim() || String(color?.code || color?.name || '').trim();
+      const key = explicitColorText.toLowerCase();
       if (key && !mfgQty.byColor.has(key)) {
         const label = l.inventoryId != null ? `Inventory #${l.inventoryId}` : `BOM line ${l.id}`;
-        warnings.push(`${label}: Production Color "${l.variant2}" does not match any of this Work Order's Manufacturing Quantity colors (${Array.from(mfgQty.byColor.keys()).join(', ')}) — it is being calculated against the Work Order's TOTAL quantity instead.`);
+        warnings.push(`${label}: color mapping "${explicitColorText}" does not match any of this Work Order's Manufacturing Quantity colors (${Array.from(mfgQty.byColor.keys()).join(', ')}) — it is being calculated against the Work Order's TOTAL quantity instead.`);
       }
+    }
+    return warnings;
+  }
+
+  // "Yarn Recipe Not Defined" — the task's own explicit requirement: when neither a Color-Specific
+  // nor a Common/Overall Yarn Recipe exists for a Fabric BOM line's item, getYarnRequirements
+  // silently produces zero Yarn rows for that line (`if (!recipeLines.length) continue;`) rather
+  // than guessing/blending in some other recipe — this surfaces that gap as a non-fatal warning
+  // instead of a silent, easy-to-miss absence, matching the file's own established
+  // buildMappingWarnings/buildUnitWarnings precedent for "real but actionable gap, never blocks
+  // Calculate/Save". One warning per distinct Fabric Inventory Item (not per BOM line/color scope)
+  // — every color of the same fabric with no recipe at all shares the identical root cause (no
+  // Common recipe exists for that fabric), so listing it once per fabric is clearer than once per
+  // color row.
+  private async buildYarnRecipeWarnings(fabricLines: any[]): Promise<string[]> {
+    const distinctIds = Array.from(new Set(fabricLines.map((l: any) => l.inventoryId).filter((id: any) => id != null).map(Number)));
+    if (!distinctIds.length) return [];
+    const names = await this.resolveInventoryNames(distinctIds);
+    const warnings: string[] = [];
+    for (const l of fabricLines) {
+      if (l.inventoryId == null) continue;
+      const invId = Number(l.inventoryId);
+      const recipeLines = await this.yarnRecipeSvc.resolveEffectiveRecipe(invId, l.colorCardId ?? null);
+      if (recipeLines.length) continue;
+      const label = names.get(invId)?.code || `Inventory #${invId}`;
+      const msg = `${label}: Yarn Recipe Not Defined — no Color-Specific or Common/Overall Yarn Recipe is configured for this Fabric, so its Yarn Requirement cannot be calculated.`;
+      if (!warnings.includes(msg)) warnings.push(msg);
     }
     return warnings;
   }
@@ -367,10 +712,21 @@ export class FabricYarnRequirementsService {
     const mfgQty = await this.getManufacturingQuantityTotals(workOrderId);
     if (tab === 'yarn') {
       const fabricLines = await this.resolveBomLines(workOrderId, 'fabric');
-      return this.buildMappingWarnings(fabricLines, mfgQty);
+      const colorWarnings = await this.buildMappingWarnings(fabricLines, mfgQty);
+      const recipeWarnings = await this.buildYarnRecipeWarnings(fabricLines);
+      // Unit warnings for Yarn are checked against the YARN item's own inventoryId (see
+      // getYarnRequirements' own comment on why), not the source Fabric's — reuses its own
+      // already-computed rows rather than re-deriving the recipe explosion a second time.
+      const yarnRows = await this.getYarnRequirements(workOrderId);
+      const { unresolvedIds, ambiguousIds } = await this.resolveRequirementUnits(yarnRows.map((r: any) => r.inventoryId));
+      const unitWarnings = this.buildUnitWarnings(yarnRows, unresolvedIds, ambiguousIds);
+      return [...colorWarnings, ...recipeWarnings, ...unitWarnings];
     }
     const lines = await this.resolveBomLines(workOrderId, tab);
-    return this.buildMappingWarnings(lines, mfgQty);
+    const colorWarnings = await this.buildMappingWarnings(lines, mfgQty);
+    const { unresolvedIds, ambiguousIds } = await this.resolveRequirementUnits(lines.map((l: any) => l.inventoryId));
+    const unitWarnings = this.buildUnitWarnings(lines.map((l: any) => ({ inventoryId: l.inventoryId, inventoryCode: null })), unresolvedIds, ambiguousIds);
+    return [...colorWarnings, ...unitWarnings];
   }
 
   // ── Requirements grid — Yarn tab: each Fabric BOM row exploded through its OWN Fabric Card's
@@ -386,47 +742,101 @@ export class FabricYarnRequirementsService {
       this.resolveBomLines(workOrderId, 'fabric'),
       this.getManufacturingQuantityTotals(workOrderId),
     ]);
-    const exploded: { fabricLineId: number; yarnInventoryId: number | null; process: string | null; variant1: string | null; variant2: string | null; quantity: number; sourceColorCardId: string | null; garmentColor: string | null }[] = [];
+    // Resolved up front (same as getMaterialRequirements) so each Fabric line's own Material Color
+    // can feed resolveApplicableQuantityScopes as a fallback color-mapping key when Variant-2 is
+    // blank — this is what makes Yarn inherit the SAME corrected color scope Fabric now resolves
+    // to, instead of re-deriving its own (potentially still cross-joined) scope independently.
+    const fabricColors = await this.resolveColorCards(fabricLines.map((l: any) => l.colorCardId));
+    const exploded: { fabricLineId: number; yarnInventoryId: number | null; process: string | null; variant1: string | null; variant2: string | null; quantity: number; sourceColorCardId: string | null; garmentColor: string | null; sourceConsumptionUnitId: number | null }[] = [];
     for (const line of fabricLines) {
       if (line.inventoryId == null) continue;
-      const recipeLines = await this.yarnRecipeSvc.getRecipe(Number(line.inventoryId));
+      // Color-Specific Yarn Recipe if one exists for THIS line's own Material Color, otherwise the
+      // Fabric's Common/Overall recipe, otherwise neither -> [] (surfaced as a non-fatal "Yarn
+      // Recipe Not Defined" warning by buildYarnRecipeWarnings below, never a silent zero/wrong
+      // recipe). Keyed by the Fabric BOM line's own colorCardId — in this app's real BOM data a
+      // fabric's different colors are already separate BOM lines each with their own colorCardId
+      // (the same Multi-Color BOM identity resolveApplicableQuantityScopes already keys off of),
+      // so resolving once per LINE here is already resolving once per COLOR for every fabric that
+      // actually has distinct color-mapped BOM lines — no restructuring of the scopes loop below
+      // needed. A line with no Material Color at all (genuinely common/unmapped, expanding into
+      // multiple scopes below) has no per-scope color identity to look a color-specific recipe up
+      // by, so it always resolves to the Common recipe for every scope — the same "common material"
+      // treatment this file already gives such a line everywhere else.
+      const recipeLines = await this.yarnRecipeSvc.resolveEffectiveRecipe(Number(line.inventoryId), line.colorCardId ?? null);
       if (!recipeLines.length) continue;
-      // Same "Applicable Quantity x Consumption" step getMaterialRequirements applies, folded in
-      // before the existing Wastage/recipe-% math below so that math is completely unchanged in
-      // shape — just fed the real fabric requirement instead of the raw per-unit BOM Quantity.
-      const { quantity: applicableQuantity, matchedColor } = this.resolveApplicableQuantity(line.variant2, mfgQty);
-      const fabricRequirement = Number(line.quantity || 0) * applicableQuantity;
-      // Calculated Quantity = Fabric Requirement x (1 + Wastage/100) — MA_RecipeItem's single
-      // combined Wastage column, the same basis BomTab's own applyWaste()/Calculated Qty column
-      // uses (previously applied to the raw BOM Quantity directly; now to that same quantity once
-      // it's been sized to the actual production run).
-      const calculatedQty = fabricRequirement * (1 + Number(line.wastage || 0) / 100);
-      for (const r of recipeLines) {
-        const pct = Number(r.percentage);
-        if (!Number.isFinite(pct) || pct <= 0) continue;
-        exploded.push({
-          fabricLineId: line.id,
-          yarnInventoryId: r.yarnInventoryId,
-          process: r.process ?? null,
-          variant1: r.variant1 ?? null,
-          variant2: r.variant2 ?? null,
-          quantity: Math.round(calculatedQty * (pct / 100) * 10000) / 10000,
-          // Yarn has no color selection of its own anywhere in this app (FabricYarnRecipeLine's
-          // own variant1/variant2 are plain free text, never linked to ColorCard — confirmed
-          // during the Multi-Color BOM audit) — it inherits the Fabric BOM line's REAL Material
-          // Color it was exploded from ("Fabric BOM Line -> Mapped Fabric Material Color -> Fabric
-          // Recipe -> Yarn Recipe -> Yarn Requirement", per the task's own flow), so a Yarn
-          // requirement never loses which colored Fabric it actually came from.
-          sourceColorCardId: line.colorCardId ?? null,
-          garmentColor: matchedColor,
-        });
+      // Same color-wise expansion getMaterialRequirements applies (resolveApplicableQuantityScopes
+      // — see its own comment), done HERE, upstream of the Yarn Recipe math below, not downstream
+      // of it: a common Fabric line must apply its OWN Yarn Recipe independently to EACH color's own
+      // Fabric Requirement ("Fabric/RED -> apply Yarn Recipe independently", "Fabric/BLACK -> apply
+      // the same recipe independently" — never combined-then-recipe'd, which would blend colors
+      // before the recipe % even runs and lose color identity from the Yarn side entirely). The
+      // recipe percentages/wastage themselves are completely unchanged — only WHICH fabric quantity
+      // scope they're applied to, once per scope, changes.
+      const fabricColor = line.colorCardId ? fabricColors.get(String(line.colorCardId)) : null;
+      const scopes = this.resolveApplicableQuantityScopes(line.variant2, fabricColor?.code || fabricColor?.name || null, mfgQty);
+      for (const scope of scopes) {
+        // Same "Applicable Quantity x Consumption" step getMaterialRequirements applies, folded in
+        // before the existing Wastage/recipe-% math below so that math is completely unchanged in
+        // shape — just fed the real fabric requirement instead of the raw per-unit BOM Quantity.
+        const fabricRequirement = Number(line.quantity || 0) * scope.quantity;
+        // Calculated Quantity = Fabric Requirement x (1 + Wastage/100) — MA_RecipeItem's single
+        // combined Wastage column, the same basis BomTab's own applyWaste()/Calculated Qty column
+        // uses (previously applied to the raw BOM Quantity directly; now to that same quantity once
+        // it's been sized to the actual production run).
+        const calculatedQty = fabricRequirement * (1 + Number(line.wastage || 0) / 100);
+        for (const r of recipeLines) {
+          const pct = Number(r.percentage);
+          if (!Number.isFinite(pct) || pct <= 0) continue;
+          exploded.push({
+            fabricLineId: line.id,
+            yarnInventoryId: r.yarnInventoryId,
+            process: r.process ?? null,
+            variant1: r.variant1 ?? null,
+            variant2: r.variant2 ?? null,
+            // RAW quantity still (in whatever Unit the source Fabric line's own Consumption was
+            // entered in, e.g. GRM) — the FINAL conversion into the YARN item's own Requirement
+            // Calculation Unit happens once, below, after requirementUnits is resolved against
+            // e.yarnInventoryId (never here — this loop has no Yarn Requirement Unit to convert
+            // into yet, and converting a per-recipe-line partial sum instead of the final quantity
+            // would be the exact "convert before the calculation is complete" mistake this fix
+            // exists to avoid).
+            quantity: Math.round(calculatedQty * (pct / 100) * 10000) / 10000,
+            // Yarn has no color selection of its own anywhere in this app (FabricYarnRecipeLine's
+            // own variant1/variant2 are plain free text, never linked to ColorCard — confirmed
+            // during the Multi-Color BOM audit) — it inherits the Fabric BOM line's REAL Material
+            // Color it was exploded from ("Fabric BOM Line -> Mapped Fabric Material Color -> Fabric
+            // Recipe -> Yarn Recipe -> Yarn Requirement", per the task's own flow), so a Yarn
+            // requirement never loses which colored Fabric it actually came from.
+            sourceColorCardId: line.colorCardId ?? null,
+            garmentColor: scope.matchedColor,
+            // The source Fabric line's own Consumption Unit (e.g. GRM) — carried through so the
+            // final conversion below can resolve it against the YARN item's OWN per-item conversion
+            // row for that same Unit (see convertRawRequirementToUnit's own comment on why the
+            // target item for this lookup is always the item whose Requirement Unit is being
+            // resolved into, not the source's).
+            sourceConsumptionUnitId: line.unitId ?? null,
+          });
+        }
       }
     }
     const names = await this.resolveInventoryNames(exploded.map((e) => e.yarnInventoryId));
     const colors = await this.resolveColorCards(exploded.map((e) => e.sourceColorCardId));
+    // Resolved against the YARN's own inventoryId, not the source Fabric's — a Yarn requirement is
+    // a quantity of yarn, so it belongs in the YARN item's own configured Requirement Calculation
+    // Unit (its own Unit tab), completely independent of whatever unit the Fabric it came from uses.
+    const { units: requirementUnits } = await this.resolveRequirementUnits(exploded.map((e) => e.yarnInventoryId));
+    // Also resolved against the YARN's own inventoryId (paired with each row's OWN
+    // sourceConsumptionUnitId — the source Fabric's Consumption Unit) — see
+    // convertRawRequirementToUnit's own comment on why the item side of this lookup is always the
+    // item whose Requirement Unit is being converted into.
+    const consumptionUnitFactors = await this.resolveConsumptionUnitFactors(exploded.map((e) => e.yarnInventoryId));
     return exploded.map((e, i) => {
       const color = e.sourceColorCardId ? colors.get(String(e.sourceColorCardId)) : null;
+      const requirementUnit = e.yarnInventoryId != null ? requirementUnits.get(Number(e.yarnInventoryId)) ?? null : null;
       return {
+        // Yarn rows are never individually edited (see the two wrapper methods' own comments), so a
+        // plain positional suffix is sufficient here — unlike getMaterialRequirements' own ids,
+        // nothing needs to decode this back to a real line.
         id: `${e.fabricLineId}-${i}`,
         inventoryId: e.yarnInventoryId,
         inventoryCode: e.yarnInventoryId != null ? names.get(Number(e.yarnInventoryId))?.code ?? null : null,
@@ -441,8 +851,15 @@ export class FabricYarnRequirementsService {
         colorCardId: e.sourceColorCardId,
         colorCode: color?.code ?? null,
         colorName: color?.name ?? null,
+        // Response shape kept to exactly {id,code,name} — see getMaterialRequirements' own
+        // identical comment.
+        requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name } : null,
         garmentColor: e.garmentColor,
-        quantity: e.quantity,
+        // e.quantity is still the RAW exploded quantity (Fabric Requirement x Wastage x Recipe %,
+        // in the source Fabric's own Consumption Unit) — converted here, once, into the YARN item's
+        // own configured Requirement Calculation Unit, exactly the same final-step-only rule
+        // getMaterialRequirements applies to Fabric/Trim (see that method's own comment).
+        quantity: Math.round(this.convertRawRequirementToUnit(e.quantity, e.yarnInventoryId, e.sourceConsumptionUnitId, requirementUnit, consumptionUnitFactors) * 10000) / 10000,
       };
     });
   }
@@ -455,65 +872,116 @@ export class FabricYarnRequirementsService {
   // aggregation of already-real data, not an invented business formula (no calculation logic for
   // this exists anywhere in the codebase — confirmed via exhaustive grep).
   // ── Multi-Color BOM -> Color-Wise Requirement Calculation ──────────────────────────────────────
-  // Total Requirements now key on (InventoryId, Material Color) instead of InventoryId alone —
-  // otherwise RED fleece and BLUE fleece sharing the same physical Fabric Card would silently
-  // collapse into one wrong combined figure the moment a Work Order has more than one production
-  // color (the exact bug this feature fixes). Material Color = colorCardId (the real ColorCard FK,
-  // "Choose Color") when the line has one; a legacy line with no colorCardId at all falls back to
-  // its own Variant1 (Material Variant/Type) + Variant2 (Production Color) as the distinguishing
-  // key — NOT because either represents color identity on its own (Variant1 never does; Variant2
-  // is the production-color match key, not a "color of the material"), but so two colorless rows
-  // that differ by material type or by which production color they apply to are never silently
-  // treated as "the same row" just because neither has a real Material Color assigned yet. Two
-  // colored rows that legitimately share the SAME Material Color (e.g. RED garment's Rib/NAVY +
-  // BLUE garment's Rib/NAVY) still consolidate into one total, by design — see the feature's own
-  // consolidation rule.
-  async getTotalRequirements(workOrderId: number, tab: RequirementTab) {
+  // Total Requirements now key on (InventoryId, Material Color, Production Color) — NOT InventoryId
+  // alone, and NOT Material Color alone either (see the Color-Wise Requirement Calculation global
+  // rule this fix implements: "F1 + RED / F1 + BLACK / F1 + ORANGE must be independent records").
+  // Material Color = colorCardId (the real ColorCard FK, "Choose Color"); Production Color =
+  // Variant2, always included now whenever it's set — this is the fix for a real bug this exact
+  // feature's own color-wise expansion exposed: a COMMON material (getMaterialRequirements now
+  // expands it into one row per Production Color, each carrying its OWN Variant2) that ALSO happens
+  // to have a real Material Color assigned used to collapse straight back into ONE grouped row here,
+  // because the previous version of this key treated Material Color and Variant2 as mutually
+  // exclusive alternatives (colorCardId present -> Variant2 ignored entirely) rather than both being
+  // part of one row's identity — silently re-merging the exact color-split rows the expansion had
+  // just produced, right at the Total Requirements/Save boundary. A Variant1-only line (no
+  // colorCardId, no Variant2 — a genuinely common, ungrouped legacy line) still keys on Variant1
+  // alone, unchanged. NOTE: this intentionally supersedes this method's own earlier "two colored
+  // rows that legitimately share the same Material Color still consolidate into one total" rule —
+  // under the Color-Wise Requirement Calculation's own explicit instruction, Production Color
+  // identity must never be silently discarded by aggregation, even when two rows share one Material
+  // Color. Rows saved under the PREVIOUS key format simply won't re-match until their next Save
+  // (see getSavedRequirements' own comment on why that's safe, not destructive) — the same
+  // documented, non-corrupting re-keying precedent this table already established once before.
+  //
+  // The ONE grouping key both getTotalRequirements (what gets summed into a single row) and
+  // save() (what gets persisted as ONE MA_Requirement row) already agreed on — extracted here so
+  // getSavedRequirements below can match a live, freshly-recomputed row back to its own
+  // already-saved record using the EXACT same identity, never a second/divergent one.
+  //
+  // `r.id` is used as the LAST-RESORT disambiguator only — a row with no InventoryId, no Material
+  // Color, and no Variant-1/Variant-2 text at all (a genuinely blank/degenerate BOM line) has
+  // nothing else to key on. It must never be used when a real identity (Material Color and/or
+  // Variant-1/Variant-2) IS available: `r.id` means something completely different across two
+  // separate calls to this function — a live row's `id` is that BOM line's own real id (or, for a
+  // color-expanded common line, a composite `${lineId}::${color}` — see getMaterialRequirements'
+  // own comment), while a saved row's `id` is MA_Requirement's own freshly-generated RecId — so
+  // keying on it whenever InventoryId happened to be null meant a color-specific line with no
+  // linked Inventory Card could NEVER be matched back to its own saved record after a reload, which
+  // is what originally caused Consumption/Applicable Qty to read as saved-but-unmatched. A fixed
+  // `no-item` placeholder keeps the SAME key across both calls whenever a real identity exists.
+  private requirementGroupKey(r: { inventoryId: any; id: any; variant1?: any; variant2?: any; colorCardId?: any }): string {
+    const variant1Key = String(r.variant1 || '').trim().toLowerCase();
+    const variant2Key = String(r.variant2 || '').trim().toLowerCase();
+    const materialColorKey = r.colorCardId ? `c:${r.colorCardId}` : '';
+    const identityKey = [materialColorKey, variant1Key ? `v1:${variant1Key}` : '', variant2Key ? `v2:${variant2Key}` : '']
+      .filter(Boolean)
+      .join('|');
+    const itemKey = r.inventoryId != null ? String(r.inventoryId) : (identityKey ? 'no-item' : `unresolved-${r.id}`);
+    return `${itemKey}${identityKey ? `|${identityKey}` : ''}`;
+  }
+
+  // ── Color-Wise Requirement rows — one row per (Item, Material Color, Production Color) group,
+  // via requirementGroupKey. This is the PERSISTENCE-GRANULARITY view: what save() writes as
+  // independent MA_Requirement records, and what a saved row is matched back to on reload (see
+  // getSavedRequirements). NOT the same thing as the "Total Requirements Table" the Requirements
+  // screen itself renders — see getTotalRequirements' own comment on why those are two genuinely
+  // different views, matching the legacy reference screen's own two-grid structure.
+  private async getColorWiseRequirements(workOrderId: number, tab: RequirementTab) {
     const rows = await this.getRequirementRows(workOrderId, tab);
-    const byInventory = new Map<string, {
+    const byGroup = new Map<string, {
       id: string; inventoryId: any; inventoryCode: any; inventoryName: any; quantity: number;
       colorCardId: string | null; colorCode: string | null; colorName: string | null;
+      requirementUnit: { id: number; code: string; name: string } | null;
     }>();
     for (const r of rows) {
-      const legacyKey = [r.variant1, r.variant2].map((v) => String(v || '').trim().toLowerCase()).join('|');
-      const colorKey = (r as any).colorCardId ? `c:${(r as any).colorCardId}` : (legacyKey !== '|' ? `legacy:${legacyKey}` : '');
-      const key = `${r.inventoryId ?? `unresolved-${r.id}`}${colorKey ? `|${colorKey}` : ''}`;
-      const existing = byInventory.get(key);
+      const key = this.requirementGroupKey(r as any);
+      const existing = byGroup.get(key);
       if (existing) existing.quantity += Number(r.quantity) || 0;
-      // `id` was previously missing from this aggregation entirely (only inventoryId/Code/Name/
-      // quantity were returned) even though the frontend's TotalRow type has always declared it
-      // required and ReportGrid keys every row by row.id — with 0-1 total rows React never had two
-      // equal (undefined) keys to warn about, so this stayed invisible until a real multi-row
-      // total appeared. `key` is already guaranteed unique per returned row (it's the Map's own
-      // dedup key), so reusing it as `id` needs no new identifier scheme.
-      else byInventory.set(key, {
+      else byGroup.set(key, {
         id: key, inventoryId: r.inventoryId, inventoryCode: r.inventoryCode, inventoryName: r.inventoryName, quantity: Number(r.quantity) || 0,
         colorCardId: (r as any).colorCardId ?? null, colorCode: (r as any).colorCode ?? null, colorName: (r as any).colorName ?? null,
+        // Same resolved unit for every row a group ever merges — requirementUnit is a pure function
+        // of inventoryId (resolveRequirementUnits), and requirementGroupKey always includes
+        // inventoryId, so every row landing in this SAME group is, by construction, for the SAME
+        // item and therefore already carries the SAME requirementUnit. Never mixes KG-resolved and
+        // GRM-resolved quantities into one SUM — there is structurally no way for two different
+        // resolved units to reach the same group key.
+        requirementUnit: (r as any).requirementUnit ?? null,
       });
     }
-    const perColorRows = Array.from(byInventory.values());
+    return Array.from(byGroup.values());
+  }
 
-    // Cumulative (Grand Total) per Item — computed here, server-side, from the exact same
-    // already-correct per-color rows above (DB-sourced, not re-derived client-side), so it can
-    // never disagree with what the per-color rows themselves show. Grouped purely by inventoryId
-    // (ignoring color) — a material with only ONE color-split row gets no cumulative row of its
-    // own added (that single row already IS its total; a second row repeating the same number
-    // would be pure clutter). `isCumulative: true` lets the frontend render/label these distinctly
-    // without a second table or a second fetch.
-    const byItem = new Map<string, { id: string; inventoryId: any; inventoryCode: any; inventoryName: any; quantity: number; count: number }>();
-    for (const r of perColorRows) {
+  // ── Total Requirements Table — matches the legacy reference screen exactly: GROUP BY Inventory
+  // Code, SUM(Required), ONE row per distinct material — no Material Color/Production Color
+  // breakdown in this table at all (verified against the legacy screen's own "Total Requirements
+  // Table": 3 rows, one per Inventory Code, e.g. two color-specific Requirements-grid rows for the
+  // same Fabric Card — 180.1033 + 2,836.4920 — summed into that ONE material's single 3,016.5953
+  // total row; a material with only one Requirements-grid row shows that same figure unchanged).
+  // The per-color/per-Material-Color DETAIL lives in the separate Requirements grid above this one
+  // (getMaterialRequirements/getYarnRequirements — unchanged, already color-wise since the earlier
+  // Color-Wise Requirement Calculation fix) and in the independently-persisted MA_Requirement
+  // records (getColorWiseRequirements/save, also unchanged) — this table was previously
+  // interleaving that same per-color detail (plus a separate "Cumulative Total" row) into itself,
+  // which the legacy screen never does; this is the one difference this fix corrects.
+  async getTotalRequirements(workOrderId: number, tab: RequirementTab) {
+    const colorWiseRows = await this.getColorWiseRequirements(workOrderId, tab);
+    const byItem = new Map<string, {
+      id: string; inventoryId: any; inventoryCode: any; inventoryName: any; quantity: number;
+      requirementUnit: { id: number; code: string; name: string } | null;
+    }>();
+    for (const r of colorWiseRows) {
+      // Grouped purely by inventoryId, exactly like the legacy screen — and, exactly like the
+      // grouping above, always unit-safe by construction: requirementUnit is resolved solely from
+      // inventoryId, so every row this SUM ever combines for the same key already shares the same
+      // resolved unit. Never silently adds a KG-resolved quantity to a GRM-resolved one — there is
+      // no code path by which two different units could land in the same `key` here.
       const key = r.inventoryId != null ? String(r.inventoryId) : `unresolved:${r.id}`;
       const existing = byItem.get(key);
-      if (existing) { existing.quantity += r.quantity; existing.count += 1; }
-      else byItem.set(key, { id: `cumulative-${key}`, inventoryId: r.inventoryId, inventoryCode: r.inventoryCode, inventoryName: r.inventoryName, quantity: r.quantity, count: 1 });
+      if (existing) existing.quantity += r.quantity;
+      else byItem.set(key, { id: key, inventoryId: r.inventoryId, inventoryCode: r.inventoryCode, inventoryName: r.inventoryName, quantity: r.quantity, requirementUnit: r.requirementUnit });
     }
-    const cumulativeRows = Array.from(byItem.values())
-      .filter((it) => it.count > 1)
-      .map((it) => ({
-        id: it.id, inventoryId: it.inventoryId, inventoryCode: it.inventoryCode, inventoryName: it.inventoryName, quantity: it.quantity,
-        colorCardId: null, colorCode: null, colorName: null, isCumulative: true as const,
-      }));
-    return [...perColorRows, ...cumulativeRows];
+    return Array.from(byItem.values());
   }
 
   // ── Requirement Locking ──────────────────────────────────────────────────────────────────────
@@ -671,25 +1139,28 @@ export class FabricYarnRequirementsService {
     return { message: `${this.tabLabel(tab)} Requirement record deleted.` };
   }
 
-  // Delete All Records — clears ALL THREE types for this Work Order at once (existing, deliberate
-  // business rule — see this method's own history; unchanged by this fix). All-or-nothing: if ANY
-  // of the 3 is currently locked, the WHOLE action is rejected — no bypass for an unlock-
-  // authorized caller either now (see assertMutationAllowed's own comment on why); they must
-  // explicitly unlock each locked type first, same as every other mutation.
-  async deleteAllRequirements(workOrderId: number, currentUserId: string) {
+  // Delete All Records — scoped to exactly ONE Requirement type (whichever screen/tab the caller
+  // is on), never the other two. This REPLACES a previous version of this method that deleted
+  // every MA_Requirement row for the Work Order regardless of type — a real, reported bug: opening
+  // Fabric Requirements and clicking "Delete All" silently wiped out that Work Order's Trim and
+  // Yarn records too, even though the confirmation dialog and button both only ever talked about
+  // "this screen". Fixed the exact same way deleteRequirement (single-record delete, just above)
+  // already scopes its own DELETE: by real `RequirementType` on MA_Requirement — REQUIREMENT_TYPE
+  // is this file's own existing fabric/yarn/trim convention, reused here, not a new field/table.
+  // Lock check also narrowed to match: only THIS tab's own lock is consulted
+  // (assertMutationAllowed — the same helper every other mutation on this tab already uses), so
+  // Fabric Delete All is no longer blocked by Trim or Yarn being locked, and vice versa.
+  async deleteAllRequirements(workOrderId: number, tab: RequirementTab, currentUserId: string) {
     await this.workOrderSvc.get(workOrderId);
-    const tabs: RequirementTab[] = ['fabric', 'trim', 'yarn'];
-    const statuses = await Promise.all(tabs.map((t) => this.getLockStatus(workOrderId, t, currentUserId)));
-    const blocked = tabs.filter((_, i) => statuses[i].isLocked);
-    if (blocked.length) {
-      throw new ForbiddenException(`Cannot delete all Requirement records — ${blocked.map((t) => this.tabLabel(t)).join(', ')} ${blocked.length > 1 ? 'are' : 'is'} locked. Unlock ${blocked.length > 1 ? 'them' : 'it'} first.`);
-    }
+    await this.assertMutationAllowed(workOrderId, tab, currentUserId);
+    const requirementType = REQUIREMENT_TYPE[tab];
     await this.prisma.$executeRaw(Prisma.sql`
       UPDATE "MA_Requirement" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${Number(currentUserId) || 1}
-      WHERE "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
+      WHERE "RequirementType" = ${requirementType}
+        AND "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
         AND "IsDeleted" = 0
     `);
-    return { message: 'All Requirement records deleted for this Work Order.' };
+    return { message: `${this.tabLabel(tab)} Requirement records deleted.` };
   }
 
   // ── Transaction Details ──────────────────────────────────────────────────────────────────────
@@ -767,7 +1238,13 @@ export class FabricYarnRequirementsService {
   async save(workOrderId: number, tab: RequirementTab, userId: number, currentUserId: string) {
     await this.workOrderSvc.get(workOrderId);
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
-    const totals = await this.getTotalRequirements(workOrderId, tab);
+    // Persists at Color-Wise Requirement granularity (getColorWiseRequirements — one real record
+    // per Item+Material Color/Production Color group), NOT getTotalRequirements' own pure
+    // per-Item aggregate (that method now matches the legacy screen's "Total Requirements Table"
+    // exactly — see its own comment — and would silently combine every color into ONE persisted
+    // row, undoing the Color-Wise Requirement Calculation fix and double-counting nothing but also
+    // recording nothing useful once more than one color is in play).
+    const totals = await this.getColorWiseRequirements(workOrderId, tab);
     const requirementType = REQUIREMENT_TYPE[tab];
     const toDb = buildDbValueCoercer(await getColumnTypeMap(this.prisma, REQUIREMENT_TABLE));
 
@@ -792,9 +1269,19 @@ export class FabricYarnRequirementsService {
         // real column is varchar(25) — a real ColorCard code/name can exceed that, which silently
         // aborted this insert loop partway through before this fix; left NULL/unused instead,
         // matching this column's own pre-existing "never written" state).
+        //
+        // RequirementGroup (a real, pre-existing varchar(100) column — confirmed via information_
+        // schema, unused anywhere else in this codebase) stores `t.id`: getTotalRequirements' own
+        // grouping key for this exact row (requirementGroupKey() — see that method), sliced
+        // defensively to fit. This is what lets getSavedRequirements() below match a saved record
+        // back to its own live row on reload/after a Delete with 100% precision, including the
+        // case where neither InventoryId nor ColorCardId is set (nothing else reliable to key on)
+        // — a plain positional/order-based fallback was tried first and rejected: it silently
+        // reassigns a DIFFERENT row's saved id to the wrong live row the moment any ONE row in
+        // that same ambiguous group is deleted, which is exactly wrong.
         await this.prisma.$executeRaw(Prisma.sql`
-          INSERT INTO "MA_Requirement" ("RequirementType", "WorkOrderItemId", "InventoryId", "Quantity", "ColorCardId", "InsertedAt", "InsertedBy", "IsDeleted", "UUID")
-          VALUES (${requirementType}, ${workOrderItemId}, ${inventoryId}, ${quantity}, ${t.colorCardId ?? null}, now(), ${userId}, 0, gen_random_uuid())
+          INSERT INTO "MA_Requirement" ("RequirementType", "WorkOrderItemId", "InventoryId", "Quantity", "ColorCardId", "RequirementGroup", "InsertedAt", "InsertedBy", "IsDeleted", "UUID")
+          VALUES (${requirementType}, ${workOrderItemId}, ${inventoryId}, ${quantity}, ${t.colorCardId ?? null}, ${String(t.id).slice(0, 100)}, now(), ${userId}, 0, gen_random_uuid())
         `);
       }
     }
@@ -803,32 +1290,73 @@ export class FabricYarnRequirementsService {
   }
 
   // Reads back whatever was last Saved (MA_Requirement rows for this Work Order + tab) — used on
-  // reopen, so a reload shows the persisted requirement, not a freshly recomputed one.
+  // reopen, so a reload confirms which records are genuinely persisted (and therefore deletable),
+  // WITHOUT freezing a stale snapshot of everything else.
+  //
+  // BUG FIX (Consumption/Applicable Qty showing 0/blank after reload): MA_Requirement only ever
+  // stored the final combined Quantity — Consumption, Applicable Quantity, Variant-1, Variant-2
+  // were never columns on it at all (see save()'s own INSERT column list, unchanged). The previous
+  // version of this method returned only the bare saved row, and the frontend then hardcoded
+  // consumption/applicableQuantity to 0 and variant1/variant2 to null for every "saved" row — not
+  // because that data was lost, but because it was never being looked up. Consumption is, and
+  // always has been, the real BOM line's own MA_RecipeItem.Quantity; Applicable Quantity is
+  // derived live from the Work Order's CURRENT Manufacturing Quantities. Both are already
+  // recomputed correctly by getRequirementRows() (the exact same source Calculate uses) at any
+  // time — this method now reuses that directly instead of re-deriving/duplicating the math.
+  //
+  // Matching a live row back to its own already-saved record: save() now persists
+  // requirementGroupKey()'s own value into RequirementGroup (a real, pre-existing varchar(100)
+  // column — see save()'s own comment on why this, not Variant1/Variant2, which are varchar(25)
+  // and can't safely hold a real production color name in this app's own data). Since the SAME
+  // key formula is used on both sides, a saved row's RequirementGroup and a live row's freshly-
+  // computed key are directly comparable — exact, deterministic, and correct even after a Delete
+  // (a plain position/order-based fallback was tried first and rejected: deleting any ONE row in
+  // an ambiguous "no InventoryId, no Material Color" group silently reassigns its saved id to the
+  // WRONG live row once matched by position instead of identity). A saved-before-this-fix row has
+  // no RequirementGroup value yet (NULL) and simply won't match until the next Save refreshes it —
+  // no migration, no schema change beyond using an already-existing, already-empty column. A live
+  // row with no matching saved group at all (e.g. a BOM line added since the last Save) is still
+  // shown — with `isSaved: false` — rather than silently hidden; the frontend uses that flag (not
+  // a single page-level "is this whole grid saved" boolean) to decide which specific rows are
+  // deletable/editable.
   async getSavedRequirements(workOrderId: number, tab: RequirementTab) {
     const requirementType = REQUIREMENT_TYPE[tab];
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT req."RecId" as id, req."InventoryId" as "inventoryId", req."Quantity" as quantity,
-             req."ColorCardId" as "colorCardId"
+    const savedRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT req."RecId" as id, req."RequirementGroup" as "requirementGroup"
       FROM "MA_Requirement" req
       WHERE req."RequirementType" = ${requirementType}
         AND req."WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
         AND req."IsDeleted" = 0
     `);
-    const clean = sanitizeRawRow(rows);
-    const names = await this.resolveInventoryNames(clean.map((r: any) => r.inventoryId));
-    const colors = await this.resolveColorCards(clean.map((r: any) => r.colorCardId));
-    return clean.map((r: any) => {
-      // A ColorCardId with no live match (the ColorCard was deleted after this Save) resolves to
-      // null here — a safe, documented fallback, never a crash; the row itself is still fully
-      // readable, it just can no longer show a color label.
-      const color = r.colorCardId ? colors.get(String(r.colorCardId)) : null;
-      return {
-        ...r,
-        inventoryCode: r.inventoryId != null ? names.get(Number(r.inventoryId))?.code ?? null : null,
-        inventoryName: r.inventoryId != null ? names.get(Number(r.inventoryId))?.name ?? null : null,
-        colorCode: color?.code ?? null,
-        colorName: color?.name ?? null,
-      };
+    const clean = sanitizeRawRow(savedRows);
+    if (!clean.length) return []; // nothing saved yet — caller falls back to the live preview grid, unchanged
+
+    const savedIdByGroup = new Map<string, number>();
+    for (const r of clean) {
+      if (!r.requirementGroup) continue; // saved before this fix — no stored key to match against yet
+      if (!savedIdByGroup.has(r.requirementGroup)) savedIdByGroup.set(r.requirementGroup, Number(r.id));
+    }
+
+    const liveRows = await this.getRequirementRows(workOrderId, tab);
+    return liveRows.map((r: any) => {
+      const key = this.requirementGroupKey(r).slice(0, 100); // must match the same slice save() persisted
+      const savedId = savedIdByGroup.get(key);
+      // `lineId` — the real, always-editable BOM line reference (a live row's own id from
+      // getMaterialRequirements/getYarnRequirements — either a real MA_RecipeItem.id, a StyleBomLine
+      // UUID, or a `::`-suffixed composite for a color-expanded common line), captured BEFORE `id`
+      // gets overwritten below. setMaterialColorForLine/setConsumptionForLine both resolve their own
+      // `lineId` param against this exact same live-BOM-line identity (updateRequirementLine's own
+      // `ownLines.some(l => l.id === numericLineId)` check) — never against a MA_Requirement.RecId,
+      // which has no relationship to any BOM line at all. Previously the ONLY id a row carried was
+      // `id`, and `id` gets overwritten to the matched MA_Requirement.RecId the moment a row becomes
+      // saved (`isSaved: true`) — meaning any edit attempted on an already-saved row was silently
+      // sending the WRONG identifier (a MA_Requirement.RecId where a MA_RecipeItem.id was expected),
+      // which is exactly why Consumption editing had to be disabled entirely once a row was saved.
+      // `lineId` fixes that at the root: it always stays the real BOM line reference regardless of
+      // `isSaved`, so an edit made on a saved row can still resolve correctly. Purely additive — `id`
+      // itself is completely unchanged, so Delete (which targets a real MA_Requirement.RecId only
+      // when isSaved) keeps working exactly as before.
+      return { ...r, lineId: r.id, id: savedId ?? r.id, isSaved: savedId != null };
     });
   }
 }

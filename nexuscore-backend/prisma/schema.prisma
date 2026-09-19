@@ -3937,6 +3937,16 @@ model FabricYarnRecipeLine {
   // relation, since IM_Item is a raw-SQL legacy table outside Prisma's own schema; same
   // convention StyleBomLine.fabricInventoryId already uses).
   fabricInventoryId Int
+  // Common/Overall vs Color-Specific — NULL means this row belongs to the Fabric's single Common/
+  // Overall recipe (the default for every color unless overridden); a real ColorCard.id (same FK
+  // convention as StyleBomLine.colorCardId/MA_RecipeItem.ColorCardId — the app's one existing
+  // "Choose Color" master, not a new color system) means this row belongs to that ONE color's own
+  // override recipe. Every pre-existing row (before this column existed) is NULL by definition,
+  // which is exactly "map the existing general recipe to Common/Overall" — no data migration
+  // needed beyond adding the column. A (fabricInventoryId, colorCardId) pair is NOT declared
+  // @@unique here because a recipe is several ROWS (one per Yarn) sharing that pair, same as
+  // fabricInventoryId alone was never unique before this column existed.
+  colorCardId       String?
   // The selected Yarn Card for this row (IM_Item.RecId, same convention). yarnCode/yarnName stay
   // the denormalized display copy set alongside it, same as fabricCode/fabricName on StyleBomLine.
   yarnInventoryId   Int?
@@ -3951,8 +3961,13 @@ model FabricYarnRecipeLine {
   wastePct          Decimal @default(0) @db.Decimal(8, 4)
   dyeWastagePct     Decimal @default(0) @db.Decimal(8, 4)
   sortOrder         Int     @default(0)
+  // Drives the Yarn Recipe list screen's "Last Updated" column (legacy-erp/yarn-recipes) — the
+  // most recent write among a bucket's own rows. Prisma sets/refreshes this automatically on every
+  // create/update through this model, including the delete-then-recreate upsertRecipe() already
+  // does, so no call site needs to set it itself.
+  updatedAt         DateTime @default(now()) @updatedAt
 
-  @@index([fabricInventoryId])
+  @@index([fabricInventoryId, colorCardId])
 }
 
 model StyleWashCare {

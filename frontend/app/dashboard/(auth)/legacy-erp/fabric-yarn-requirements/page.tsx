@@ -33,7 +33,7 @@ import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
-import { RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { RowActionsMenu, PageContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -70,16 +70,35 @@ interface RequirementRow {
   colorCardId?: string | null;
   colorCode?: string | null;
   colorName?: string | null;
+  // Requirement Calculation Unit — resolved server-side from this material's own Unit tab (the
+  // Unit flagged "Requirement Calculation" there — see fabric-yarn-requirements.service.ts's own
+  // resolveRequirementUnits). `null` when that item's Unit tab has no Unit flagged yet — never
+  // guessed/defaulted client-side; see the mapping-warnings banner for which items need attention.
+  requirementUnit?: { id: number; code: string; name: string } | null;
+  // Whether THIS specific row currently has a real, persisted MA_Requirement record behind it
+  // (see fabric-yarn-requirements.service.ts's own getSavedRequirements) — per-row, not a single
+  // page-level flag, since a live-recomputed row with no matching saved group (e.g. a BOM line
+  // added since the last Save) is still shown, just not yet deletable. `id` is the real saved
+  // RecId when true; otherwise a live/BOM-line id with nothing persisted to delete.
+  isSaved?: boolean;
+  // The real, always-editable BOM line reference (MA_RecipeItem.id / StyleBomLine UUID / a
+  // `::`-suffixed composite for a color-expanded common line) — stays the same regardless of
+  // `isSaved`. Material Color/Consumption edits must target THIS, never `id` directly: `id`
+  // becomes the matched MA_Requirement.RecId once a row is saved (needed for Delete), which has no
+  // relationship to any BOM line and would silently fail if sent to setConsumption/setMaterialColor.
+  // Falls back to `id` when absent (the never-saved getGrid() fallback path, where `id` already IS
+  // the real BOM line id — see loadGrids' own comment).
+  lineId?: string | number;
 }
 
+// Matches the legacy reference screen's own "Total Requirements Table" exactly: GROUP BY
+// Inventory Code, SUM(Required), one row per material — no Material Color/Production Color
+// breakdown here (that detail lives in the separate Requirements grid above, which is
+// color-wise already). See fabric-yarn-requirements.service.ts's own getTotalRequirements
+// comment for the full before/after.
 interface TotalRow {
   id: string | number; inventoryId: any; inventoryCode: string | null; inventoryName: string | null; quantity: number;
-  colorCardId?: string | null; colorCode?: string | null; colorName?: string | null;
-  // Server-computed (fabric-yarn-requirements.service.ts's own getTotalRequirements) Grand Total
-  // row for one Item, summed across every one of its own per-color rows above it — present only
-  // for an Item that genuinely has more than one color-split row (a single-row Item's own row
-  // already IS its total). Never derived client-side, so it can never disagree with the DB.
-  isCumulative?: boolean;
+  requirementUnit?: { id: number; code: string; name: string } | null;
 }
 
 interface ManufacturingQtySummary { hasAny: boolean; total: number; byColor: { color: string; quantity: number }[]; extraCuttingPercent?: number }
@@ -161,10 +180,10 @@ export default function FabricYarnRequirementsPage() {
   // ALSO scopes Transaction Details to that item — see transactionFilter/loadTransactions above.
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | number | null>(null);
   const [selectedTotalRowId, setSelectedTotalRowId] = useState<string | number | null>(null);
-  // True only when `requirementRows` is currently showing the last SAVED requirement (its `id` is
-  // then a real MA_Requirement.RecId) rather than a freshly-recomputed live preview (whose `id` is
-  // just a BOM line id, nothing persisted to delete) — see loadGrids' own comment. Gates whether
-  // "Delete" can even be offered on a row.
+  // True once this Work Order/type has been saved at least once (drives the "(saved...)" label
+  // only) — per-row deletability/editability now uses each row's own `isSaved` flag instead (see
+  // loadGrids' own comment), since a saved grid can still contain a genuinely new, not-yet-saved
+  // row (e.g. a BOM line added after the last Save).
   const [requirementRowsAreSaved, setRequirementRowsAreSaved] = useState(false);
   // Delete-one confirmation — holds the exact row pending confirmation (not just a boolean), so
   // the dialog can show which record it's about to delete and the actual delete call has an
@@ -210,28 +229,24 @@ export default function FabricYarnRequirementsPage() {
         legacyErpApi.workOrders.requirements.getMappingWarnings(id, type).catch(() => []),
       ]);
       setMappingWarnings(Array.isArray(warnings) ? warnings : []);
-      // Reload shows the last SAVED requirement (from MA_Requirement) if one exists; otherwise
-      // falls back to the live BOM/Yarn-Recipe-derived rows so a never-yet-saved Work Order still
-      // shows something meaningful in the Requirements grid. MA_Requirement only ever persists
-      // inventoryId+quantity (see save()'s own INSERT column list) — Consumption/Applicable
-      // Quantity/matched Color aren't stored there, only the resulting figure is, so a reloaded
-      // saved row can't show that breakdown; a fresh Calculate always can.
-      const savedList = Array.isArray(saved) ? saved : [];
-      // A row's own `id` is only ever a real, deletable MA_Requirement.RecId in this branch — the
-      // live-preview branch below reuses a BOM line's own id instead, which "Delete" must never
-      // be offered against (see requirementRowsAreSaved's own comment).
+      // Reload shows the last SAVED requirement (from MA_Requirement) if this Work Order/type has
+      // ever been saved; otherwise falls back to the live BOM/Yarn-Recipe-derived rows so a
+      // never-yet-saved Work Order still shows something meaningful. getSaved() now returns the
+      // SAME full-shaped rows Calculate itself shows (Consumption/Applicable Qty/Variant-1/2 are
+      // always live-recomputed from the real BOM + current Manufacturing Quantities — MA_Requirement
+      // itself only ever persisted the final combined Quantity, see save()'s own INSERT column
+      // list), each annotated with `isSaved` — true only for a row that genuinely has a matching
+      // persisted MA_Requirement record (and whose `id` is then that record's real RecId, the only
+      // thing Delete can target); false for a live row with no saved counterpart yet (e.g. a BOM
+      // line added since the last Save). This is what fixes Consumption/Applicable Qty showing
+      // 0/blank after reload — they were never actually lost, just never looked up here before.
+      const savedList = Array.isArray(saved) ? (saved as RequirementRow[]) : [];
       setRequirementRowsAreSaved(savedList.length > 0);
       if (savedList.length) {
-        setRequirementRows(savedList.map((r: any) => ({
-          id: r.id, inventoryId: r.inventoryId, inventoryCode: r.inventoryCode, inventoryName: r.inventoryName,
-          process: null, variant1: null, variant1Explanation: null, variant2: null, variant2Explanation: null,
-          consumption: 0, applicableQuantity: 0, matchedColor: null,
-          quantity: Number(r.quantity) || 0,
-          colorCardId: r.colorCardId ?? null, colorCode: r.colorCode ?? null, colorName: r.colorName ?? null,
-        })));
+        setRequirementRows(savedList);
       } else {
         const grid: any = await legacyErpApi.workOrders.requirements.getGrid(id, type).catch(() => []);
-        setRequirementRows(Array.isArray(grid) ? grid : []);
+        setRequirementRows(Array.isArray(grid) ? grid.map((r: any) => ({ ...r, isSaved: false })) : []);
       }
       setTotalRows(Array.isArray(total) ? total : []);
       setTransactionRows(Array.isArray(transactions) ? transactions : []);
@@ -317,8 +332,8 @@ export default function FabricYarnRequirementsPage() {
   // context menu is bound per-row, and clicking a row also selects it — see the "Requirements"
   // ReportGrid's own onRowClick/getRowActions wiring below).
   const requestDeleteRow = (row: RequirementRow) => {
-    if (!requirementRowsAreSaved) {
-      toast.error("This is a live preview, not a saved record — Save first, or use Calculate to refresh it.");
+    if (!row.isSaved) {
+      toast.error("This row is a live preview, not yet a saved record — Save first, or use Calculate to refresh it.");
       return;
     }
     setSelectedRequirementId(row.id);
@@ -344,8 +359,8 @@ export default function FabricYarnRequirementsPage() {
     if (!workOrderId) return;
     setDeleteBusy(true);
     try {
-      await legacyErpApi.workOrders.requirements.deleteAll(workOrderId);
-      toast.success("All Requirement records deleted");
+      await legacyErpApi.workOrders.requirements.deleteAll(workOrderId, type);
+      toast.success(`All ${title} deleted`);
       setDeleteAllDialogOpen(false);
       await Promise.all([loadGrids(workOrderId), loadLockStatus(workOrderId)]);
     } catch (e: any) {
@@ -423,14 +438,61 @@ export default function FabricYarnRequirementsPage() {
     }
   };
 
+  // Live, client-side recalculation — fires on every keystroke in the Consumption cell (see
+  // requirementColumns below), BEFORE any network round trip. Mirrors the exact same formula the
+  // backend already uses (Requirement = Consumption x Applicable Quantity — see
+  // fabric-yarn-requirements.service.ts's own getMaterialRequirements), never a different one, so
+  // this is a client-side PREVIEW of the same calculation, not a second calculation engine. Updates
+  // Total Requirements too, by the exact delta this edit contributes to that Item's own grouped
+  // total (Total Requirements = SUM of its own detail rows — adjusting one addend by its own delta
+  // is mathematically identical to re-summing the whole group). Matches every OTHER row sharing the
+  // same underlying BOM line too (`lineId`) — a common material's color-expansion all shares ONE
+  // real Consumption value, so editing any one of its color rows must visibly move all of them
+  // together, exactly like the real backend consequence (see setConsumptionForRow's own comment on
+  // why `lineId`, not `id`, identifies "the same line"). This is a PREVIEW ONLY: the eventual
+  // authoritative values always come from the server, via setConsumptionForRow's own onBlur-
+  // triggered persist + loadGrids() refresh below — never drifts, just shows the right number sooner.
+  const applyLocalConsumptionEdit = (row: RequirementRow, newConsumption: number) => {
+    const targetLineId = row.lineId ?? row.id;
+    // Computed up front from `requirementRows` as already captured by this closure — deliberately
+    // NOT inside a setState(prev => ...) updater callback: React does not guarantee an updater
+    // function runs synchronously before the next line of surrounding code, so populating
+    // `deltaByItem` inside one and reading it immediately after (the first version of this fix)
+    // silently read it back empty — confirmed live (RED's own Requirement cell updated correctly,
+    // Total Requirements did not move at all). Plain synchronous array methods have no such
+    // ordering hazard.
+    const deltaByItem = new Map<string, number>();
+    const nextRequirementRows = requirementRows.map((r) => {
+      if ((r.lineId ?? r.id) !== targetLineId) return r;
+      const newQuantity = round(newConsumption * r.applicableQuantity, "quantity");
+      if (r.inventoryId != null) {
+        const key = String(r.inventoryId);
+        deltaByItem.set(key, (deltaByItem.get(key) || 0) + (newQuantity - r.quantity));
+      }
+      return { ...r, consumption: newConsumption, quantity: newQuantity };
+    });
+    setRequirementRows(nextRequirementRows);
+    if (deltaByItem.size) {
+      setTotalRows((prev) => prev.map((t) => {
+        const key = t.inventoryId != null ? String(t.inventoryId) : null;
+        const delta = key ? deltaByItem.get(key) : undefined;
+        return delta ? { ...t, quantity: round(t.quantity + delta, "quantity") } : t;
+      }));
+    }
+  };
+
   // Applies a manually-typed Consumption (this BOM line's own per-unit Quantity) to one
   // Requirements row — same Fabric/Trim-only restriction and implicit fallback-promotion as
-  // Material Color above.
+  // Material Color above. Targets `row.lineId` (the real BOM line reference), NOT `row.id` — once a
+  // row is saved, `id` becomes the matched MA_Requirement.RecId (needed for Delete), which has no
+  // relationship to any BOM line; sending THAT to setConsumption would fail to resolve against
+  // ownLines and throw. `lineId` always stays the real, editable BOM line id regardless of
+  // `isSaved`, which is exactly what makes editing Consumption on an already-saved row work at all.
   const setConsumptionForRow = async (row: RequirementRow, quantity: number) => {
     if (!workOrderId || type === "yarn") return;
     setSettingConsumptionRowId(row.id);
     try {
-      await legacyErpApi.workOrders.requirements.setConsumption(workOrderId, type, row.id, quantity);
+      await legacyErpApi.workOrders.requirements.setConsumption(workOrderId, type, row.lineId ?? row.id, quantity);
       toast.success("Consumption saved");
       await loadGrids(workOrderId);
     } catch (e: any) {
@@ -451,14 +513,14 @@ export default function FabricYarnRequirementsPage() {
     closeTab(tabCtx?.tabKey ?? "/dashboard/legacy-erp/fabric-yarn-requirements");
   };
 
-  // Quick Actions menu ("⋮", top of the page) — WHOLE-REQUIREMENT-TYPE actions only (Lock/Unlock/
-  // Delete All are not tied to any one row). Visibility/disabled state mirrors the backend exactly
-  // (lockStatus fields come straight from the same DB round trip assertMutationAllowed() itself
-  // checks), so this never shows an action the server would refuse — and never hides one it would
-  // actually allow. "Delete" (one record) is intentionally NOT here — see rowActionsFor below; it
-  // used to be, wired to a bulk "delete every saved record of this type" call behind a confirmation
-  // that misleadingly implied it only affected one row. That bulk behavior is gone — this menu no
-  // longer has anything that touches an individual record.
+  // Quick Actions menu ("⋮", top of the page) — WHOLE-REQUIREMENT-TYPE actions (Lock/Unlock/
+  // Delete All are not tied to any one row; they always act on this screen's own Requirement
+  // type). Visibility/disabled state mirrors the backend exactly (lockStatus fields come straight
+  // from the same DB round trip assertMutationAllowed() itself checks), so this never shows an
+  // action the server would refuse — and never hides one it would actually allow. These same
+  // action objects are reused verbatim (not redefined) by rowActionsFor below for the
+  // "Requirements" grid's own right-click menu, per the ERP reference behavior: right-clicking any
+  // row shows Lock/Unlock/Delete(this row)/Delete All together, not just a row-scoped Delete.
   const requirementActions: RowAction[] = [
     {
       key: "lock", label: "Lock Requirement", icon: Lock, onSelect: lockRequirement,
@@ -476,18 +538,54 @@ export default function FabricYarnRequirementsPage() {
     },
   ];
 
-  // Per-row "Delete" — the "Requirements" grid's own right-click menu (see its ReportGrid
-  // instance's getRowActions prop below). Bound to the EXACT row it was invoked on; there is no
-  // separate "currently selected row" the action could drift from (see requestDeleteRow's own
-  // comment). Hidden entirely when the grid isn't showing saved records at all — there's nothing
-  // real to delete yet in that state, so offering a "Delete" that would just 404 serves no one.
-  const rowActionsFor = (row: RequirementRow): RowAction[] => [
-    {
-      key: "delete-row", label: "Delete", icon: Trash2, onSelect: () => requestDeleteRow(row),
-      disabled: !workOrderId || deleteBusy || mutationBlocked, destructive: true,
-      hidden: !requirementRowsAreSaved,
-    },
-  ];
+  // The "Requirements" grid's own right-click menu (ReportGrid's own getRowActions prop below,
+  // which wraps each row in the shared RowContextMenu — see row-actions.tsx; no second menu system
+  // introduced). Lock/Unlock/Delete All are the exact same requirementActions objects the page-level
+  // Quick Actions ("⋮") menu already uses — reused, not duplicated, so both surfaces can never
+  // disagree about what's currently allowed. Delete is bound to the EXACT row that was
+  // right-clicked; there is no separate "currently selected row" the action could drift from (see
+  // requestDeleteRow's own comment). Hidden per-ROW (not the whole grid) when THAT row has no
+  // matching saved record — a live row added since the last Save has nothing real to delete yet,
+  // even while its sibling rows in the same grid already do.
+  const rowActionsFor = (row: RequirementRow): RowAction[] => {
+    const [lockAction, unlockAction, deleteAllAction] = requirementActions;
+    return [
+      lockAction,
+      unlockAction,
+      {
+        key: "delete-row", label: "Delete", icon: Trash2, onSelect: () => requestDeleteRow(row),
+        disabled: !workOrderId || deleteBusy || mutationBlocked, destructive: true,
+        hidden: !row.isSaved,
+      },
+      deleteAllAction,
+    ];
+  };
+
+  // Page-level right-click (PageContextMenu below) — resolves whichever Requirements-grid row (if
+  // any) the browser's native contextmenu event actually landed on, via plain DOM lookup, so the
+  // menu opens correctly ANYWHERE in the workspace (header, Production Quantities, blank space,
+  // Total Requirements, Transaction Details) without depending on ReportGrid's own row click/
+  // selection machinery. Scoped to `[data-requirements-grid]` — the marker div wrapped around ONLY
+  // the "Requirements" grid section below — so a `data-row-id` that happens to appear in a
+  // DIFFERENT ReportGrid instance (Total Requirements/Transaction Details use their own, unrelated
+  // id schemes) can never be misread as a requirement row.
+  const resolveRowFromTarget = (target: HTMLElement | null): RequirementRow | null => {
+    if (!target) return null;
+    const rowEl = target.closest('[data-requirements-grid] [data-row-id]');
+    if (!rowEl) return null;
+    const id = rowEl.getAttribute("data-row-id");
+    return requirementRows.find((r) => String(r.id) === id) ?? null;
+  };
+
+  // Whatever the right-click landed on: a real Requirements row -> that row's own full action set
+  // (Lock/Unlock/Delete/Delete All, same as rowActionsFor); anywhere else (header, blank space,
+  // Production Quantities, Total Requirements, Transaction Details) -> the whole-type actions only
+  // (Lock/Unlock/Delete All — Delete All Records must still be available per the task's own rule;
+  // there is simply no single row to target a per-record Delete at).
+  const getActionsForTarget = (target: HTMLElement | null): RowAction[] => {
+    const row = resolveRowFromTarget(target);
+    return row ? rowActionsFor(row) : requirementActions;
+  };
 
   // Three deliberately separate identities, per BOM line — never mixed with each other:
   // - Variant-1 — the BOM item's own Material Variant/Type (e.g. "Fleece", "Rib", "Twill Tape").
@@ -513,9 +611,12 @@ export default function FabricYarnRequirementsPage() {
         const label = r.colorCode || r.colorName
           ? <span>{r.colorCode || r.colorName}{r.colorCode && r.colorName && r.colorCode !== r.colorName ? ` — ${r.colorName}` : ""}</span>
           : <span className="text-muted-foreground">—</span>;
-        // Editable only on Fabric/Trim's live preview (a saved MA_Requirement row's `id` is not a
-        // resolvable BOM line — see setMaterialColorForLine's own comment) and only when unlocked.
-        if (type === "yarn" || requirementRowsAreSaved) return label;
+        // Editable only for a Fabric/Trim row that is NOT yet saved (its `id` is a real,
+        // resolvable BOM line — see setMaterialColorForLine's own comment). A row that IS saved
+        // has `id` = its MA_Requirement RecId instead, which the BOM-line edit endpoint can't
+        // target — per-row, not gated on the whole grid, so a genuinely new row can still be
+        // edited even while its already-saved siblings can't.
+        if (type === "yarn" || r.isSaved) return label;
         return (
           <button
             type="button"
@@ -534,10 +635,14 @@ export default function FabricYarnRequirementsPage() {
     {
       key: "consumption", label: "Consumption", defaultWidth: 110, align: "right",
       render: (r) => {
-        // Editable only on Fabric/Trim's live preview (see setMaterialColorForRow's own comment
-        // on why a saved MA_Requirement row's `id` isn't a resolvable BOM line) and only when
-        // unlocked — same restrictions as Material Color, since both write to the same BOM line.
-        if (type === "yarn" || requirementRowsAreSaved) return round(r.consumption, "quantity").toLocaleString();
+        // Yarn's own Consumption is derived by exploding the Fabric line's Quantity through its
+        // Yarn Recipe %, not a field of its own to edit — see getYarnRequirements' own comment.
+        // Fabric/Trim Consumption is now editable regardless of `isSaved` (previously blocked once
+        // saved — the actual reported bug: `id` becomes a MA_Requirement.RecId once saved, which
+        // isn't a BOM line reference at all, so editing had to be disabled entirely rather than
+        // send the wrong id; fixed by targeting `lineId` instead — see setConsumptionForRow's own
+        // comment).
+        if (type === "yarn") return round(r.consumption, "quantity").toLocaleString();
         return (
           <input
             type="number"
@@ -547,10 +652,19 @@ export default function FabricYarnRequirementsPage() {
             className="h-7 w-full rounded border border-transparent bg-transparent px-1 text-right font-mono hover:border-input focus:border-input focus:outline-none disabled:opacity-50"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => { if (e.key === "-") e.preventDefault(); }}
-            onBlur={(e) => {
-              const next = normalizeNonNegative(e.target.value);
-              if (next !== r.consumption) setConsumptionForRow(r, next);
-            }}
+            // Immediate, no-round-trip recalculation as the user types — Requirement/Total
+            // Requirements update live (see applyLocalConsumptionEdit's own comment). The input
+            // itself stays uncontrolled (defaultValue, not value) so typing is never fought/reset
+            // mid-keystroke by the resulting re-render of the surrounding cells.
+            onChange={(e) => applyLocalConsumptionEdit(r, normalizeNonNegative(e.target.value))}
+            // Always persists on blur, unconditionally — NOT `next !== r.consumption`. Once
+            // onChange above has already applied the local preview, `r` (captured by this closure
+            // at the render that followed that preview) already reflects the typed value, so that
+            // comparison would compare the typed value against itself and silently skip the actual
+            // persist call on every real edit. Unconditional blur-persist is cheap/idempotent
+            // (setConsumptionForLine just writes the same BOM line Quantity either way) and is what
+            // actually guarantees Consumption survives Save/reload, which is the whole point.
+            onBlur={(e) => setConsumptionForRow(r, normalizeNonNegative(e.target.value))}
           />
         );
       },
@@ -565,6 +679,12 @@ export default function FabricYarnRequirementsPage() {
       ),
     },
     { key: "quantity", label: "Requirement", defaultWidth: 120, align: "right", render: (r) => <span className="font-medium">{round(r.quantity, "quantity").toLocaleString()}</span> },
+    {
+      key: "requirementUnit", label: "Unit", defaultWidth: 90,
+      render: (r) => r.requirementUnit
+        ? <span title={r.requirementUnit.name}>{r.requirementUnit.code}</span>
+        : <span className="text-muted-foreground" title={'No Unit is flagged "Requirement Calculation" for this material yet — set it on the item\'s own Unit tab.'}>—</span>,
+    },
   ];
 
   // Shared by both grids' own onRowClick below — scopes Transaction Details to the clicked
@@ -579,20 +699,14 @@ export default function FabricYarnRequirementsPage() {
     setShowTransactions(true);
   };
 
-  // Grand Total rows (`isCumulative: true`) are server-computed and appended after each Item's
-  // own per-color rows by getTotalRequirements itself — rendered here distinctly (bold, "TOTAL"
-  // in place of a Material Color, no color breakdown to show) within this SAME grid, never a
-  // second table or a second fetch.
   const totalColumns: ReportColumn<TotalRow>[] = [
     { key: "inventoryCode", label: "Inventory Code", defaultWidth: 160, render: (r) => r.inventoryCode || "—" },
     { key: "inventoryName", label: "Inventory Name", defaultWidth: 260, render: (r) => r.inventoryName || "—" },
+    { key: "quantity", label: "Quantity", defaultWidth: 130, align: "right", render: (r) => round(r.quantity, "quantity").toLocaleString() },
     {
-      key: "colorCardId", label: "Material Color", defaultWidth: 140,
-      render: (r) => r.isCumulative
-        ? <span className="font-semibold uppercase tracking-wide text-[10.5px] text-muted-foreground">Cumulative Total</span>
-        : (r.colorCode || r.colorName ? <span>{r.colorCode || r.colorName}{r.colorCode && r.colorName && r.colorCode !== r.colorName ? ` — ${r.colorName}` : ""}</span> : <span className="text-muted-foreground">—</span>),
+      key: "requirementUnit", label: "Unit", defaultWidth: 90,
+      render: (r) => r.requirementUnit ? <span title={r.requirementUnit.name}>{r.requirementUnit.code}</span> : <span className="text-muted-foreground">—</span>,
     },
-    { key: "quantity", label: "Quantity", defaultWidth: 130, align: "right", render: (r) => <span className={r.isCumulative ? "font-semibold" : undefined}>{round(r.quantity, "quantity").toLocaleString()}</span> },
   ];
 
   const transactionColumns: ReportColumn<TransactionRow>[] = [
@@ -612,6 +726,13 @@ export default function FabricYarnRequirementsPage() {
   ];
 
   return (
+    // Right-click ANYWHERE in this workspace (header, Production Quantities, blank space,
+    // Requirements grid, Total Requirements, Transaction Details) opens the SAME context menu —
+    // see getActionsForTarget's own comment. This replaces per-row RowContextMenu as the sole
+    // right-click mechanism on this page (the Requirements ReportGrid below no longer passes
+    // getRowActions) so there is exactly one menu system, never two competing ones fighting over
+    // the same contextmenu event.
+    <PageContextMenu getActions={getActionsForTarget}>
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between gap-3">
         <LegacyErpBreadcrumb trail={[{ label: "Legacy ERP" }, { label: title }]} />
@@ -638,13 +759,15 @@ export default function FabricYarnRequirementsPage() {
         </div>
       )}
 
-      {/* Multi-Color BOM mapping warnings — non-fatal (see the backend's own comment): a BOM
-          line's Garment Color doesn't match any of this Work Order's own Manufacturing Quantity
-          colors, so it fell back to the Work Order's TOTAL quantity instead of one color's own
-          share. Shown so this never happens silently, but never blocks Calculate/Save. */}
+      {/* Non-fatal Requirements warnings (see the backend's own getMappingWarnings comment) — two
+          kinds share this one banner: (1) a BOM line's Garment Color doesn't match any of this
+          Work Order's own Manufacturing Quantity colors, so it fell back to the Work Order's
+          TOTAL quantity instead of one color's own share; (2) a material's Unit tab has no Unit
+          flagged "Requirement Calculation" (or has more than one), so its Unit column above reads
+          "—" / used a deterministic-but-ambiguous pick. Neither ever blocks Calculate/Save. */}
       {mappingWarnings.length > 0 && (
         <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          <p className="font-medium">Color mapping warning{mappingWarnings.length > 1 ? "s" : ""} — verify before relying on these totals:</p>
+          <p className="font-medium">Requirement warning{mappingWarnings.length > 1 ? "s" : ""} — verify before relying on these totals:</p>
           {mappingWarnings.map((w, i) => <p key={i}>{w}</p>)}
         </div>
       )}
@@ -745,7 +868,11 @@ export default function FabricYarnRequirementsPage() {
           show (rows may legitimately be empty), never whether the grid structure itself exists.
           Each ReportGrid already renders its full header/columns even with zero rows, showing
           `emptyLabel` as a single centered row inside the table body, not a page-level swap. */}
-      <div>
+      {/* data-requirements-grid marks this section (and ONLY this one) for getActionsForTarget's
+          own DOM lookup above — Total Requirements/Transaction Details below intentionally carry
+          no such marker, so a right-click landing on one of THEIR rows always falls back to the
+          whole-type action set instead of being misread as a requirement row. */}
+      <div data-requirements-grid="true">
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
           Requirements{requirementRowsAreSaved && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(saved — right-click a row to delete it)</span>}
           <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row to see its Transaction Details below</span>
@@ -756,7 +883,6 @@ export default function FabricYarnRequirementsPage() {
           rows={requirementRows}
           loading={loadingGrids}
           emptyLabel={workOrderId ? "No requirements yet — add BOM lines on this Work Order's own BOM tab first." : "Select an Order No above to load its requirements."}
-          getRowActions={rowActionsFor}
           selectedId={selectedRequirementId}
           onRowClick={(r) => { setSelectedRequirementId(r.id); setSelectedTotalRowId(null); selectTransactionItem(r); }}
         />
@@ -863,7 +989,7 @@ export default function FabricYarnRequirementsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this selected requirement record
+              Are you sure you want to delete this requirement
               {pendingDeleteRow?.inventoryCode ? <> ({pendingDeleteRow.inventoryCode}{pendingDeleteRow.inventoryName ? ` — ${pendingDeleteRow.inventoryName}` : ""})</> : null}?
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -881,7 +1007,7 @@ export default function FabricYarnRequirementsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete All Records?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete all saved Fabric, Trim, and Yarn Requirements for this Work Order?
+              Are you sure you want to delete all saved {title} for this Work Order?
               <br /><span className="font-medium text-destructive">This action cannot be undone.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -894,5 +1020,6 @@ export default function FabricYarnRequirementsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PageContextMenu>
   );
 }

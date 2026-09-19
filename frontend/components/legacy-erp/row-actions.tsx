@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { MoreVertical } from "lucide-react";
 import {
@@ -97,7 +98,52 @@ export function RowActionsMenu({ actions, className }: { actions: RowAction[]; c
   );
 }
 
-function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent, Shortcut }: {
+/** Page-level context menu — right-click ANYWHERE inside `children` opens the same action-list
+ *  chrome as RowContextMenu/RowActionsMenu, but is not tied to any one row's own DOM node. Exists
+ *  because RowContextMenu is deliberately row-scoped (one trigger per `<tr>`, via `asChild`) and
+ *  can't cleanly cover an entire page section (header, blank space, multiple grids) with a single
+ *  trigger while still resolving "which row (if any) was actually under the cursor" — that
+ *  resolution is inherently caller-specific (different pages key their rows differently), so it's
+ *  left to `getActions`, which receives the raw DOM element the browser's native `contextmenu`
+ *  event targeted and returns whatever RowAction[] is appropriate (the caller decides, e.g. via
+ *  `event.target.closest('[data-row-id]')`, whether that target maps to a specific row or none).
+ *  Same RowAction[] shape and same RenderMenuItem rendering as the other two surfaces — one
+ *  declarative action list, now a third surface, not a competing menu system. */
+export function PageContextMenu({ children, getActions, className }: {
+  children: React.ReactNode;
+  getActions: (target: HTMLElement | null) => RowAction[];
+  className?: string;
+}) {
+  // Real state, not a ref — a ref's mutation alone never triggers a re-render, so `items` below
+  // would keep reading whatever value it had at PageContextMenu's OWN last render (effectively
+  // always the initial `null`) no matter how many times the contextmenu event fired; only a state
+  // update forces this component to re-render and recompute `items` with the just-clicked target.
+  // The state update and Radix's own internal open-state change both originate from the SAME
+  // native event dispatch, so React batches them together — `items` is correct before the menu
+  // ever paints.
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  const items = visibleActions(getActions(target));
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className={className} onContextMenu={(e) => setTarget(e.target as HTMLElement)}>
+          {children}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        {items.map((a) => (
+          <RenderMenuItem
+            key={a.key} action={a} Item={ContextMenuItem} Separator={ContextMenuSeparator}
+            Sub={ContextMenuSub} SubTrigger={ContextMenuSubTrigger} SubContent={ContextMenuSubContent}
+            Shortcut={ContextMenuShortcut}
+          />
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+export function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubContent, Shortcut }: {
   action: RowAction;
   Item: typeof ContextMenuItem | typeof DropdownMenuItem;
   Separator: typeof ContextMenuSeparator | typeof DropdownMenuSeparator;

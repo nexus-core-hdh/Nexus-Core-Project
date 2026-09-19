@@ -100,6 +100,54 @@ export class YarnCardSatellitesService {
     return sanitizeRawRow(rows);
   }
 
+  // ── "Requirement Calculation" (UseForRecipe) — exactly-zero-or-one enforcement ─────────────────
+  // Unlike IsMainUnit/"Base Unit" above (which this table already enforces as exactly-one, via the
+  // demote-the-others transactions in create()/update()), UseForRecipe has never had ANY such
+  // guard — nothing previously stopped a second unit (e.g. GRM) from also being flagged once KG
+  // already was. That gap is the real, current root cause of the Requirements Engine ever needing
+  // to handle more than one flagged unit for the same item: the SAVE path itself never rejected it.
+  // Fixed here, at the one real write path both create() and update() below already funnel every
+  // 'unit'-tab write through — checked BEFORE the insert/update statement ever runs (never
+  // write-then-check), so an invalid attempt leaves the database completely unchanged rather than
+  // partially written; a thrown exception here means the calling $queryRaw is never even issued.
+  // Zero flagged units remains fully allowed (existing items may have none configured yet — the
+  // Requirements Engine already handles that with a warning) — this only ever rejects creating a
+  // SECOND simultaneously active (`InUse=1, IsDeleted=0`)+flagged row, never a first. Scoped to
+  // `tab === 'unit'` only; every other satellite tab (prices, warehouse-parameters, ...) untouched.
+  //
+  // "Active" is judged from THIS SAME request's own effective InUse value (falling back to true —
+  // every real caller always sends InUse=true when setting UseForRecipe=true; buildCopyDto in
+  // unit-tab.tsx's own copy-from-Unit-Set flow always does) rather than an extra pre-fetch of the
+  // row's currently-stored InUse for update() — a deliberate, documented simplification: the only
+  // case this could miss is toggling UseForRecipe=true in the SAME request that also explicitly
+  // sets InUse=false, which would make this row inactive anyway and therefore correctly exempt
+  // from the conflict check on its own terms.
+  private async assertSingleRequirementUnit(table: string, itemId: number, excludeLineId: number | null): Promise<void> {
+    const filters = [
+      Prisma.sql`"InventoryId" = ${itemId}`,
+      Prisma.sql`"IsDeleted" = 0`,
+      Prisma.sql`"InUse" = 1`,
+      Prisma.sql`"UseForRecipe" = 1`,
+    ];
+    if (excludeLineId != null) filters.push(Prisma.sql`"RecId" != ${excludeLineId}`);
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "RecId" as id FROM ${Prisma.raw(`"${table}"`)} WHERE ${Prisma.join(filters, ' AND ')} LIMIT 1
+    `);
+    if (rows.length) throw new BadRequestException('Only 1 unit can be selected for Requirement Calculation.');
+  }
+
+  // update() only receives a row's own lineId, not its parent itemId — resolved here so
+  // assertSingleRequirementUnit can scope its sibling check to the right item. Throws the same
+  // "Row not found" NotFoundException doUpdate's own WHERE clause would have produced anyway for a
+  // deleted/foreign lineId, so a bad id fails exactly as before this feature, just slightly earlier.
+  private async resolveItemIdForLine(table: string, lineId: number): Promise<number> {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "InventoryId" as "inventoryId" FROM ${Prisma.raw(`"${table}"`)} WHERE "RecId" = ${lineId} AND "IsDeleted" = 0
+    `);
+    if (!rows.length) throw new NotFoundException('Row not found');
+    return Number(rows[0].inventoryId);
+  }
+
   async create(tab: string, itemId: number, dto: Record<string, any>, userId: number) {
     const cfg = this.config(tab);
     const toDb = await this.toDb(cfg.table);
@@ -111,6 +159,9 @@ export class YarnCardSatellitesService {
     // every conversion computed directly in the new Base Unit from then on.
     const isSettingMainUnit = tab === 'unit' && !!dto.isMainUnit;
     const effective = isSettingMainUnit ? { ...dto, unitFactor: 1, unitDivisor: 1 } : dto;
+    if (tab === 'unit' && !!effective.useForRecipe && effective.inUse !== false) {
+      await this.assertSingleRequirementUnit(cfg.table, itemId, null);
+    }
     const cols = cfg.columns.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const colList = Prisma.raw([`"${cfg.fkColumn}"`, ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
     const values = cols.map((c) => toDb(c, effective[camel(c)]));
@@ -146,6 +197,13 @@ export class YarnCardSatellitesService {
     // Same Base-Unit-must-be-identity enforcement as create() above — see its own comment.
     const isSettingMainUnit = tab === 'unit' && !!dto.isMainUnit;
     const effective = isSettingMainUnit ? { ...dto, unitFactor: 1, unitDivisor: 1 } : dto;
+    // Same "Requirement Calculation" exactly-zero-or-one enforcement as create() above — see
+    // assertSingleRequirementUnit's own comment. `excludeLineId: lineId` so this row's own
+    // (about-to-be-written) flag never conflicts with itself — only a DIFFERENT row already
+    // carrying the flag counts.
+    if (tab === 'unit' && !!effective.useForRecipe && effective.inUse !== false) {
+      await this.assertSingleRequirementUnit(cfg.table, await this.resolveItemIdForLine(cfg.table, lineId), lineId);
+    }
     const cols = cfg.columns.filter((c) => toDb(c, effective[camel(c)]) !== undefined);
     const select = Prisma.raw(['"RecId" as id', ...cfg.columns.map((c) => `"${c}" as "${camel(c)}"`)].join(', '));
     if (!cols.length) {

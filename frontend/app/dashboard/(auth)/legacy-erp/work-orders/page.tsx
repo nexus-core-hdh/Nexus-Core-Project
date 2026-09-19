@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText } from "lucide-react";
+import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
@@ -550,16 +550,28 @@ export default function WorkOrderPage() {
       // Restore the real Style Card link (f.styleCardId — MA_WorkOrder.StyleCardId, carried
       // through the generic `{...emptyHeader, ...wo}` spread above like any other header field)
       // onto row 0's in-memory selection + styleCardFull, fixing "Global Rule #5"'s own
-      // documented gap for the one thing that now actually persists — a reload used to leave
-      // styleCardId permanently blank; styleCode/styleName here only fill in if the row's own
-      // saved text (Explanation/SpecialCode) didn't already provide them, so nothing a user typed
-      // is overwritten.
+      // documented gap for the one thing that now actually persists.
+      //
+      // styleCode/styleName here now ALWAYS prefer the freshly-fetched StyleCard record over
+      // `r.styleCode`/`r.styleName` — this is a real fix, not a style choice: `r.styleName` above
+      // was seeded from `r.explanation` (MA_WorkOrderItem.Explanation), which save() itself writes
+      // as `explanation: r.explanation || r.styleName` — i.e. a PERMANENT SNAPSHOT of whatever the
+      // Style Card's title was at the moment of that save. The previous `r.styleName ||
+      // linkedStyleCard.title` fallback order meant that snapshot, once non-empty, could never be
+      // displaced by a newer title even after a full reload — exactly the reported "Style Name not
+      // reliably shown / stale after the linked Style Card is edited elsewhere" bug. `styleCode`
+      // never showed this symptom only because nothing ever seeds it from a snapshot before this
+      // point (it starts "" above) — flipped here too, for the same correctness reason, not because
+      // it was broken. `r.styleCode || r.styleName` remains the fallback ONLY for when there is no
+      // real link (f.styleCardId falsy) or the fetch genuinely fails (catch block below) — i.e.
+      // exactly "if StyleCard cannot be resolved, don't fabricate a name," never overwriting real
+      // saved text with nothing.
       let linkedStyleCard: any = null;
       if (f.styleCardId) {
         try {
           linkedStyleCard = await plmApi.styleCards.get(f.styleCardId);
           setStyleRows((rs) => rs.map((r, i) => i === 0 ? {
-            ...r, styleCardId: linkedStyleCard.id, styleCode: r.styleCode || linkedStyleCard.styleNumber, styleName: r.styleName || linkedStyleCard.title,
+            ...r, styleCardId: linkedStyleCard.id, styleCode: linkedStyleCard.styleNumber || r.styleCode, styleName: linkedStyleCard.title || r.styleName,
           } : r));
           setStyleCardFull(linkedStyleCard);
         } catch {
@@ -763,6 +775,37 @@ export default function WorkOrderPage() {
       } catch {
         toast.error("Failed to load Style Card");
       }
+    }
+  };
+
+  // Explicit "refresh linked Style Card" — the same fresh-fetch load() already does on mount/
+  // reopen/browser-reload, exposed as an on-demand action so a user who opens the linked Style
+  // Card in its own workspace tab, edits it there, and switches back to this ALREADY-MOUNTED Work
+  // Order tab (which does not itself re-run on tab-switch — this app's workspace context has no
+  // "tab activated" signal to hook into, confirmed via workspace-tab-context.tsx, and adding one
+  // would mean changing shared infrastructure every screen relies on, well beyond this fix's own
+  // scope) can pull the latest Style Code/Name without closing/reopening the tab or reloading the
+  // whole browser. Deliberately narrow: touches ONLY styleCardId/styleCode/styleName/routeCode on
+  // row 0 + styleCardFull (the same fields load()'s own StyleCard-resolution block sets) — never
+  // qtyRows/sizes/prices/customer-order/part-order/BOM or any other Work Order-specific data, so a
+  // Style Card refresh can never clobber real Work Order entries (see this task's own "Style Card
+  // is a source/reference, not a command to overwrite Work Order data" rule).
+  const [refreshingStyle, setRefreshingStyle] = useState(false);
+  const refreshLinkedStyleCard = async () => {
+    const styleCardId = styleRows[0]?.styleCardId || header.styleCardId;
+    if (!styleCardId) return;
+    setRefreshingStyle(true);
+    try {
+      const card: any = await plmApi.styleCards.get(styleCardId);
+      setStyleRows((rs) => rs.map((r, i) => i === 0 ? {
+        ...r, styleCode: card.styleNumber || r.styleCode, styleName: card.title || r.styleName, routeCode: card.bomRouteCode || r.routeCode,
+      } : r));
+      setStyleCardFull(card);
+      toast.success("Style Card data refreshed");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to refresh Style Card");
+    } finally {
+      setRefreshingStyle(false);
     }
   };
 
@@ -1142,7 +1185,7 @@ export default function WorkOrderPage() {
                   <th className={th} style={{ width: 32 }} />
                 </tr></thead>
                 <tbody>
-                  {styleRows.map((r) => (
+                  {styleRows.map((r, rowIndex) => (
                     <tr key={r.id}>
                       <td className={td}>
                         <button type="button" disabled={readOnly} onClick={() => openStyleLookup(r.id)}
@@ -1150,7 +1193,26 @@ export default function WorkOrderPage() {
                           <Search className="h-3 w-3 shrink-0 text-muted-foreground" />{r.styleCode || "Select..."}
                         </button>
                       </td>
-                      <td className={td}><span className="flex h-6 items-center px-1.5 truncate">{r.styleName}</span></td>
+                      <td className={td}>
+                        <span className="flex h-6 items-center gap-1 px-1.5">
+                          <span className="truncate">{r.styleName || (r.styleCardId ? "—" : "")}</span>
+                          {/* Row 0 only — it's the one row whose styleCardId actually persists to
+                              MA_WorkOrder.StyleCardId and that refreshLinkedStyleCard() refreshes
+                              (see its own comment); a later row can carry its own in-memory
+                              styleCardId from the lookup dialog but has no durable link of its own,
+                              so showing this button there would refresh the WRONG row's data. */}
+                          {rowIndex === 0 && r.styleCardId && (
+                            <Button
+                              variant="ghost" size="icon" className="h-5 w-5 shrink-0"
+                              disabled={readOnly || refreshingStyle}
+                              onClick={refreshLinkedStyleCard}
+                              title="Refresh Style Code/Name from the current Style Card record"
+                            >
+                              <RefreshCw className={`h-3 w-3 text-muted-foreground ${refreshingStyle ? "animate-spin" : ""}`} />
+                            </Button>
+                          )}
+                        </span>
+                      </td>
                       <td className={td}><input className={cellInput} value={r.explanation} disabled={readOnly} onChange={(e) => setStyleRows((rs) => rs.map((x) => x.id === r.id ? { ...x, explanation: e.target.value } : x))} /></td>
                       <td className={td}><input className={cellInput} value={r.specialCode} disabled={readOnly} onChange={(e) => setStyleRows((rs) => rs.map((x) => x.id === r.id ? { ...x, specialCode: e.target.value } : x))} /></td>
                       <td className={td}><span className="flex h-6 items-center px-1.5 truncate text-muted-foreground">{r.routeCode}</span></td>

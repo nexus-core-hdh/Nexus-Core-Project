@@ -442,6 +442,30 @@ export const legacyErpApi = {
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/yarn-cards/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/yarn-cards/${id}/attachments/${attId}/content`,
   },
+  // Fabric Planning — read-only cross-Work-Order report over the exact same data Fabric
+  // Requirements/Transaction Details already surface (see fabric-planning.service.ts's own
+  // top comment). All filters optional/server-side.
+  fabricPlanning: {
+    list: (filters?: { orderNo?: string; style?: string; customer?: string; inventory?: string; process?: string; variant?: string; color?: string }) => {
+      const params = new URLSearchParams();
+      if (filters) for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return api.get(`/legacy-erp/fabric-planning${qs ? `?${qs}` : ""}`);
+    },
+  },
+  // Yarn Planning — same read-only cross-Work-Order report shape as fabricPlanning above, but
+  // sourced from FabricYarnRequirementsService.getYarnRequirements (see yarn-planning.service.ts's
+  // own top comment). Transaction Details for a selected row reuses workOrders.requirements.
+  // getTransactions verbatim (below) — that endpoint already takes any inventoryId/colorCardId,
+  // Fabric or Yarn, with no Fabric-specific logic of its own.
+  yarnPlanning: {
+    list: (filters?: { orderNo?: string; style?: string; customer?: string; inventory?: string; process?: string; variant?: string; color?: string }) => {
+      const params = new URLSearchParams();
+      if (filters) for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return api.get(`/legacy-erp/yarn-planning${qs ? `?${qs}` : ""}`);
+    },
+  },
   workOrders: {
     // Plain string keeps the existing search-box call site unchanged; the object form adds the
     // optional styleCardId filter (Style Card's own Order Info tab) without a second method.
@@ -531,7 +555,10 @@ export const legacyErpApi = {
       // Deletes exactly ONE saved Requirement record — recordId is a real MA_Requirement.RecId
       // (getSaved's own `id` field), never a bulk "delete everything of this type" call.
       deleteRecord: (workOrderId: number, type: "fabric" | "trim" | "yarn", recordId: number | string) => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/${recordId}?type=${type}`),
-      deleteAll: (workOrderId: number) => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/all`),
+      // Scoped to exactly ONE Requirement type (whichever screen/tab this is called from) — never
+      // deletes the other two types' records. See the backend's own comment on why this used to
+      // be a bug (deleted all three types at once regardless of `type`).
+      deleteAll: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.delete(`/legacy-erp/work-orders/${workOrderId}/requirements/all?type=${type}`),
       // Manual Material Color selection on this screen (Fabric/Trim only) — lineId is a live
       // requirement row's own `id` (a real MA_RecipeItem.id when the Work Order already owns this
       // lineType's BOM, or a StyleBomLine.id while still on the Style Card fallback; the backend
@@ -560,8 +587,21 @@ export const legacyErpApi = {
     uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`/legacy-erp/fabric-cards/${id}/attachments`, d),
     removeAttachment: (id: number, attId: number) => api.delete(`/legacy-erp/fabric-cards/${id}/attachments/${attId}`),
     attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}/legacy-erp/fabric-cards/${id}/attachments/${attId}/content`,
-    getYarnRecipe: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}/yarn-recipe`),
-    upsertYarnRecipe: (id: number, lines: any[]) => api.put(`/legacy-erp/fabric-cards/${id}/yarn-recipe`, lines),
+    // colorCardId omitted/null -> the Fabric's Common/Overall recipe; a real ColorCard.id -> that
+    // one color's own override recipe (exact match — the Color-Specific-then-Common PRIORITY used
+    // by actual Yarn Requirement calculation lives entirely in the backend's
+    // FabricYarnRecipeService.resolveEffectiveRecipe, never duplicated here).
+    getYarnRecipe: (id: number, colorCardId?: string | null) =>
+      api.get(`/legacy-erp/fabric-cards/${id}/yarn-recipe${colorCardId ? `?colorCardId=${encodeURIComponent(colorCardId)}` : ""}`),
+    upsertYarnRecipe: (id: number, lines: any[], colorCardId?: string | null) =>
+      api.put(`/legacy-erp/fabric-cards/${id}/yarn-recipe${colorCardId ? `?colorCardId=${encodeURIComponent(colorCardId)}` : ""}`, lines),
+    // "The actual available colors/variants for the selected fabric" — see the backend's own
+    // listAvailableColors comment for exactly which colors this includes.
+    listYarnRecipeColors: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}/yarn-recipe/colors`),
+    // One summary row per bucket that actually HAS rows saved (Common if any, plus each color with
+    // a real saved override) — the Yarn Recipe list screen's data source. See the backend's own
+    // listRecipeSummaries comment.
+    getYarnRecipeSummary: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}/yarn-recipe/summary`),
   },
   purchaseOrders: {
     list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected") => {

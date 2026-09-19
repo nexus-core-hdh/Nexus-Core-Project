@@ -26,7 +26,7 @@ export interface ReportColumn<T> {
 
 export function ReportGrid<T extends { id: string | number }>({
   storageKey, columns, rows, loading, emptyLabel,
-  getRowActions, selectedId, onRowClick,
+  getRowActions, selectedId, onRowClick, fixedColumns,
 }: {
   storageKey: string;
   columns: ReportColumn<T>[];
@@ -39,12 +39,19 @@ export function ReportGrid<T extends { id: string | number }>({
   getRowActions?: (row: T) => RowAction[];
   selectedId?: string | number | null;
   onRowClick?: (row: T) => void;
+  // Column keys always rendered first, in this order, never hidden/reordered — the same
+  // order-locked-first convention useGridColumns/ManageColumnsModal already establish elsewhere
+  // (see purchase-order-line-grid.tsx's own FIXED_COLS). Optional and previously always `[]`
+  // (every existing ReportGrid instance on the Fabric/Trim/Yarn Requirements screen has none); a
+  // caller with genuinely identifying leading columns (Fabric Planning's Order No/Fabric) can now
+  // opt in without forking this component.
+  fixedColumns?: string[];
 }) {
   const gridColumnDefs = useMemo<GridColumnDef<string>[]>(
     () => columns.map((c) => ({ key: c.key, label: c.label, defaultWidth: c.defaultWidth, minWidth: c.minWidth ?? 80 })),
     [columns],
   );
-  const gridColumns = useGridColumns<string>({ storageKey, columns: gridColumnDefs });
+  const gridColumns = useGridColumns<string>({ storageKey, columns: gridColumnDefs, fixedColumns });
   const displayColumnDefs = gridColumns.displayColumnDefs;
   const colByKey = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns]);
   const totalTableWidth = gridColumns.totalWidth();
@@ -105,6 +112,7 @@ export function ReportGrid<T extends { id: string | number }>({
               const tr = (
                 <TableRow
                   key={row.id}
+                  data-row-id={String(row.id)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                   className={cn(
                     "[&>td]:border-r [&>td]:h-8",
@@ -128,7 +136,7 @@ export function ReportGrid<T extends { id: string | number }>({
           </TableBody>
         </Table>
       </div>
-      <ManageColumnsModal state={gridColumns.manageColumns} fixedColumns={[]} columns={gridColumnDefs} />
+      <ManageColumnsModal state={gridColumns.manageColumns} fixedColumns={fixedColumns ?? []} columns={gridColumnDefs} />
     </div>
   );
 }

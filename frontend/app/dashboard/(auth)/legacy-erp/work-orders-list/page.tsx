@@ -156,9 +156,14 @@ export default function WorkOrderListPage() {
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
         </div>
-        <Button size="sm" onClick={createNew}>
-          <Plus className="h-3.5 w-3.5 mr-2" />Create New
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/fabric-planning")}>
+            <ClipboardList className="h-3.5 w-3.5 mr-2" />Fabric Planning
+          </Button>
+          <Button size="sm" onClick={createNew}>
+            <Plus className="h-3.5 w-3.5 mr-2" />Create New
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">

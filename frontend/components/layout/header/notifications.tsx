@@ -82,8 +82,11 @@ const Notifications = () => {
       if (error?.isNetworkError) {
         // Silently handle network errors (server not reachable, CORS, etc.)
         setNotifications([]);
-      } else if (error?.status === 404) {
-        // If it's a 404, the route might not be set up yet, just set empty array
+      } else if (error?.status === 404 || error?.status === 401) {
+        // 404: the route might not be set up yet. 401: this is a background poller (see the
+        // setInterval above) — the session token can legitimately expire/become invalid while a
+        // tab is left open between polls, which is an expected, recoverable condition here, not a
+        // bug to alarm the console about. Either way, just show an empty list.
         setNotifications([]);
       } else {
         // Only log unexpected errors
@@ -100,8 +103,10 @@ const Notifications = () => {
       setUnreadCount(data?.count || 0);
     } catch (error: any) {
       // Handle network errors and HTTP errors gracefully
-      if (error?.isNetworkError || error?.status === 404 || error?.status === 500) {
-        // Silently handle network errors, 404 (endpoint not found), or server errors
+      if (error?.isNetworkError || error?.status === 404 || error?.status === 500 || error?.status === 401) {
+        // Silently handle network errors, 404 (endpoint not found), server errors, or 401 (an
+        // expired/invalid session token during this background poll — see loadNotifications'
+        // own comment on why that's expected here, not an error worth logging).
         // Just set count to 0 and don't log to avoid console spam
         setUnreadCount(0);
       } else {

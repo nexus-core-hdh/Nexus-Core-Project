@@ -88,13 +88,38 @@ export class FabricCardController {
   }
 
   // Yarn Recipe Detail — declared before the generic :id/:tab catch-all below (same reason the
-  // attachment routes above are), otherwise it would parse "yarn-recipe" as a satellite tab name.
-  @Get(':id/yarn-recipe') getYarnRecipe(@Param('id', ParseIntPipe) id: number) {
-    return this.yarnRecipe.getRecipe(id);
+  // attachment routes above are), otherwise it would parse "yarn-recipe"/"yarn-recipe/colors" as
+  // a satellite tab name.
+  //
+  // ?colorCardId= selects which bucket: omitted -> the Fabric's Common/Overall recipe; a real
+  // ColorCard.id -> that one color's own override recipe (exact match, no fallback — the dialog
+  // always knows which bucket it's editing). The Color-Specific-then-Common PRIORITY used by
+  // actual Yarn Requirement calculation lives in FabricYarnRecipeService.resolveEffectiveRecipe,
+  // called only from fabric-yarn-requirements.service.ts, not from this route.
+  @Get(':id/yarn-recipe') getYarnRecipe(@Param('id', ParseIntPipe) id: number, @Query('colorCardId') colorCardId?: string) {
+    return this.yarnRecipe.getRecipe(id, colorCardId || null);
   }
 
-  @Put(':id/yarn-recipe') upsertYarnRecipe(@Param('id', ParseIntPipe) id: number, @Body() lines: any[]) {
-    return this.yarnRecipe.upsertRecipe(id, lines);
+  @Put(':id/yarn-recipe') upsertYarnRecipe(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('colorCardId') colorCardId: string | undefined,
+    @Body() lines: any[],
+  ) {
+    return this.yarnRecipe.upsertRecipe(id, lines, colorCardId || null);
+  }
+
+  // Color dropdown source for the Yarn Recipe dialog's "Color-Specific" mode — see
+  // FabricYarnRecipeService.listAvailableColors' own comment for exactly which colors this
+  // includes and why.
+  @Get(':id/yarn-recipe/colors') listYarnRecipeColors(@Param('id', ParseIntPipe) id: number) {
+    return this.yarnRecipe.listAvailableColors(id);
+  }
+
+  // Yarn Recipe list screen (legacy-erp/yarn-recipes) — one summary row per bucket that actually
+  // has rows saved (Common if any, plus each color with a real saved override). See
+  // FabricYarnRecipeService.listRecipeSummaries' own comment.
+  @Get(':id/yarn-recipe/summary') listYarnRecipeSummary(@Param('id', ParseIntPipe) id: number) {
+    return this.yarnRecipe.listRecipeSummaries(id);
   }
 
   // Satellite tabs: prices, warehouse-parameters, barcode, unit, explanation, attributes

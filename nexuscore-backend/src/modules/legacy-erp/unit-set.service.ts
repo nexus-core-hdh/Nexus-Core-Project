@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
@@ -134,9 +134,29 @@ export class UnitSetService {
   // promotion below when that base unit is deleted. This is what every other
   // unit's conversion is expressed against, instead of the Unit Set header's
   // own Code/Name (which is master data, not a convertible unit).
+  // ── "Requirement Calculation" (UseForRecipe) — exactly-zero-or-one enforcement, per Unit Set ──
+  // Same real gap and same fix as IM_ItemUnitItemSize's own assertSingleRequirementUnit (see
+  // yarn-card-satellites.service.ts): nothing previously stopped a second item in the SAME Unit
+  // Set template from also being flagged UseForRecipe=1. Left unguarded here, a bad template would
+  // propagate the same problem to every card that ever copies it (unit-tab.tsx's own
+  // applyUnitSetChange copies each item's useForRecipe flag verbatim). Checked BEFORE the
+  // insert/update, so an invalid attempt leaves this Unit Set's template list unchanged. Zero
+  // flagged items remains fully allowed. MD_UnitSetItem has no InUse column of its own (confirmed
+  // via schema — every non-deleted template row is inherently "available"), so this checks
+  // IsDeleted=0 only, unlike the per-card table's own InUse=1 filter.
+  private async assertSingleRequirementUnit(unitSetId: number, excludeItemId: number | null): Promise<void> {
+    const filters = [Prisma.sql`"UnitSetId" = ${unitSetId}`, Prisma.sql`"IsDeleted" = 0`, Prisma.sql`"UseForRecipe" = 1`];
+    if (excludeItemId != null) filters.push(Prisma.sql`"RecId" != ${excludeItemId}`);
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "RecId" as id FROM "MD_UnitSetItem" WHERE ${Prisma.join(filters, ' AND ')} LIMIT 1
+    `);
+    if (rows.length) throw new BadRequestException('Only 1 unit can be selected for Requirement Calculation.');
+  }
+
   async createItem(unitSetId: number, dto: Record<string, any>, userId: number) {
     const toDb = await this.itemToDb();
     const cols = ITEM_COLUMNS.filter((c) => c !== 'IsMainUnit' && toDb(c, dto[camel(c)]) !== undefined);
+    if (dto.useForRecipe) await this.assertSingleRequirementUnit(unitSetId, null);
     const existing = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT 1 FROM "MD_UnitSetItem" WHERE "UnitSetId" = ${unitSetId} AND "IsDeleted" = 0 LIMIT 1
     `);
@@ -156,6 +176,13 @@ export class UnitSetService {
     // `IsMainUnit` excluded here too — Base Unit status is immutable via edits,
     // only reassigned by removeItem's promotion.
     const cols = ITEM_COLUMNS.filter((c) => c !== 'IsMainUnit' && toDb(c, dto[camel(c)]) !== undefined);
+    if (dto.useForRecipe) {
+      const cur = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT "UnitSetId" as "unitSetId" FROM "MD_UnitSetItem" WHERE "RecId" = ${itemId} AND "IsDeleted" = 0
+      `);
+      if (!cur.length) throw new NotFoundException('Unit not found');
+      await this.assertSingleRequirementUnit(cur[0].unitSetId, itemId);
+    }
     if (!cols.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "MD_UnitSetItem" WHERE "RecId" = ${itemId}`);
       if (!rows.length) throw new NotFoundException('Unit not found');

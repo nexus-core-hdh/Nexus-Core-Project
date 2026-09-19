@@ -419,13 +419,17 @@ export class WorkOrderService {
   private static readonly COLOR_SIZE_SEP = '‖';
 
   // This Work Order's own real, saved Production Colors (Manufacturing Quantities), in the order
-  // each first appears — never invented, never a Style Card colorway. Used only to CYCLE a
-  // multi-color Style BOM material's own colors across those rows at transfer time (see
-  // assignProductionColorCycle below) — the exact same formula work-orders/page.tsx's own
-  // loadBomMaterialGroups already uses for its C/S Details material-column DISPLAY cycling,
-  // applied here so the same assignment is actually PERSISTED (Variant-2) instead of only ever
-  // being a live, unsaved display default.
-  private async resolveProductionColors(workOrderId: number): Promise<string[]> {
+  // each first appears — never invented, never a Style Card colorway. Used to CYCLE a multi-color
+  // Style BOM material's own colors across those rows both at transfer time (see
+  // assignProductionColorCycle below) AND, not private, by
+  // fabric-yarn-requirements.service.ts's own getStyleCardBomLinesAsWorkOrderShape() — the exact
+  // same formula work-orders/page.tsx's own loadBomMaterialGroups already uses for its C/S Details
+  // material-column DISPLAY cycling, reused (never re-implemented a second time) so the LIVE
+  // Requirements preview (before any Style Card line has actually been promoted/saved into the
+  // Work Order's own BOM) resolves each line to the exact same Production Color scope the real,
+  // persisted line would carry the moment a user edits/transfers it — see that method's own
+  // comment for the full reasoning.
+  async resolveProductionColors(workOrderId: number): Promise<string[]> {
     const items = await this.listItems(workOrderId);
     const primaryItemId = items[0]?.id;
     if (primaryItemId == null) return [];
@@ -454,8 +458,9 @@ export class WorkOrderService {
   // (Nth distinct color -> Nth Production Color, wrapping if there are more colors than rows) —
   // the identical rule already used for display-only cycling, now actually persisted. A material
   // with only one color (or none) is untouched — it stays a genuine "common" line applying to
-  // every color, exactly as before.
-  private assignProductionColorCycle(lines: any[], productionColors: string[]): any[] {
+  // every color, exactly as before. Not private — see resolveProductionColors' own comment on the
+  // other reuse site (fabric-yarn-requirements.service.ts's live Style-Card-fallback preview).
+  assignProductionColorCycle(lines: any[], productionColors: string[]): any[] {
     if (!productionColors.length) return lines;
     const byMaterial = new Map<string, any[]>();
     for (const l of lines) {

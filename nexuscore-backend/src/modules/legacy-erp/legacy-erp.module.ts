@@ -56,6 +56,10 @@ import { WorkOrderController } from './work-order.controller';
 import { WorkOrderService } from './work-order.service';
 import { FabricYarnRequirementsController } from './fabric-yarn-requirements.controller';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
+import { FabricPlanningController } from './fabric-planning.controller';
+import { FabricPlanningService } from './fabric-planning.service';
+import { YarnPlanningController } from './yarn-planning.controller';
+import { YarnPlanningService } from './yarn-planning.service';
 import { CuttingCardController } from './cutting-card.controller';
 import { CuttingCardService } from './cutting-card.service';
 import { DeleteDependencyService } from './delete-dependency.service';
@@ -107,6 +111,8 @@ import { ApprovalModule } from '../approval/approval.module';
     // Same reasoning — '/:id/cutting-card' would otherwise be swallowed by the same catch-all.
     CuttingCardController,
     WorkOrderController,
+    FabricPlanningController,
+    YarnPlanningController,
   ],
   providers: [
     WarehouseService,
@@ -143,6 +149,8 @@ import { ApprovalModule } from '../approval/approval.module';
     CuttingCardService,
     DeleteDependencyService,
     ReceiptTraceabilityService,
+    FabricPlanningService,
+    YarnPlanningService,
   ],
   // LegacyMasterLookupService.listItemUnits is the same per-item configured-Unit source Purchase
   // Order/Purchase Receipt already resolve Unit through (unit-conversion.util.ts's

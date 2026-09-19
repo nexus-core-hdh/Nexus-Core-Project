@@ -160,7 +160,19 @@ export default function UnitSetDetailPage() {
   useEffect(() => { loadLookupData(); }, []);
 
   const setField = (k: keyof UnitSetForm, v: any) => setForm((p) => ({ ...p, [k]: v }));
-  const setItemField = (k: keyof UnitItemForm, v: any) => setItemForm((p) => ({ ...p, [k]: v }));
+  // Only 1 item per Unit Set may be flagged "Requirement Calculation" (UseForRecipe) — the same
+  // rule the backend now enforces at Save time (unit-set.service.ts's own
+  // assertSingleRequirementUnit); checked here too for immediate feedback. `items` is the sibling
+  // list with each item's own real useForRecipe flag; the item currently selected/being edited is
+  // excluded from its own conflict check (re-toggling the SAME item is never a "second" selection;
+  // a brand-new not-yet-created item has selectedId === "new", which never matches a real item id).
+  const setItemField = (k: keyof UnitItemForm, v: any) => {
+    if (k === "useForRecipe" && v) {
+      const conflict = items.some((i) => i.id !== selectedId && !!i.useForRecipe);
+      if (conflict) { toast.error("Only 1 unit can be selected for Requirement Calculation."); return; }
+    }
+    setItemForm((p) => ({ ...p, [k]: v }));
+  };
 
   const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
   const isItemDirty = itemLastSavedRef.current !== null && JSON.stringify(itemForm) !== JSON.stringify(itemLastSavedRef.current);

@@ -161,7 +161,20 @@ export function UnitTab({ itemId, readOnly = false, api }: Props) {
     };
   }
 
-  const setRowField = (k: string, v: any) => setRowForm((p) => (p ? { ...p, [k]: v } : p));
+  // Only 1 unit may be flagged "Requirement Calculation" (UseForRecipe) per item — the same rule
+  // the backend now enforces at Save time (yarn-card-satellites.service.ts's own
+  // assertSingleRequirementUnit); checked here too so a user gets immediate feedback instead of a
+  // rejected request after clicking "Update Units". `rawRows` (not `rows`, which only carries
+  // display fields) is the sibling list with each row's own real useForRecipe flag; the row
+  // currently being edited (selectedId) is excluded from its own conflict check — re-toggling the
+  // SAME row is never a "second" selection.
+  const setRowField = (k: string, v: any) => {
+    if (k === "useForRecipe" && v) {
+      const conflict = rawRows.some((r) => r.id !== selectedId && !!r.useForRecipe);
+      if (conflict) { toast.error("Only 1 unit can be selected for Requirement Calculation."); return; }
+    }
+    setRowForm((p) => (p ? { ...p, [k]: v } : p));
+  };
 
   const buildCopyDto = (item: UnitItem) => {
     const n = (v: any) => (v === null || v === undefined ? undefined : Number(v));

@@ -118,13 +118,19 @@ export class FabricYarnRequirementsController {
   // Delete All — declared BEFORE the parameterized :recordId route just below (NestJS/Express
   // resolves DELETE routes in declaration order; :recordId would otherwise swallow a literal
   // "all" segment as an attempted numeric id and fail with 400 before this handler ever ran).
+  // `type` scopes this to exactly the ONE Requirement type the caller's own screen is on — see
+  // the service's own comment on why (this used to delete all three types at once, a real bug).
   // Open to any authenticated user when UNLOCKED (unchanged baseline, no new permission
   // introduced for the unlocked case); the service layer's own assertMutationAllowed() is what
   // blocks this once locked — see fabric-yarn-requirements.service.ts's own comment on why this
   // lives in the service rather than a route guard here, and on why locking now blocks
   // unconditionally (no unlock-permission bypass).
-  @Delete('all') deleteAllRequirements(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
-    return this.svc.deleteAllRequirements(id, userId);
+  @Delete('all') deleteAllRequirements(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('type') type: string | undefined,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.svc.deleteAllRequirements(id, asTab(type), userId);
   }
 
   // Delete ONE selected Requirement record — recordId is a real MA_Requirement.RecId, from
