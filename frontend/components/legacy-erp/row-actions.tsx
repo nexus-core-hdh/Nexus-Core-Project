@@ -33,13 +33,20 @@ export interface RowAction {
   separatorBefore?: boolean;
   /** When set, this action renders as a submenu (e.g. Universal Action Menu's "Return /
    *  Purchase Receipt" -> dynamically loaded related receipts) instead of a plain item;
-   *  `onSelect` is ignored and each child fires its own `onSelect`. */
+   *  `onSelect` is ignored and each child fires its own `onSelect`. Children are rendered via
+   *  RenderMenuItem recursively (see its own comment), so a child may itself set `subActions` to
+   *  open a further-nested submenu (e.g. Subcontractor Transactions -> Dyeing -> Received
+   *  Transactions) — nesting depth is not limited to one level. */
   subActions?: RowAction[];
   /** Display-only keyboard-shortcut hint (e.g. "Ctrl + Shift + W"), right-aligned in the menu
    *  item via ContextMenuShortcut/DropdownMenuShortcut. Purely a visual reminder — the actual
    *  key binding lives wherever it already did (a window keydown listener, etc.); this never
    *  wires up its own handler, so it can't drift into a second code path for the same action. */
   shortcut?: string;
+  /** Native `title` tooltip on the menu item — mainly for a `disabled` action to explain WHY
+   *  (e.g. "No Allocation module exists in this application yet.") instead of a silently inert
+   *  greyed-out row with no explanation. Optional; every existing caller omits it unchanged. */
+  title?: string;
 }
 
 function visibleActions(actions: RowAction[]) {
@@ -165,16 +172,17 @@ export function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubCo
             <Icon className="h-3.5 w-3.5 mr-2" />{action.label}
           </SubTrigger>
           <SubContent className="w-56">
+            {/* Recursive, not a hardcoded leaf-only render — a child that itself sets
+                `subActions` (e.g. a process like "Dyeing" nested under "Subcontractor
+                Transactions") opens as its own further-nested Sub/SubContent instead of
+                silently rendering as an inert plain Item. Depth is unbounded; every existing
+                caller's `subActions` are still plain one-level leaf arrays, so this is a pure
+                capability addition with no behavior change for them. */}
             {children.map((c) => (
-              <Item
-                key={c.key}
-                onSelect={c.onSelect}
-                disabled={c.disabled}
-                className={c.destructive ? "text-destructive focus:text-destructive" : undefined}
-              >
-                <c.icon className="h-3.5 w-3.5 mr-2" />{c.label}
-                {c.shortcut && <Shortcut>{c.shortcut}</Shortcut>}
-              </Item>
+              <RenderMenuItem
+                key={c.key} action={c} Item={Item} Separator={Separator}
+                Sub={Sub} SubTrigger={SubTrigger} SubContent={SubContent} Shortcut={Shortcut}
+              />
             ))}
           </SubContent>
         </Sub>
@@ -187,6 +195,7 @@ export function RenderMenuItem({ action, Item, Separator, Sub, SubTrigger, SubCo
       <Item
         onSelect={action.onSelect}
         disabled={action.disabled}
+        title={action.title}
         className={action.destructive ? "text-destructive focus:text-destructive" : undefined}
       >
         <Icon className="h-3.5 w-3.5 mr-2" />{action.label}

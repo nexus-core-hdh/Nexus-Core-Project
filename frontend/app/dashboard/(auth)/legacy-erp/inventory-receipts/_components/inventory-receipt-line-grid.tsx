@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
@@ -433,6 +434,25 @@ function recalc(row: LineRow): LineRow {
   return { ...row, itemTotal, netItemTotal };
 }
 
+// A Planning row's real, already-resolved context (see lib/legacy-erp/planning-prefill.ts),
+// mapped onto this grid's OWN real LineRow fields — inventoryId/code/name/quantity/unitId/unit/
+// colorCardId/color are the exact same fields a manually looked-up item already sets (see
+// selectItemOnRow below), never a parallel/invented set. `price` is deliberately left blank (a
+// Planning row has a Requirement quantity, never a receipt price — inventing one would be a real
+// fabrication). This grid has no settable Work Order link field of its own on a fresh line (its
+// only "Work Order No" column — workOrderReceiptItemId — is a read-only value resolved server-side
+// via a real MA_WorkOrderItem join, never something a new draft line can set directly), so unlike
+// Purchase Order's own line-from-prefill, no Work Order context is carried here — a genuine,
+// confirmed architectural gap on THIS grid specifically, not an oversight.
+const lineFromPrefill = (p: PlanningPrefillLine): LineRow =>
+  recalc({
+    ...emptyLine(),
+    inventoryId: p.inventoryId, code: p.code ?? "", name: p.name ?? "",
+    quantity: p.quantity ? String(p.quantity) : "",
+    unitId: p.unitId, unit: p.unit ?? "",
+    colorCardId: p.colorCardId, color: p.color ?? "",
+  });
+
 const isBlankLine = (row: LineRow) => !row.inventoryId && !row.code.trim();
 
 /** The subset of legacyErpApi.inventoryReceipts this grid needs — legacyErpApi.receipts(type)
@@ -457,6 +477,12 @@ interface Props {
   /** Which receipt type's API this instance reads/writes through — defaults to Purchase
    *  Receipt's own client, unchanged for every existing caller that doesn't pass this. */
   api?: InventoryReceiptItemsApi;
+  /** Real, already-resolved Planning row context (see lib/legacy-erp/planning-prefill.ts) to seed
+   *  this grid's starting rows with, instead of the usual single blank row — ONLY consulted on a
+   *  brand-new/not-yet-saved receipt (inventoryReceiptId null); an existing receipt always loads
+   *  its own real persisted lines via listItems() as before. Omitted (every existing caller), the
+   *  grid behaves byte-for-byte as before: one blank starter row. */
+  initialLines?: PlanningPrefillLine[];
 }
 
 export interface ImportedPendingLine {
@@ -503,11 +529,24 @@ export interface InventoryReceiptLineGridHandle {
 }
 
 export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandle, Props>(function InventoryReceiptLineGrid(
-  { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts },
+  { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts, initialLines },
   ref,
 ) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
+  // `initialLines` (real Planning row context, see its own Props comment) seeds one real row per
+  // entry instead of the usual single blank one; ignored once `inventoryReceiptId` is set (an
+  // existing receipt's own load effect below replaces `rows` with its real persisted lines
+  // regardless).
+  const [rows, setRows] = useState<LineRow[]>(() => (initialLines?.length ? initialLines.map(lineFromPrefill) : [emptyLine()]));
+  // Safety net for `initialLines` arriving a render or two AFTER this component's own first mount
+  // — see purchase-order-line-grid.tsx's own identical effect for why. Only fires while `rows` is
+  // STILL exactly the untouched single blank starter row, and only for a genuinely new/unsaved
+  // receipt.
+  useEffect(() => {
+    if (inventoryReceiptId != null || !initialLines?.length) return;
+    setRows((prev) => (prev.length === 1 && isBlankLine(prev[0]) ? initialLines.map(lineFromPrefill) : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLines, inventoryReceiptId]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
@@ -719,7 +758,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
   const load = async (idOverride?: number | null) => {
     const id = idOverride ?? inventoryReceiptId;
-    if (!id) { setRows([emptyLine()]); return; }
+    if (!id) {
+      // Don't stomp a Planning-row prefill that the lazy useState initializer (or the safety-net
+      // effect above) already seeded — this effect always runs once on mount too, and would
+      // otherwise immediately reset those real rows back to a blank line.
+      if (!initialLines?.length) setRows([emptyLine()]);
+      return;
+    }
     setLoading(true);
     try {
       const r: any = await api.listItems(id);

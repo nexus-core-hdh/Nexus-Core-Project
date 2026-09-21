@@ -28,6 +28,7 @@ import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
 import { PurchaseOrderLineGrid, type PurchaseOrderLineGridHandle } from "@/components/legacy-erp/purchase-order-line-grid";
+import { consumePlanningPrefillLines } from "@/lib/legacy-erp/planning-prefill";
 import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
 import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
 import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
@@ -77,6 +78,21 @@ export default function PurchaseOrderPage() {
   const searchParams = useWorkspaceSearchParams();
   const initialMode = (searchParams.get("mode") as "view" | "edit" | "create" | null) || "create";
   const initialId = searchParams.get("id");
+  // Planning screens' own right-click receipt menu (Fabric/Yarn/Trim Planning -> Issue Purchase
+  // Order) — real, already-resolved item/quantity/unit/color/Work-Order context, handed off via
+  // lib/legacy-erp/planning-prefill.ts (see that file's own comment). One-shot read via a lazy
+  // useState initializer so the handoff entry is consumed exactly once, same as `initialMode`/
+  // `initialId` above are read exactly once from the same searchParams.
+  // Plain derived value (recomputed each render), NOT a `useState` lazy initializer — this
+  // screen's own `searchParams` (useWorkspaceSearchParams' "frozen snapshot" of the workspace
+  // tab's params) can resolve across a couple of early renders before settling on its final,
+  // correct value (confirmed live: the very first render(s) can still see the pre-navigation
+  // params), and a one-time lazy initializer would permanently lock onto whatever it saw on ITS
+  // one call — including an early, wrong "no prefillHandoff yet" read. A plain derivation is cheap
+  // (consumePlanningPrefillLines is a non-destructive Map peek, see its own comment) and always
+  // reflects the CURRENT searchParams, so it naturally arrives at the correct value once
+  // searchParams itself does, however many renders that takes.
+  const incomingPrefillLines = consumePlanningPrefillLines(searchParams.get("prefillHandoff"));
 
   const [codeInput, setCodeInput] = useState("");
   const [poId, setPoId] = useState<number | null>(null);
@@ -502,7 +518,7 @@ export default function PurchaseOrderPage() {
                 {/* Totals now render inside the grid's own footer (thin top border) — no
                     second card wrapping it here, and no separate totals box duplicating the
                     same three numbers below it. */}
-                <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={poId} readOnly={readOnly} />
+                <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={poId} readOnly={readOnly} initialLines={incomingPrefillLines ?? undefined} />
               </div>
             </TabsContent>
 

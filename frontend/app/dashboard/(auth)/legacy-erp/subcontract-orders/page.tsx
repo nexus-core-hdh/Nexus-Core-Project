@@ -27,6 +27,7 @@ import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
 import { PurchaseOrderLineGrid, type PurchaseOrderLineGridHandle } from "@/components/legacy-erp/purchase-order-line-grid";
+import { consumePlanningPrefillLines } from "@/lib/legacy-erp/planning-prefill";
 import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
 import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
 import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
@@ -78,6 +79,12 @@ export default function SubcontractOrderPage() {
   const searchParams = useWorkspaceSearchParams();
   const initialMode = (searchParams.get("mode") as "view" | "edit" | "create" | null) || "create";
   const initialId = searchParams.get("id");
+  // Planning screens' own right-click receipt menu (Subcontractor Transactions -> a process ->
+  // Order Transactions (Directives)) — see purchase-orders/page.tsx's own identical comment
+  // (plain derived value, not a useState lazy initializer, for the same early-render timing
+  // reason) — same handoff, same PurchaseOrderLineGrid this screen already shares with Purchase
+  // Order.
+  const incomingPrefillLines = consumePlanningPrefillLines(searchParams.get("prefillHandoff"));
 
   const [codeInput, setCodeInput] = useState("");
   const [orderId, setOrderId] = useState<number | null>(null);
@@ -491,7 +498,7 @@ export default function SubcontractOrderPage() {
                   <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
                 </div>
-                <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={orderId} readOnly={readOnly} api={client} />
+                <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={orderId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
               </div>
             </TabsContent>
 

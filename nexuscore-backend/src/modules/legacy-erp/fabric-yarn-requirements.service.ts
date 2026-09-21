@@ -297,29 +297,40 @@ export class FabricYarnRequirementsService {
   // getMaterialRequirements/getYarnRequirements convert the FINAL Requirement quantity into this
   // unit (via that file's own applyUnitFactor) without a second query — this row was already the
   // one being joined to find WHICH unit is flagged "Requirement Calculation" in the first place.
+  // `unitItemId` (additive) — the real MD_UnitSetItem.RecId (u."UnitItemId", the same value the
+  // JOIN below already matches msi."RecId" against) — deliberately NOT the same value as `id`
+  // (IM_ItemUnitItemSize.RecId, this ITEM's own per-unit configuration row). Every existing
+  // consumer of this method only ever reads id/code/name/unitFactor/unitDivisor, so adding this
+  // one field changes nothing about current behavior; it exists so a caller that needs to set a
+  // real transaction LINE's own "Unit" field (Purchase Order/Inventory Receipt line grids, both
+  // of which validate/persist UnitId against MD_UnitSetItem.RecId — confirmed via
+  // legacy-master-lookup.service.ts's own `listItemUnits`, the exact resolver those two grids'
+  // own Unit dropdowns already call) has the correct id to use, instead of the wrong one
+  // (IM_ItemUnitItemSize.RecId is a different table entirely and would silently corrupt the
+  // line's Unit if used here).
   private async resolveRequirementUnits(inventoryIds: (number | null | undefined)[]): Promise<{
-    units: Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number }>;
+    units: Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number; unitItemId: number }>;
     unresolvedIds: Set<number>;
     ambiguousIds: Set<number>;
   }> {
     const distinct = Array.from(new Set(inventoryIds.filter((id): id is number => id != null)));
-    const units = new Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number }>();
+    const units = new Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number; unitItemId: number }>();
     const ambiguousIds = new Set<number>();
     if (distinct.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
         SELECT u."InventoryId" as "inventoryId", u."RecId" as id, msi."UnitCode" as code, msi."UnitName" as name,
-          u."UnitFactor" as "unitFactor", u."UnitDivisor" as "unitDivisor"
+          u."UnitFactor" as "unitFactor", u."UnitDivisor" as "unitDivisor", u."UnitItemId" as "unitItemId"
         FROM "IM_ItemUnitItemSize" u
         JOIN "MD_UnitSetItem" msi ON msi."RecId" = u."UnitItemId"
         WHERE u."InventoryId" IN (${Prisma.join(distinct)})
           AND u."IsDeleted" = 0 AND u."InUse" = 1 AND u."UseForRecipe" = 1
         ORDER BY u."InventoryId", u."RecId"
       `);
-      const byItem = new Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number }[]>();
+      const byItem = new Map<number, { id: number; code: string; name: string; unitFactor: number; unitDivisor: number; unitItemId: number }[]>();
       for (const r of sanitizeRawRow(rows)) {
         const invId = Number(r.inventoryId);
         const list = byItem.get(invId) ?? [];
-        list.push({ id: Number(r.id), code: r.code, name: r.name, unitFactor: Number(r.unitFactor), unitDivisor: Number(r.unitDivisor) });
+        list.push({ id: Number(r.id), code: r.code, name: r.name, unitFactor: Number(r.unitFactor), unitDivisor: Number(r.unitDivisor), unitItemId: Number(r.unitItemId) });
         byItem.set(invId, list);
       }
       for (const [invId, list] of byItem) {
@@ -564,10 +575,12 @@ export class FabricYarnRequirementsService {
         // getTotalRequirements' own comment). `null` when this item's own Unit tab has no Unit
         // flagged "Requirement Calculation" yet — see resolveRequirementUnits' own comment; never
         // guessed/defaulted to Base Unit or any hardcoded code. Response shape kept to exactly
-        // {id,code,name} (unchanged) even though the resolved object also now carries
-        // unitFactor/unitDivisor for the conversion below — those two are an internal calculation
-        // input, not part of this field's own public contract.
-        requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name } : null,
+        // {id,code,name,unitItemId} (unitItemId additive — see resolveRequirementUnits' own
+        // comment: the real MD_UnitSetItem.RecId a Planning-menu-opened transaction line's own
+        // "Unit" field needs, distinct from `id`) even though the resolved object also now
+        // carries unitFactor/unitDivisor for the conversion below — those two stay an internal
+        // calculation input, not part of this field's own public contract.
+        requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name, unitItemId: requirementUnit.unitItemId } : null,
         // Consumption — this BOM line's OWN existing Quantity field, unchanged (still exactly what
         // bom-tab.tsx's own "Quantity" column already saved/shows on the Work Order's BOM tab), the
         // SAME value across every color-expansion of this one line. NEVER converted — see
@@ -851,9 +864,9 @@ export class FabricYarnRequirementsService {
         colorCardId: e.sourceColorCardId,
         colorCode: color?.code ?? null,
         colorName: color?.name ?? null,
-        // Response shape kept to exactly {id,code,name} — see getMaterialRequirements' own
-        // identical comment.
-        requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name } : null,
+        // Response shape kept to exactly {id,code,name,unitItemId} — see getMaterialRequirements'
+        // own identical comment.
+        requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name, unitItemId: requirementUnit.unitItemId } : null,
         garmentColor: e.garmentColor,
         // e.quantity is still the RAW exploded quantity (Fabric Requirement x Wastage x Recipe %,
         // in the source Fabric's own Consumption Unit) — converted here, once, into the YARN item's

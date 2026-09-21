@@ -26,6 +26,7 @@ import { legacyErpApi } from "@/lib/nexuscore-api";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { ReportGrid, type ReportColumn } from "../fabric-yarn-requirements/_components/report-grid";
+import { usePlanningRowSelection } from "../fabric-yarn-requirements/_components/use-planning-row-selection";
 
 interface PlanningRow {
   id: string | number;
@@ -51,7 +52,7 @@ interface PlanningRow {
   colorName: string | null;
   consumption: number;
   applicableQuantity: number;
-  requirementUnit: { id: number; code: string; name: string } | null;
+  requirementUnit: { id: number; code: string; name: string; unitItemId: number } | null;
   required: number;
   purchase: number;
   received: number;
@@ -92,10 +93,12 @@ export default function FabricPlanningPage() {
   const [rows, setRows] = useState<PlanningRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [selectedRow, setSelectedRow] = useState<PlanningRow | null>(null);
-  const [transactionRows, setTransactionRows] = useState<TransactionRow[]>([]);
-  const [loadingTransactions, setLoadingTransactions] = useState(false);
-  const [showTransactions, setShowTransactions] = useState(false);
+  // Shared row-selection + Transaction Details + right-click receipt-menu logic (also used by
+  // Yarn Planning and Trim Planning) — see use-planning-row-selection.ts's own top comment.
+  const {
+    selectedRow, transactionRows, loadingTransactions, showTransactions, selectedIds,
+    selectRow, handleRowContextMenu, getRowActions, clearSelection, closeTransactions,
+  } = usePlanningRowSelection(rows, { path: "/dashboard/legacy-erp/fabric-planning", label: "Fabric Planning", sourceType: "fabric" });
 
   const load = async (f: typeof emptyFilters) => {
     setLoading(true);
@@ -121,25 +124,7 @@ export default function FabricPlanningPage() {
   useEffect(() => { load(emptyFilters); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   const find = () => { setAppliedFilters(filters); load(filters); };
-  const clear = () => { setFilters(emptyFilters); setAppliedFilters(emptyFilters); load(emptyFilters); setSelectedRow(null); setTransactionRows([]); };
-
-  const selectRow = async (row: PlanningRow) => {
-    setSelectedRow(row);
-    setShowTransactions(true);
-    setLoadingTransactions(true);
-    try {
-      const data: any = await legacyErpApi.workOrders.requirements.getTransactions(row.workOrderId, {
-        inventoryId: row.inventoryId,
-        colorCardId: row.colorCardId,
-      });
-      setTransactionRows(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to load Transaction Details");
-      setTransactionRows([]);
-    } finally {
-      setLoadingTransactions(false);
-    }
-  };
+  const clear = () => { setFilters(emptyFilters); setAppliedFilters(emptyFilters); load(emptyFilters); clearSelection(); };
 
   const columns: ReportColumn<PlanningRow>[] = [
     { key: "workOrderNo", label: "Order No", defaultWidth: 120, render: (r) => r.workOrderNo || "—" },
@@ -241,7 +226,7 @@ export default function FabricPlanningPage() {
       <div>
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
           Requirement Planning
-          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row to see its Transaction Details below</span>
+          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row for Transaction Details, ctrl/shift-click to multi-select, right-click for receipt actions</span>
         </p>
         {loading ? (
           <Skeleton className="h-96 w-full" />
@@ -254,7 +239,15 @@ export default function FabricPlanningPage() {
             emptyLabel="No planning rows found — try different filters."
             selectedId={selectedRow?.id ?? null}
             onRowClick={selectRow}
+            selectedIds={selectedIds}
+            onRowContextMenu={handleRowContextMenu}
+            getRowActions={getRowActions}
             fixedColumns={["workOrderNo", "styleCode", "inventoryCode"]}
+            // Bounds this grid's own height so its real horizontal scrollbar sits at the bottom of
+            // the visible grid box instead of the bottom of however many rows this dataset has (see
+            // ReportGrid's own comment on maxHeight) — same fix, same value, as Yarn Planning's main
+            // grid. Transaction Details below is unaffected (it passes nothing).
+            maxHeight="60vh"
           />
         )}
       </div>
@@ -266,7 +259,7 @@ export default function FabricPlanningPage() {
             {selectedRow ? (
               <span className="flex items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
                 Showing receipts for <span className="font-medium">{selectedRow.workOrderNo} — {selectedRow.inventoryCode || selectedRow.inventoryName || "this item"}</span>
-                <button type="button" className="text-muted-foreground hover:text-foreground underline" onClick={() => { setSelectedRow(null); setTransactionRows([]); setShowTransactions(false); }}>Clear</button>
+                <button type="button" className="text-muted-foreground hover:text-foreground underline" onClick={closeTransactions}>Clear</button>
               </span>
             ) : null}
           </div>

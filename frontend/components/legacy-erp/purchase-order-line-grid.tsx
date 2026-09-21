@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
@@ -234,6 +235,28 @@ const emptyLine = (): LineRow => ({
   variant: "",
 });
 
+// A Planning row's real, already-resolved context (see lib/legacy-erp/planning-prefill.ts),
+// mapped onto this grid's OWN real LineRow fields — exactly the same fields a user filled in
+// manually get: inventoryId/code/name/quantity/unitId/unit/colorCardId/color are the SAME real
+// fields the Inventory lookup's own onSelect already sets (see selectItem below), never a
+// parallel/invented set. manufacturingOrderId/manufacturingOrderNo — this grid's own real,
+// pre-existing Work Order link column (IM_OrderReceiptItem.ManufacturingOrderId -> MA_WorkOrder,
+// see this file's own LineRow comment) — is populated with the Planning row's real workOrderId/
+// workOrderNo, the exact relationship that column already exists to capture; `rate`/`price` are
+// deliberately left blank (a Planning row has a Requirement quantity, never a purchase price —
+// inventing one would be a real fabrication this task explicitly forbids).
+const lineFromPrefill = (p: PlanningPrefillLine): LineRow =>
+  recalc({
+    ...emptyLine(),
+    itemType: 1, typeKind: "inventory",
+    inventoryId: p.inventoryId, sourceType: p.sourceType,
+    code: p.code ?? "", name: p.name ?? "",
+    quantity: p.quantity ? String(p.quantity) : "",
+    unitId: p.unitId, unit: p.unit ?? "",
+    colorCardId: p.colorCardId, color: p.color ?? "",
+    manufacturingOrderId: p.workOrderId, manufacturingOrderNo: p.workOrderNo ?? "",
+  });
+
 const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const fmt2 = (n: number | null) => (n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Plain-text display for an editable numeric field's string value — thousands separators,
@@ -272,6 +295,12 @@ interface Props {
   /** Which order type's API this instance reads/writes through — defaults to Purchase Order's
    *  own client, unchanged for every existing caller that doesn't pass this. */
   api?: PurchaseOrderItemsApi;
+  /** Real, already-resolved Planning row context (see lib/legacy-erp/planning-prefill.ts) to seed
+   *  this grid's starting rows with, instead of the usual single blank row — ONLY consulted on a
+   *  brand-new/not-yet-saved order (orderReceiptId null); an existing order always loads its own
+   *  real persisted lines via listItems() as before, this is never consulted then. Omitted (every
+   *  existing caller), the grid behaves byte-for-byte as before: one blank starter row. */
+  initialLines?: PlanningPrefillLine[];
 }
 
 // Imperative handle so the parent transaction screen can trigger the "commit draft lines"
@@ -283,12 +312,27 @@ export interface PurchaseOrderLineGridHandle {
 }
 
 export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Props>(function PurchaseOrderLineGrid(
-  { orderReceiptId, readOnly = false, api = legacyErpApi.purchaseOrders },
+  { orderReceiptId, readOnly = false, api = legacyErpApi.purchaseOrders, initialLines },
   ref,
 ) {
   const [loading, setLoading] = useState(false);
-  // Never starts empty — the screen must always open with one editable row.
-  const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
+  // Never starts empty — the screen must always open with one editable row. `initialLines` (real
+  // Planning row context, see its own Props comment) seeds one real row per entry instead of the
+  // usual single blank one; ignored once `orderReceiptId` is set (an existing order's own load
+  // effect below replaces `rows` with its real persisted lines regardless).
+  const [rows, setRows] = useState<LineRow[]>(() => (initialLines?.length ? initialLines.map(lineFromPrefill) : [emptyLine()]));
+  // Safety net for `initialLines` arriving a render or two AFTER this component's own first
+  // mount (confirmed live: the parent page's own searchParams can take a couple of early renders
+  // to settle before it resolves the real `?prefillHandoff=` value) — the lazy initializer above
+  // would otherwise have already locked onto `[emptyLine()]` by then, with no other trigger to
+  // re-seed. Only fires while `rows` is STILL exactly the untouched single blank starter row (never
+  // overwrites anything the user has already typed into, and never fires again once it has run
+  // once for a given `initialLines` array) and only for a genuinely new/unsaved order.
+  useEffect(() => {
+    if (orderReceiptId != null || !initialLines?.length) return;
+    setRows((prev) => (prev.length === 1 && isBlankLine(prev[0]) ? initialLines.map(lineFromPrefill) : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLines, orderReceiptId]);
   // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
   // Quantity/Unit Price/Forex Unit Price cells below, via the shared decimalKey mechanism.
   const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
@@ -466,7 +510,10 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   const load = async (idOverride?: number | null) => {
     const id = idOverride ?? orderReceiptId;
     if (!id) {
-      setRows([emptyLine()]);
+      // Don't stomp a Planning-row prefill that the lazy useState initializer (or the safety-net
+      // effect above) already seeded — this effect always runs once on mount too, and would
+      // otherwise immediately reset those real rows back to a blank line.
+      if (!initialLines?.length) setRows([emptyLine()]);
       return;
     }
     setLoading(true);

@@ -27,6 +27,7 @@ import { FormTextField as FieldText, FieldLabel } from "@/components/forms/form-
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
 import { InventoryReceiptLineGrid, type InventoryReceiptLineGridHandle, type ImportedPendingLine, type ImportedRelatedLine } from "./_components/inventory-receipt-line-grid";
+import { consumePlanningPrefillLines } from "@/lib/legacy-erp/planning-prefill";
 import { PendingOrdersDialog } from "./_components/pending-orders-dialog";
 import { RelatedReceiptImportDialog } from "./_components/related-receipt-import-dialog";
 import { CustomizedFieldsTab } from "./_components/customized-fields-tab";
@@ -91,6 +92,14 @@ export default function InventoryReceiptPage() {
   const searchParams = useWorkspaceSearchParams();
   const initialMode = (searchParams.get("mode") as "view" | "edit" | "create" | null) || "create";
   const initialId = searchParams.get("id");
+  // Planning screens' own right-click receipt menu (Issue Purchase Receipt / a Subcontractor
+  // Transactions category / Manufacturing / Wholesale / Warehouse Transfer — every action that
+  // opens THIS shared screen) — real, already-resolved item/quantity/unit/color context, handed
+  // off via lib/legacy-erp/planning-prefill.ts (see that file's own comment). Plain derived value
+  // (not a useState lazy initializer) — see purchase-orders/page.tsx's own identical comment on
+  // why: this screen's own searchParams can take a couple of early renders to settle on its final
+  // value, and a one-time initializer would permanently lock onto an early, incomplete read.
+  const incomingPrefillLines = consumePlanningPrefillLines(searchParams.get("prefillHandoff"));
   // Receipt Screen Replication — additive: absent/invalid/"2" all resolve to Purchase Receipt's
   // existing behavior exactly as before. Only an explicit ?receiptType=<other> switches the client
   // to the generic route (receipt-type.controller.ts) and the title/breadcrumb text.
@@ -111,10 +120,26 @@ export default function InventoryReceiptPage() {
   // populated (an existing record with a value already round-trips it via hydrate()/save() below
   // regardless of this flag; only the create-time INPUT was ever missing).
   const isSubcontractReceiptType = SUBCONTRACT_RECEIPT_TYPES.includes(receiptType as any);
+  // Optional incoming prefill for the SAME existing "Subcontract Type" field just above (the
+  // Planning screens' own right-click receipt menu, cascading by real Subcontract Type — see
+  // receipt-menu.ts's own top comment). `subcontractTypeId` is the real MD_SubcontractType.RecId
+  // — the SAME id this field's own MasterAutocompleteField (masterKey="subcontract-type") already
+  // stores here when a user picks a row manually, sourced from the exact same lookup endpoint —
+  // so it's safe to prefill both id and label directly; there is no separate/guessed value here,
+  // just the one real record the user already selected in the menu. `subcontractTypeLabel` alone
+  // (no id) is still accepted as a defensive fallback for a caller that only has the display name,
+  // but every current caller (receipt-menu.ts) always sends both. Ignored entirely for any other
+  // receipt type.
+  const incomingSubcontractTypeId = isSubcontractReceiptType ? searchParams.get("subcontractTypeId") : null;
+  const incomingSubcontractTypeLabel = isSubcontractReceiptType ? searchParams.get("subcontractTypeLabel") : null;
 
   const [codeInput, setCodeInput] = useState("");
   const [receiptId, setReceiptId] = useState<number | null>(null);
-  const [form, setForm] = useState<Record<string, any>>(emptyForm);
+  const [form, setForm] = useState<Record<string, any>>(() =>
+    incomingSubcontractTypeLabel
+      ? { ...emptyForm, subcontractTypeId: incomingSubcontractTypeId ?? "", subcontractTypeLabel: incomingSubcontractTypeLabel }
+      : emptyForm
+  );
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<"view" | "edit" | "create">(initialMode);
@@ -124,7 +149,13 @@ export default function InventoryReceiptPage() {
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
   // Namespaced by receiptType — this same screen serves Purchase Receipt, Purchase Return, and
   // every other "Receipt Screen Replication" type, so each type's New-record draft stays isolated.
-  const { clearDraft } = useDraftForm({ storageKey: `inventoryReceiptDraft_${receiptType}`, enabled: receiptId == null, form, setForm });
+  // Also gated off whenever `incomingSubcontractTypeLabel` is present: arriving here via the
+  // Planning screens' own process-scoped receipt menu (Subcontractor Transactions -> a process ->
+  // a category) is a deliberate "start a fresh record for THIS process" action — restoring an
+  // old, unrelated draft over that explicit prefill (this hook's restore effect resolves
+  // asynchronously, so it would otherwise silently clobber the prefilled `form` state set above
+  // moments after mount) would defeat the whole point of passing the process through.
+  const { clearDraft } = useDraftForm({ storageKey: `inventoryReceiptDraft_${receiptType}`, enabled: receiptId == null && !incomingSubcontractTypeLabel, form, setForm });
   const lineGridRef = useRef<InventoryReceiptLineGridHandle>(null);
   // Pending Orders (Current Account -> right-click) — Purchase Order (type 1) sources Purchase
   // Receipt (type 2); Subcontract Order (type 3 — see order-types.config.ts) sources Outside
@@ -664,7 +695,7 @@ export default function InventoryReceiptPage() {
                     <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
                     <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
                   </div>
-                  <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} />
+                  <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
                 </div>
               )}
             </TabsContent>
@@ -678,7 +709,7 @@ export default function InventoryReceiptPage() {
             ) : (
               <>
                 <TabsContent value="Detail">
-                  <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} />
+                  <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
                 </TabsContent>
 
                 <TabsContent value="Attachments">
