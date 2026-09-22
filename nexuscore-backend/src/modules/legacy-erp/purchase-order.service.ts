@@ -10,6 +10,7 @@ import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit, assertHasBaseUnit, baseQuantitySql, baseQuantityJoinSql, fromBaseQuantitySql } from './unit-conversion.util';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { assertAllNonNegative } from './numeric-guards.util';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 
 // Purchase Order — NOT a new entity. IM_OrderReceipt/IM_OrderReceiptItem are the same
 // generic "goods receipt" spine the legacy system uses for every receipt kind (Purchase
@@ -104,7 +105,16 @@ export class PurchaseOrderService {
     private readonly masterLookupSvc: LegacyMasterLookupService,
     private readonly deleteGuard: DeleteDependencyService,
     private readonly traceability: ReceiptTraceabilityService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Entity name varies by receiptType — Purchase Order and Subcontract Order share this exact
+  // service/table, and Log Tracking must be able to tell them apart (entityType, not just the
+  // shared "IM_OrderReceipt" table name) the same way screenKeyFor() already does for the
+  // ApprovalRequest join above.
+  private entityTypeFor(receiptType: number): string {
+    return receiptType === 3 ? 'SubcontractOrder' : 'PurchaseOrder';
+  }
 
   private async headerToDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, HEADER_TABLE));
@@ -351,10 +361,19 @@ export class PurchaseOrderService {
     }
   }
 
-  async create(dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, numberPrefix: string = 'PO') {
+  async create(dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, numberPrefix: string = 'PO', currentUserId?: string, companyId?: string) {
     await this.assertNoDirectApprovalWrite(dto, receiptType);
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
+
+    const auditCreate = (created: any) => {
+      if (!currentUserId || !companyId) return;
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: screenKeyFor(receiptType),
+        entityType: this.entityTypeFor(receiptType), entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+        documentNo: created.receiptNo, after: { [this.entityTypeFor(receiptType)]: created },
+      });
+    };
 
     if (manualReceiptNo) {
       await this.assertReceiptNoAvailable(manualReceiptNo, receiptType);
@@ -368,7 +387,9 @@ export class PurchaseOrderService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return sanitizeRawRow(rows[0]);
+        const created = sanitizeRawRow(rows[0]);
+        auditCreate(created);
+        return created;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         if (msg.includes('23505') && msg.includes('ReceiptNo')) throw new ConflictException('An order already exists with this number.');
@@ -390,7 +411,9 @@ export class PurchaseOrderService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return sanitizeRawRow(rows[0]);
+        const created = sanitizeRawRow(rows[0]);
+        auditCreate(created);
+        return created;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         const isCodeCollision = msg.includes('23505') && msg.includes('ReceiptNo');
@@ -401,8 +424,8 @@ export class PurchaseOrderService {
     throw new ConflictException('Could not generate a unique Receipt No — please try again.');
   }
 
-  async update(id: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
-    await this.get(id, receiptType);
+  async update(id: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id, receiptType);
     await this.assertNoDirectApprovalWrite(dto, receiptType);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && toDb(c, dto[camel(c)]) !== undefined);
@@ -413,16 +436,38 @@ export class PurchaseOrderService {
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const updated = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId) {
+      const label = this.entityTypeFor(receiptType);
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: screenKeyFor(receiptType),
+        entityType: label, entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
+        documentNo: updated?.receiptNo ?? before.receiptNo,
+        before: { [label]: before }, after: { [label]: updated },
+      });
+    }
+    return updated;
   }
 
-  async remove(id: number, userId: number, receiptType: number = RECEIPT_TYPE) {
-    await this.get(id, receiptType);
+  async remove(id: number, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id, receiptType);
     await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_OrderReceipt', id, tx);
       await tx.$executeRaw`
         UPDATE "IM_OrderReceipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
       `;
+      // Inside the SAME transaction as the delete itself — if the delete guard or the delete
+      // statement above fails/rolls back, this audit write rolls back with it (see
+      // AuditService.record's own `tx` param), unlike create()/update() above which use
+      // recordSafe() after their own write has already committed.
+      if (currentUserId && companyId) {
+        const label = this.entityTypeFor(receiptType);
+        await this.audit.record({
+          userId: currentUserId, companyId, screenKey: screenKeyFor(receiptType),
+          entityType: label, entityId: String(id), action: AUDIT_ACTIONS.DELETE,
+          documentNo: before.receiptNo, before: { [label]: before },
+        }, tx);
+      }
     });
     return { message: 'Deleted' };
   }

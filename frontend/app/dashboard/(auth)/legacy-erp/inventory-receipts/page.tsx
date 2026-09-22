@@ -54,10 +54,13 @@ const CURRENT_ACCOUNTS_LIST_PATH = "/dashboard/legacy-erp/current-accounts-list"
 // InventoryReceiptService methods for every other type (Purchase Return=122, Received
 // Connection Receipt=11, etc.), so this must resolve the same per-type screenKey the backend
 // does instead of the type-2-only constant it used to be.
-const screenKeyFor = (receiptType: number) =>
-  receiptType === 2
-    ? "/dashboard/legacy-erp/inventory-receipts-list"
-    : `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
+//
+// HARDENING FIX: this used to special-case receiptType===2 to the bare, query-less URL. Every
+// real "Inventory Receipts" MenuItem row (including "2 - Purchase Receipt" itself) was seeded
+// with the `?receiptType=N` query string — the bare form matched no real MenuItem/
+// ApprovalConfiguration row, so Approval-Required detection for Purchase Receipt specifically
+// was silently broken. Removed to match inventory-receipt.service.ts's own fix exactly.
+const screenKeyFor = (receiptType: number) => `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
 
 const emptyForm: Record<string, any> = {
   receiptNo: "", receiptDate: new Date().toISOString().slice(0, 10), shipmentDate: "",

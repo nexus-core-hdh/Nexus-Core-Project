@@ -19,6 +19,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ImageOff, ExternalLink, Lock, LockOpen, Trash2, ListX, Search } from "lucide-react";
@@ -28,6 +29,7 @@ import { normalizeNonNegative } from "@/lib/numeric-guards";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
+import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
@@ -64,6 +66,12 @@ interface RequirementRow {
   applicableQuantity: number;
   matchedColor: string | null;
   quantity: number;
+  // Yarn tab ONLY — the real, resolved FabricYarnRecipeLine.percentage this row's Requirement was
+  // computed from (Common or Color-Specific, whichever getYarnRequirements' own
+  // resolveEffectiveRecipe call actually used — see that method's own comment). Display-only: never
+  // recomputed client-side, never fed back into `quantity`. Undefined for Fabric/Trim rows, which
+  // have no recipe % of their own (Consumption there is a real editable BOM Quantity instead).
+  recipePercentage?: number;
   // Multi-Color BOM — Material Color (the BOM line's real "Choose Color" -> ColorCard selection),
   // deliberately separate from `matchedColor`/`variant1` above (the GARMENT color a line applies
   // to). A "BLUE" garment can need "ROYAL BLUE" fleece — these are never the same identity.
@@ -123,6 +131,25 @@ interface TransactionRow {
 
 const attachmentUrl = (a: any) => (String(a?.url || "").startsWith("http") ? a.url : `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || "http://localhost:4000/api/v1"}/${String(a?.url || "").replace(/^\//, "")}`);
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
+
+// Total Requirements, computed from an already-filtered (isSaved-only) row set — mirrors
+// fabric-yarn-requirements.service.ts's own getTotalRequirements grouping EXACTLY (GROUP BY
+// inventoryId, SUM(quantity), one row per distinct material), just over the rows this reload
+// actually shows rather than a second, always-live backend call. This is what keeps Total
+// Requirements from showing a material that was just Deleted but whose OTHER color/scope rows are
+// still saved — the backend's own getTotal() has no concept of isSaved at all (by design, so
+// Calculate's own live preview stays a pure recalculation), so calling it here would silently
+// re-include whatever was just deleted.
+function aggregateSavedTotals(rows: RequirementRow[]): TotalRow[] {
+  const byItem = new Map<string, TotalRow>();
+  for (const r of rows) {
+    const key = r.inventoryId != null ? String(r.inventoryId) : `unresolved:${r.id}`;
+    const existing = byItem.get(key);
+    if (existing) existing.quantity += Number(r.quantity) || 0;
+    else byItem.set(key, { id: key, inventoryId: r.inventoryId, inventoryCode: r.inventoryCode, inventoryName: r.inventoryName, quantity: Number(r.quantity) || 0, requirementUnit: r.requirementUnit ?? null });
+  }
+  return Array.from(byItem.values());
+}
 
 export default function FabricYarnRequirementsPage() {
   const router = useRouter();
@@ -218,12 +245,26 @@ export default function FabricYarnRequirementsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // This screen is opened with an explicit, static workspace-tab title ("Fabric/Yarn/Trim
+  // Requirements" — see work-orders/page.tsx's own openRequirements, the only real caller), which
+  // takes priority over automatic {Screen} [{Record}] composition (resolveWorkspaceTabTitle's own
+  // priority 1 vs 3a) — useWorkspaceRecordLabel alone would silently never take effect here.
+  // useWorkspaceTabTitle is the documented escape hatch for exactly this: a screen whose title
+  // needs a shape the automatic composer doesn't produce anyway. "{Screen} - {Work Order No}"
+  // (plain hyphen) matches this app's own established contextual-tab convention elsewhere (e.g.
+  // "Order - W/O-4293", "Style Cards - CA-00028"), not the bracket form resolveWorkspaceTabTitle's
+  // own automatic composition would use. Real workOrder.workOrderNo only, never a hardcoded WO —
+  // falls back to the plain, unchanged title while no Work Order is loaded (matches this screen's
+  // own pre-existing behavior with `onClear` above), and updates automatically whenever workOrder
+  // changes (switching Order No, loading a different id, a fresh mount after reload/reopen).
+  useWorkspaceTabTitle(workOrder?.workOrderNo ? `${title} - ${workOrder.workOrderNo}` : title);
+
   const loadGrids = async (id: number) => {
     setLoadingGrids(true);
     try {
-      const [saved, total, transactions, mfgQtySummary, warnings] = await Promise.all([
+      const [saved, hasHistory, transactions, mfgQtySummary, warnings] = await Promise.all([
         legacyErpApi.workOrders.requirements.getSaved(id, type).catch(() => []),
-        legacyErpApi.workOrders.requirements.getTotal(id, type).catch(() => []),
+        legacyErpApi.workOrders.requirements.hasHistory(id, type).catch(() => false),
         legacyErpApi.workOrders.requirements.getTransactions(id).catch(() => []),
         legacyErpApi.workOrders.requirements.getManufacturingQuantity(id).catch(() => null),
         legacyErpApi.workOrders.requirements.getMappingWarnings(id, type).catch(() => []),
@@ -241,14 +282,38 @@ export default function FabricYarnRequirementsPage() {
       // line added since the last Save). This is what fixes Consumption/Applicable Qty showing
       // 0/blank after reload — they were never actually lost, just never looked up here before.
       const savedList = Array.isArray(saved) ? (saved as RequirementRow[]) : [];
-      setRequirementRowsAreSaved(savedList.length > 0);
-      if (savedList.length) {
-        setRequirementRows(savedList);
+      const persistedOnly = savedList.filter((r) => r.isSaved);
+      setRequirementRowsAreSaved(persistedOnly.length > 0);
+      if (persistedOnly.length) {
+        // Only rows with a REAL, currently-active MA_Requirement record — never a live-but-not-saved
+        // one (e.g. a BOM line added, or one just Deleted, since the last Save) on a plain reload.
+        // Showing those too was the actual reported bug: after Delete All emptied every saved row,
+        // getSaved() still merged in the full live BOM/Recipe recalculation (with isSaved:false), so
+        // a "deleted" material kept reappearing looking exactly as before — a real, confirmed DB
+        // deletion made invisible by this reload path. Total Requirements is computed HERE, from
+        // this same filtered set (not a second live getTotal() call), so it can never show a
+        // material that isn't currently visible above it either. An explicit Calculate (which also
+        // re-Saves — see calculate()) is the only action allowed to repopulate either grid again.
+        setRequirementRows(persistedOnly);
+        setTotalRows(aggregateSavedTotals(persistedOnly));
+      } else if (hasHistory) {
+        // Was saved before, now explicitly emptied (the last row Deleted, or Delete All) — show
+        // genuinely empty rather than silently regenerating the live calculation the user just
+        // removed. See hasSavedHistory's own backend comment for why this needs its own signal,
+        // distinct from "never saved at all" below (both otherwise collapse to the same `[]`).
+        setRequirementRows([]);
+        setTotalRows([]);
       } else {
-        const grid: any = await legacyErpApi.workOrders.requirements.getGrid(id, type).catch(() => []);
+        // Genuinely never saved for this Work Order/type — existing live-preview fallback,
+        // unchanged, so a Work Order that has never had Calculate/Save run still shows something
+        // meaningful to work from.
+        const [grid, total]: [any, any] = await Promise.all([
+          legacyErpApi.workOrders.requirements.getGrid(id, type).catch(() => []),
+          legacyErpApi.workOrders.requirements.getTotal(id, type).catch(() => []),
+        ]);
         setRequirementRows(Array.isArray(grid) ? grid.map((r: any) => ({ ...r, isSaved: false })) : []);
+        setTotalRows(Array.isArray(total) ? total : []);
       }
-      setTotalRows(Array.isArray(total) ? total : []);
       setTransactionRows(Array.isArray(transactions) ? transactions : []);
       setMfgQty(mfgQtySummary as ManufacturingQtySummary | null);
       // A reload can legitimately drop the row the user had selected (it may no longer be saved,
@@ -635,14 +700,27 @@ export default function FabricYarnRequirementsPage() {
     {
       key: "consumption", label: "Consumption", defaultWidth: 110, align: "right",
       render: (r) => {
-        // Yarn's own Consumption is derived by exploding the Fabric line's Quantity through its
-        // Yarn Recipe %, not a field of its own to edit — see getYarnRequirements' own comment.
+        // Yarn has no Consumption BOM field of its own — a Yarn row's real Requirement is Fabric
+        // Requirement x its resolved Yarn Recipe %, not a per-unit Quantity anyone types (see
+        // getYarnRequirements' own comment). This column shows that real, resolved recipe %
+        // (r.recipePercentage — the actual FabricYarnRecipeLine.percentage used for THIS row's own
+        // calculation, Common or Color-Specific per resolveEffectiveRecipe) instead of the
+        // meaningless "0" `r.consumption` always was for Yarn (that field is simply absent from
+        // getYarnRequirements' own response shape). Display-only — Requirement (`quantity`) below is
+        // still computed and persisted exactly as before; this never recalculates it.
+        if (type === "yarn") {
+          // "recipe-percent" — the same Decimal Parameters key the Yarn Recipe dialog itself
+          // already rounds this exact field with (see yarn-recipe-dialog.tsx's own comment), not
+          // the unrelated "quantity" key.
+          return r.recipePercentage != null
+            ? `${round(r.recipePercentage, "recipe-percent").toLocaleString()}%`
+            : <span className="text-muted-foreground">—</span>;
+        }
         // Fabric/Trim Consumption is now editable regardless of `isSaved` (previously blocked once
         // saved — the actual reported bug: `id` becomes a MA_Requirement.RecId once saved, which
         // isn't a BOM line reference at all, so editing had to be disabled entirely rather than
         // send the wrong id; fixed by targeting `lineId` instead — see setConsumptionForRow's own
         // comment).
-        if (type === "yarn") return round(r.consumption, "quantity").toLocaleString();
         return (
           <input
             type="number"
@@ -684,6 +762,26 @@ export default function FabricYarnRequirementsPage() {
       render: (r) => r.requirementUnit
         ? <span title={r.requirementUnit.name}>{r.requirementUnit.code}</span>
         : <span className="text-muted-foreground" title={'No Unit is flagged "Requirement Calculation" for this material yet — set it on the item\'s own Unit tab.'}>—</span>,
+    },
+    {
+      // Per-row Saved/Not Saved status — real `r.isSaved` (already resolved by loadGrids' own
+      // getSaved() call, see that method's own comment), not a page-level flag. Added because a
+      // genuinely deleted row (its MA_Requirement record soft-deleted — see confirmDeleteRow) is
+      // NEVER removed from this grid — it must keep showing (this grid always reflects the real,
+      // live material need from the current BOM + Yarn Recipe, same as before Delete existed;
+      // deleting a saved snapshot must never make an actual, still-needed material silently vanish
+      // from the Requirements grid or Total Requirements, which is why Total Requirements is
+      // deliberately unaffected by this — see its own comment). Without this column, Delete's real,
+      // successful effect (soft-deleting the persisted MA_Requirement record) was completely
+      // invisible: the exact same row kept rendering with identical values, giving no indication
+      // anything happened, which is the actual "toast says deleted but rows still present" report
+      // this fix addresses — the row was always genuinely deleted at the DB layer (confirmed via a
+      // live re-fetch), just with zero visible change. "Not Saved" also correctly, honestly covers
+      // a genuinely new row that has never been saved yet — the same real state either way.
+      key: "isSaved", label: "Status", defaultWidth: 100,
+      render: (r) => r.isSaved
+        ? <Badge variant="secondary" className="text-[11px] font-normal">Saved</Badge>
+        : <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground" title="No current saved record for this row — Save to persist it.">Not Saved</Badge>,
     },
   ];
 
@@ -735,7 +833,16 @@ export default function FabricYarnRequirementsPage() {
     <PageContextMenu getActions={getActionsForTarget}>
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between gap-3">
-        <LegacyErpBreadcrumb trail={[{ label: "Legacy ERP" }, { label: title }]} />
+        <LegacyErpBreadcrumb trail={[
+          { label: "Legacy ERP" },
+          { label: title },
+          // Same "append the loaded record as a final breadcrumb segment" convention
+          // purchase-orders/page.tsx's own breadcrumb already uses (`...(poId ? [{ label:
+          // form.receiptNo }] : [])`) — real workOrder.workOrderNo only, omitted entirely until a
+          // Work Order is actually loaded (matches the Order No field right below, which shows the
+          // same blank state via onClear).
+          ...(workOrder?.workOrderNo ? [{ label: workOrder.workOrderNo }] : []),
+        ]} />
         <RowActionsMenu actions={requirementActions} />
       </div>
 

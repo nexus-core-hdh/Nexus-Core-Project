@@ -74,9 +74,14 @@ export class ReceiptTypeController {
     return this.svc.get(id, cfg.receiptType);
   }
 
-  @Post() create(@Param('receiptType') receiptType: string, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
+  @Post() create(
+    @Param('receiptType') receiptType: string,
+    @Body() dto: Record<string, any>,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
+  ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.create(dto, Number(userId) || 1, cfg.receiptType, cfg.numberPrefix);
+    return this.svc.create(dto, Number(userId) || 1, cfg.receiptType, cfg.numberPrefix, userId, companyId);
   }
 
   @Put(':id') async update(
@@ -84,14 +89,20 @@ export class ReceiptTypeController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.update(id, dto, Number(userId) || 1, cfg.receiptType);
+    return this.svc.update(id, dto, Number(userId) || 1, cfg.receiptType, userId, companyId);
   }
 
-  @Delete(':id') async remove(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
+  @Delete(':id') async remove(
+    @Param('receiptType') receiptType: string,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
+  ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.remove(id, Number(userId) || 1, cfg.receiptType);
+    return this.svc.remove(id, Number(userId) || 1, cfg.receiptType, userId, companyId);
   }
 
   // Approval — mirrors InventoryReceiptController's own 4 routes exactly, delegating to the

@@ -77,9 +77,9 @@ export class OrderTypeController {
     return this.svc.get(id, cfg.receiptType);
   }
 
-  @Post() create(@Param('receiptType') receiptType: string, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
+  @Post() create(@Param('receiptType') receiptType: string, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
     const cfg = this.resolve(receiptType);
-    return this.svc.create(dto, Number(userId) || 1, cfg.receiptType, cfg.numberPrefix);
+    return this.svc.create(dto, Number(userId) || 1, cfg.receiptType, cfg.numberPrefix, userId, companyId);
   }
 
   @Put(':id') update(
@@ -87,14 +87,15 @@ export class OrderTypeController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.update(id, dto, Number(userId) || 1, cfg.receiptType);
+    return this.svc.update(id, dto, Number(userId) || 1, cfg.receiptType, userId, companyId);
   }
 
-  @Delete(':id') remove(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
+  @Delete(':id') remove(@Param('receiptType') receiptType: string, @Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
     const cfg = this.resolve(receiptType);
-    return this.svc.remove(id, Number(userId) || 1, cfg.receiptType);
+    return this.svc.remove(id, Number(userId) || 1, cfg.receiptType, userId, companyId);
   }
 
   // Approval (General Settings -> Approval Configuration) — no-op (existing workflow

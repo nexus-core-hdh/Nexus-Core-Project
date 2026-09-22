@@ -3098,7 +3098,24 @@ model Notification {
 }
 
 // ── AUDIT ─────────────────────────────────────────────────────────────────────
-
+// Centralized, project-wide audit trail. NOT new: this is the same AuditLog table
+// ApprovalService/plm-cards.service.ts/cutting.service.ts already write to directly
+// (entityType/entityId/action/changedBy/oldValues/newValues/ipAddress) — extended additively
+// here (every new column nullable, every existing row/reader keeps working unchanged) so the new
+// generic AuditService (src/modules/audit) can record full CRUD lifecycle events, not just
+// approval decisions/status changes, without a second/competing table.
+//
+// companyId/screenKey/module/menuTitle/documentNo/parent*/correlationId are all denormalized AT
+// WRITE TIME (resolved once by AuditService from MenuItem/the caller's own already-loaded data)
+// rather than joined live on every read — an audit row must keep describing what was true when
+// the event happened even if the document, its MenuItem, or its screen title later changes.
+//
+// oldValues/newValues (unchanged Json? columns) are also where the "complete document snapshot"
+// (Section 4 of the framework's own spec) lives: a CREATE/UPDATE event's caller may store a
+// structured, multi-section object here — e.g. `{ IMReceipt: {...}, IMReceiptItem: [...],
+// IMReceiptItemVariant: [...] }` — instead of a single flat row, so Log Details can render the
+// real root+child+variant document exactly as it existed at that moment, generically (one grid
+// section per top-level key), with no per-entity-type hardcoding and no extra query when opened.
 model AuditLog {
   id         String   @id @default(uuid())
   entityType String
@@ -3110,7 +3127,39 @@ model AuditLog {
   ipAddress  String?
   createdAt  DateTime @default(now())
 
+  // Tenant scope — always the real acting user's own User.companyId, never client-supplied.
+  // Required for every row the new AuditService writes; nullable only so the handful of
+  // pre-existing rows written before this migration (which never captured it) remain valid.
+  companyId String?
+  // The MenuItem.href the action was performed from (same screenKey convention
+  // ApprovalConfiguration/ScreenParameter already use) — lets Log Tracking filter/join back to a
+  // real screen. moduleName/menuTitle are that MenuItem's own group/title, captured at write time.
+  screenKey  String?
+  moduleName String?
+  menuTitle  String?
+  // Business-friendly identifiers, additive alongside the existing generic entityType/entityId —
+  // a real document number (e.g. "PO-7", "W/O-000211") and, for a child/detail-level event, the
+  // owning parent document's own identity. All optional: a master-data or non-document entity
+  // simply omits them.
+  documentNo       String?
+  parentEntityType String?
+  parentEntityId   String?
+  parentDocumentNo String?
+  // Groups every AuditLog row written by ONE logical operation (e.g. a Purchase Order's header
+  // insert + its line inserts) so Log Tracking/Log Details can show "everything this single
+  // action touched" without guessing from timestamps alone.
+  correlationId String?
+
   user User @relation(fields: [changedBy], references: [id])
+
+  @@index([companyId])
+  @@index([entityType, entityId])
+  @@index([screenKey])
+  @@index([action])
+  @@index([createdAt])
+  @@index([correlationId])
+  @@index([documentNo])
+  @@index([changedBy])
 }
 
 // ── APPROVAL FRAMEWORK ───────────────────────────────────────────────────────

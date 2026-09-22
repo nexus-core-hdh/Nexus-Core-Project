@@ -13,6 +13,8 @@ import type { RowAction } from "@/components/legacy-erp/row-actions";
 //   Ctrl+Alt+R   Disapprove (Reject)
 //   Ctrl+Alt+P   Pending Orders
 //   Ctrl+Alt+X   Delete            (Ctrl+Alt+Delete itself is reserved by the OS)
+//   F4           Log Details       (Log Tracking screen — matches the reference legacy ERP's own
+//                                   F4 binding; F4 was previously free/unused anywhere in this app)
 //
 // Typing in a text input/textarea/select is left alone except for Ctrl+S (an app-wide "save
 // this record" convention users expect to work anywhere on the screen); every other combo
@@ -24,6 +26,7 @@ const KEY_MAP: Record<string, string> = {
   "ctrl+alt+r": "disapprove",
   "ctrl+alt+p": "pending-orders",
   "ctrl+alt+x": "delete",
+  "f4": "log-details",
 };
 
 function comboFor(e: KeyboardEvent): string | null {

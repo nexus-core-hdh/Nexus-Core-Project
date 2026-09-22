@@ -52,6 +52,7 @@ import { LegacyErpModule } from './modules/legacy-erp/legacy-erp.module';
 import { ApprovalModule } from './modules/approval/approval.module';
 import { GeneralSettingsModule } from './modules/general-settings/general-settings.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { AuditModule } from './modules/audit/audit.module';
 
 @Module({
   imports: [
@@ -118,6 +119,12 @@ import { UploadModule } from './modules/upload/upload.module';
 
     // Generic file upload (uploadApi.uploadSingle) — backs PLM Attachments/Picture Gallery
     UploadModule,
+
+    // Centralized, project-wide Audit / Log Tracking framework — extends the existing AuditLog
+    // table (ApprovalModule/plm-cards.service.ts/cutting.service.ts already write to it), not a
+    // second/competing history mechanism. Exports AuditService so any other module's service can
+    // inject it and call record() at its own existing CRUD transaction boundary.
+    AuditModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

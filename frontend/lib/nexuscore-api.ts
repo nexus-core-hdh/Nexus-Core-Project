@@ -531,6 +531,10 @@ export const legacyErpApi = {
       getGrid: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements?type=${type}`),
       getSaved: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/saved?type=${type}`),
       getTotal: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/total?type=${type}`),
+      // Real (regardless-of-IsDeleted) existence check on MA_Requirement — lets the Requirements
+      // screen's own reload tell "never saved" apart from "saved, then explicitly Delete/Delete-All'd"
+      // instead of silently falling back to a live BOM/Recipe preview of what was just deleted.
+      hasHistory: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/has-history?type=${type}`),
       getManufacturingQuantity: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/manufacturing-quantity`),
       // Multi-Color BOM mapping validation — additive, non-fatal warnings only (see the service's
       // own comment on why Calculate/Save never throw for this).
@@ -977,6 +981,64 @@ export const approvalApi = {
     api.get(`/approval/history?screenKey=${encodeURIComponent(screenKey)}&transactionId=${encodeURIComponent(String(transactionId))}`),
   status: (screenKey: string, transactionId: string | number) =>
     api.get(`/approval/status?screenKey=${encodeURIComponent(screenKey)}&transactionId=${encodeURIComponent(String(transactionId))}`),
+};
+
+// Audit / Log Tracking — company scope is always resolved server-side from the caller's own
+// token (see audit.controller.ts's own comment); every filter here is optional and purely
+// narrows within that scope.
+export interface AuditLogFilters {
+  from?: string;
+  to?: string;
+  userId?: string;
+  module?: string;
+  screenKey?: string;
+  action?: string;
+  entityType?: string;
+  documentNo?: string;
+  entityId?: string;
+  correlationId?: string;
+  skip?: number;
+  take?: number;
+  sortDir?: 'asc' | 'desc';
+}
+
+export interface AuditLogRow {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  changedBy: string;
+  companyId: string | null;
+  screenKey: string | null;
+  moduleName: string | null;
+  menuTitle: string | null;
+  documentNo: string | null;
+  parentEntityType: string | null;
+  parentEntityId: string | null;
+  parentDocumentNo: string | null;
+  correlationId: string | null;
+  ipAddress: string | null;
+  oldValues: unknown;
+  newValues: unknown;
+  createdAt: string;
+  user: { name: string | null; email: string | null } | null;
+}
+
+export const auditApi = {
+  list: (filters?: AuditLogFilters) => {
+    const qs = new URLSearchParams();
+    if (filters) {
+      for (const [k, v] of Object.entries(filters)) {
+        if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+      }
+    }
+    const suffix = qs.toString();
+    return api.get<{ rows: AuditLogRow[]; total: number; skip: number; take: number }>(`/audit/logs${suffix ? `?${suffix}` : ''}`);
+  },
+  getById: (id: string) => api.get<AuditLogRow>(`/audit/logs/${id}`),
+  listModules: () => api.get<string[]>('/audit/logs/filters/modules'),
+  listActions: () => api.get<string[]>('/audit/logs/filters/actions'),
+  listEntityTypes: () => api.get<string[]>('/audit/logs/filters/entity-types'),
 };
 
 // BPM helpers

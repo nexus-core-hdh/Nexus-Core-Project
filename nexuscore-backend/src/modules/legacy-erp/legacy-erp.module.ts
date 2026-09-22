@@ -65,6 +65,7 @@ import { CuttingCardService } from './cutting-card.service';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { ApprovalModule } from '../approval/approval.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
@@ -80,6 +81,10 @@ import { ApprovalModule } from '../approval/approval.module';
     // Centralized approval policy engine — InventoryReceiptService (Purchase Receipt) consumes
     // ApprovalService rather than having its own hardcoded approval rules.
     ApprovalModule,
+    // Centralized Audit / Log Tracking — WorkOrderService/PurchaseOrderService/
+    // InventoryReceiptService/FabricYarnRequirementsService call AuditService.record() at their
+    // own existing create/update/delete points instead of each writing AuditLog rows by hand.
+    AuditModule,
   ],
   controllers: [
     WarehouseController,

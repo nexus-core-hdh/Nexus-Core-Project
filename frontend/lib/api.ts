@@ -4131,17 +4131,21 @@ export const menuItemsApi = {
 };
 
 // Chat API functions
+// Routed at communication.controller.ts's real, already-implemented endpoints
+// (@Controller('communication'), @Get/@Post 'chats', @Get 'chats/:id') — NOT a
+// stub (unlike e.g. mailApi's '/mail', which stubs.controller.ts covers with
+// always-empty responses). There is no 'chats' stub, so a bare '/chats' 404s.
 export const chatApi = {
   // Get all chats for a user
   getChats: () => {
-    return apiRequest(`/chats`, {
+    return apiRequest(`/communication/chats`, {
       headers: getAuthHeaders(),
     });
   },
 
   // Get a single chat by ID
-  getChatById: (id: number) => 
-    apiRequest(`/chats/${id}`, {
+  getChatById: (id: number) =>
+    apiRequest(`/communication/chats/${id}`, {
       headers: getAuthHeaders(),
     }),
 
@@ -4153,14 +4157,18 @@ export const chatApi = {
     name?: string;
     companyId?: number;
     branchId?: number;
-  }) => apiRequest('/chats', {
+  }) => apiRequest('/communication/chats', {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
   }),
 
   // Update a chat (e.g., archive/unarchive)
-  updateChat: (id: number, data: { isArchived?: boolean }) => 
+  // NOTE: communication.controller.ts has no PUT 'chats/:id' route and
+  // communication.service.ts has no matching method — this call 404s regardless
+  // of prefix; a real fix needs a new backend endpoint, left as-is here rather
+  // than invented.
+  updateChat: (id: number, data: { isArchived?: boolean }) =>
     apiRequest(`/chats/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
@@ -4168,6 +4176,8 @@ export const chatApi = {
     }),
 
   // Add users to a group chat
+  // NOTE: same as updateChat above — no 'chats/:id/add-users' backend route or
+  // service method exists; 404s regardless of prefix.
   addUsersToGroup: (chatId: number, data: { userIds: number[]; shareHistory?: boolean }) =>
     apiRequest(`/chats/${chatId}/add-users`, {
       method: 'POST',

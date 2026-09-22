@@ -20,6 +20,13 @@ export class FabricYarnRequirementsController {
     return this.svc.getSavedRequirements(id, asTab(type));
   }
 
+  // See hasSavedHistory's own comment — lets the frontend's reload tell "never saved" apart from
+  // "saved, then explicitly Deleted/Delete-All'd" instead of silently regenerating a live preview
+  // of the material the user just deleted.
+  @Get('has-history') hasSavedHistory(@Param('id', ParseIntPipe) id: number, @Query('type') type?: string) {
+    return this.svc.hasSavedHistory(id, asTab(type));
+  }
+
   @Get('total') getTotalRequirements(@Param('id', ParseIntPipe) id: number, @Query('type') type?: string) {
     return this.svc.getTotalRequirements(id, asTab(type));
   }
@@ -129,8 +136,9 @@ export class FabricYarnRequirementsController {
     @Param('id', ParseIntPipe) id: number,
     @Query('type') type: string | undefined,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.deleteAllRequirements(id, asTab(type), userId);
+    return this.svc.deleteAllRequirements(id, asTab(type), userId, companyId);
   }
 
   // Delete ONE selected Requirement record — recordId is a real MA_Requirement.RecId, from
@@ -140,7 +148,8 @@ export class FabricYarnRequirementsController {
     @Param('recordId', ParseIntPipe) recordId: number,
     @Query('type') type: string | undefined,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.deleteRequirement(id, asTab(type), recordId, userId);
+    return this.svc.deleteRequirement(id, asTab(type), recordId, userId, companyId);
   }
 }

@@ -10,6 +10,7 @@ import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { RELATED_IMPORT_SOURCE_TYPES, getReceiptTypeConfig } from './receipt-types.config';
 import { getOrderTypeConfig } from './order-types.config';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -18,10 +19,19 @@ import { getOrderTypeConfig } from './order-types.config';
 // whenever they're wired to the approve/reject routes too — not activated for them yet.
 // Exported for inventory-card.service.ts's stockLateral() — Stock on Hand must be gated by
 // this exact same screenKey formula, not a second copy of it.
-export const screenKeyFor = (receiptType: number) =>
-  receiptType === RECEIPT_TYPE
-    ? '/dashboard/legacy-erp/inventory-receipts-list'
-    : `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
+//
+// HARDENING FIX (audit framework Section 7 follow-up): this used to special-case
+// receiptType===RECEIPT_TYPE(2) to the bare "/dashboard/legacy-erp/inventory-receipts-list"
+// (no query string). That bare form matches NO real MenuItem row — every real "Inventory
+// Receipts" MenuItem, INCLUDING "2 - Purchase Receipt" itself, was seeded with the
+// `?receiptType=N` query string (confirmed live: MenuItem, ApprovalConfiguration and
+// ApprovalRequest all only ever contain the query-string form, zero rows with the bare form).
+// The special case was therefore never a real screen identifier — it silently broke
+// isApprovalRequired()/AuditService.resolveScreen() lookups for Purchase Receipt specifically
+// (both do an exact-match findFirst against MenuItem.href/ApprovalConfiguration.screenKey).
+// Removing it — Purchase Receipt now resolves the exact same way every other receipt type
+// already does, with zero new MenuItem rows and zero schema change.
+export const screenKeyFor = (receiptType: number) => `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
 
 // Inventory Receipt — NOT the same entity as Purchase Order. IM_Receipt/IM_ReceiptItem is a
 // separate, pre-existing "physical goods receipt" spine (DriverName/PlateNumber/IsApproved —
@@ -140,7 +150,36 @@ export class InventoryReceiptService {
     private readonly masterLookupSvc: LegacyMasterLookupService,
     private readonly deleteGuard: DeleteDependencyService,
     private readonly traceability: ReceiptTraceabilityService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Real document-type label ("Purchase Receipt", "Purchase Return", "Outside Process Receive
+  // Receipt", ...) for the Audit snapshot's section headings — every ReceiptType this service
+  // backs shares the same physical IM_Receipt/IM_ReceiptItem/IM_ReceiptItemVariant tables (see
+  // this file's own top comment), so entityType itself always stays "IM_Receipt"; only the
+  // human-readable label varies, resolved from the same RECEIPT_TYPES config the rest of this
+  // file already uses (never hardcoded here).
+  private labelFor(receiptType: number): string {
+    return receiptType === RECEIPT_TYPE ? 'Purchase Receipt' : (getReceiptTypeConfig(receiptType)?.label ?? 'Inventory Receipt');
+  }
+
+  // Full document snapshot — root (IM_Receipt) + detail lines (IM_ReceiptItem) + variant
+  // breakdown (IM_ReceiptItemVariant), matching this exact reference document's real structure
+  // (see this file's own header comment). Composed once at write time (not a live requery) so
+  // Log Details always shows what the document looked like AT THAT MOMENT, per audit.service.ts's
+  // own "snapshot at write time" design. listItems() already resolves variants per line, so this
+  // needs no extra query beyond the one it already makes.
+  private async snapshotDocument(id: number, receiptType: number) {
+    const label = this.labelFor(receiptType);
+    const header = await this.get(id, receiptType).catch(() => null);
+    const items = await this.listItems(id).catch(() => []);
+    const variants = items.flatMap((it: any) => (it.variants ?? []).map((v: any) => ({ ...v, inventoryReceiptItemId: it.id })));
+    return {
+      [`${label} (IM_Receipt)`]: header,
+      [`${label} Details (IM_ReceiptItem)`]: items.map(({ variants: _v, ...rest }: any) => rest),
+      [`${label} Variants (IM_ReceiptItemVariant)`]: variants,
+    };
+  }
 
   private async headerToDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, HEADER_TABLE));
@@ -338,7 +377,14 @@ export class InventoryReceiptService {
     return this.approve(id, String(userId), undefined, receiptType);
   }
 
-  async create(dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, numberPrefix: string = 'IR') {
+  async create(
+    dto: Record<string, any>,
+    userId: number,
+    receiptType: number = RECEIPT_TYPE,
+    numberPrefix: string = 'IR',
+    currentUserId?: string,
+    companyId?: string,
+  ) {
     // Same bypass guard as update() below — a direct API call can't create a record already
     // marked approved when this screen requires approval. No-op (unchanged) otherwise.
     if (dto.isApproved !== undefined && await this.approvalSvc.isApprovalRequired(screenKeyFor(receiptType))) {
@@ -360,7 +406,20 @@ export class InventoryReceiptService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
+        const result = await this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
+        if (currentUserId && companyId) {
+          await this.audit.recordSafe({
+            userId: currentUserId,
+            companyId,
+            screenKey: screenKeyFor(receiptType),
+            entityType: 'IM_Receipt',
+            entityId: String(rows[0].id),
+            action: AUDIT_ACTIONS.CREATE,
+            documentNo: rows[0].receiptNo,
+            after: { [`${this.labelFor(receiptType)} (IM_Receipt)`]: result },
+          });
+        }
+        return result;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         if (msg.includes('23505') && msg.includes('ReceiptNo')) throw new ConflictException('An inventory receipt already exists with this number.');
@@ -380,7 +439,20 @@ export class InventoryReceiptService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
+        const result = await this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
+        if (currentUserId && companyId) {
+          await this.audit.recordSafe({
+            userId: currentUserId,
+            companyId,
+            screenKey: screenKeyFor(receiptType),
+            entityType: 'IM_Receipt',
+            entityId: String(rows[0].id),
+            action: AUDIT_ACTIONS.CREATE,
+            documentNo: rows[0].receiptNo,
+            after: { [`${this.labelFor(receiptType)} (IM_Receipt)`]: result },
+          });
+        }
+        return result;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         const isCodeCollision = msg.includes('23505') && msg.includes('ReceiptNo');
@@ -397,8 +469,15 @@ export class InventoryReceiptService {
   // silently filtered every non-Purchase-Receipt record out, 404ing update() for every other
   // type even though the caller (receipt-type.controller.ts) had already verified ownership
   // correctly. Threading receiptType through here too closes that gap.
-  async update(id: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
-    await this.get(id, receiptType);
+  async update(
+    id: number,
+    dto: Record<string, any>,
+    userId: number,
+    receiptType: number = RECEIPT_TYPE,
+    currentUserId?: string,
+    companyId?: string,
+  ) {
+    const before = await this.get(id, receiptType);
     // Approval Configuration — when approval is required for this screen, IsApproved can only
     // be set via the dedicated approve() flow below (permission-checked, pending-state-checked,
     // self-approval-checked). Closes the exact bypass this framework exists to close: a plain
@@ -421,18 +500,52 @@ export class InventoryReceiptService {
     // see autoApproveIfNotRequired's own comment. Saving/updating an already-Approved record
     // just re-flips the same IsApproved=1 it already had, so this is safe to run unconditionally
     // on every header Save while approval isn't required.
-    return this.autoApproveIfNotRequired(id, userId, receiptType);
+    const result = await this.autoApproveIfNotRequired(id, userId, receiptType);
+    if (currentUserId && companyId) {
+      const label = this.labelFor(receiptType);
+      await this.audit.recordSafe({
+        userId: currentUserId,
+        companyId,
+        screenKey: screenKeyFor(receiptType),
+        entityType: 'IM_Receipt',
+        entityId: String(id),
+        action: AUDIT_ACTIONS.UPDATE,
+        documentNo: (result as any)?.receiptNo ?? before.receiptNo,
+        before: { [`${label} (IM_Receipt)`]: before },
+        after: { [`${label} (IM_Receipt)`]: result },
+      });
+    }
+    return result;
   }
 
   // Same bug/fix as update() above — remove() also self-checks existence via this.get(id).
-  async remove(id: number, userId: number, receiptType: number = RECEIPT_TYPE) {
+  async remove(id: number, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
     await this.get(id, receiptType);
+    // Full document snapshot (header + items + variants) captured BEFORE the soft-delete, per
+    // Section 3/4's "DELETE -> last valid state before deletion" requirement — this is the exact
+    // reference-screenshot proof case (Inventory Receipt / Details / Variants as separate
+    // sections), so the snapshot must exist even though the row itself becomes IsDeleted=1 right
+    // after.
+    const snapshot = currentUserId && companyId ? await this.snapshotDocument(id, receiptType) : null;
     await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_Receipt', id, tx);
       await tx.$executeRaw`
         UPDATE "IM_Receipt" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
       `;
     });
+    if (currentUserId && companyId && snapshot) {
+      const header = snapshot[`${this.labelFor(receiptType)} (IM_Receipt)`] as any;
+      await this.audit.recordSafe({
+        userId: currentUserId,
+        companyId,
+        screenKey: screenKeyFor(receiptType),
+        entityType: 'IM_Receipt',
+        entityId: String(id),
+        action: AUDIT_ACTIONS.DELETE,
+        documentNo: header?.receiptNo,
+        before: snapshot,
+      });
+    }
     return { message: 'Deleted' };
   }
 

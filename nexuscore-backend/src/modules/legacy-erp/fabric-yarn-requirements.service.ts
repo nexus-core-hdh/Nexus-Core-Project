@@ -7,6 +7,8 @@ import { WorkOrderService } from './work-order.service';
 import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 import { assertNonNegative } from './numeric-guards.util';
 import { toBaseAmount, applyUnitFactor } from './unit-conversion.util';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { WORK_ORDER_SCREEN_KEY } from './work-order.service';
 
 // Fabric/Trim/Yarn Requirements — NOT a new entity. Reuses the exact same Work Order BOM data
 // (MA_Recipe/MA_RecipeItem, already served by WorkOrderService.listBom) as its Requirements
@@ -49,6 +51,7 @@ export class FabricYarnRequirementsService {
     private readonly prisma: PrismaService,
     private readonly workOrderSvc: WorkOrderService,
     private readonly yarnRecipeSvc: FabricYarnRecipeService,
+    private readonly audit: AuditService,
   ) {}
 
   // Extra Cutting % -> Will Be Cut — MA_WorkOrder.Quantity2 ("Cutting Extra" on the header Detail
@@ -342,29 +345,58 @@ export class FabricYarnRequirementsService {
     return { units, unresolvedIds, ambiguousIds };
   }
 
+  // ── Unit Code resolution (portable unit identity across items) ─────────────────────────────
+  // MD_UnitSetItem.RecId (a "UnitItemId") is NOT a universal unit identifier — it is a row inside
+  // ONE Unit Set template (MD_UnitSetItem.UnitSetId), and different Items can be configured off
+  // DIFFERENT Unit Sets (confirmed live: Fabric-00007's own "GRM" is MD_UnitSetItem RecId 10 under
+  // UnitSetId 5, while Yarn-00003/00004/00008's own "grm" is a COMPLETELY DIFFERENT row, RecId 3
+  // under UnitSetId 1 — same real unit, two different template rows/ids). A BOM line's own UnitId
+  // (e.g. a Fabric line's Consumption Unit) is only ever meaningful as an id WITHIN that line's own
+  // Item's Unit Set — reusing it as-is to look up a DIFFERENT Item's own IM_ItemUnitItemSize row
+  // (as getYarnRequirements must, since a Yarn Requirement's target Item is the Yarn, not the
+  // source Fabric) can silently miss entirely and leave the quantity unconverted (see
+  // convertRawRequirementToUnit's own comment on the fallback this caused). UnitCode is the one
+  // portable identity across Unit Sets a real user actually intends ("GRM means GRM no matter whose
+  // Unit Set the row lives in") — resolved here, batched, from MD_UnitSetItem itself (no join to
+  // any Item), and matched case-insensitively since real data already has both "GRM" and "grm".
+  private async resolveUnitCodes(unitItemIds: (number | null | undefined)[]): Promise<Map<number, string>> {
+    const distinct = Array.from(new Set(unitItemIds.filter((id): id is number => id != null).map(Number)));
+    const map = new Map<number, string>();
+    if (!distinct.length) return map;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "RecId" as id, "UnitCode" as code FROM "MD_UnitSetItem" WHERE "RecId" IN (${Prisma.join(distinct)})
+    `);
+    for (const r of sanitizeRawRow(rows)) map.set(Number(r.id), String(r.code || '').toUpperCase());
+    return map;
+  }
+
   // ── Final Requirement Unit Conversion ───────────────────────────────────────────────────────
-  // Resolves, batched across every distinct (InventoryId, UnitItemId) pair a page of BOM lines
-  // needs, that exact IM_ItemUnitItemSize row's own UnitFactor/UnitDivisor — used ONLY to convert a
-  // BOM line's own Consumption (entered in whatever Unit its own UnitId names — MA_RecipeItem.
-  // UnitId/StyleBomLine.unitId, e.g. GRM) into that item's Base Unit, as the first hop of the same
-  // "Base Unit + Unit Conversion" two-hop pattern unit-conversion.util.ts's own convertToBaseUnit/
-  // convertFromBaseUnit already establish (Consumption's own Unit -> Base -> Requirement
-  // Calculation Unit). The second hop reuses resolveRequirementUnits' own already-resolved
-  // unitFactor/unitDivisor directly (see convertRawRequirementToUnit below) rather than a second
-  // query, since that row was already fetched for an unrelated reason (finding which unit is
-  // flagged "Requirement Calculation"). No new table, no new column — the exact same
-  // IM_ItemUnitItemSize row every other Unit-tab consumer already reads.
+  // Resolves, batched across every distinct target Item a page of BOM/recipe lines needs, that
+  // Item's OWN IM_ItemUnitItemSize rows — used ONLY to convert a line's own Consumption (entered in
+  // whatever Unit its own UnitId names — MA_RecipeItem.UnitId/StyleBomLine.unitId, e.g. GRM) into
+  // that item's Base Unit, as the first hop of the same "Base Unit + Unit Conversion" two-hop
+  // pattern unit-conversion.util.ts's own convertToBaseUnit/convertFromBaseUnit already establish
+  // (Consumption's own Unit -> Base -> Requirement Calculation Unit). The second hop reuses
+  // resolveRequirementUnits' own already-resolved unitFactor/unitDivisor directly (see
+  // convertRawRequirementToUnit below) rather than a second query, since that row was already
+  // fetched for an unrelated reason (finding which unit is flagged "Requirement Calculation"). No
+  // new table, no new column — the exact same IM_ItemUnitItemSize row every other Unit-tab consumer
+  // already reads. Keyed by (InventoryId, UPPER(UnitCode)) — NOT (InventoryId, UnitItemId) — per
+  // resolveUnitCodes' own comment: the caller resolves whichever raw UnitItemId the source line
+  // used down to its portable Code first (still correct/self-consistent for Fabric/Trim, where
+  // source and target Item are the same; the fix this enables is for Yarn, where they differ).
   private async resolveConsumptionUnitFactors(inventoryIds: (number | null | undefined)[]): Promise<Map<string, { unitFactor: number; unitDivisor: number }>> {
     const distinct = Array.from(new Set(inventoryIds.filter((id): id is number => id != null).map(Number)));
     const map = new Map<string, { unitFactor: number; unitDivisor: number }>();
     if (!distinct.length) return map;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT "InventoryId" as "inventoryId", "UnitItemId" as "unitItemId", "UnitFactor" as "unitFactor", "UnitDivisor" as "unitDivisor"
-      FROM "IM_ItemUnitItemSize"
-      WHERE "InventoryId" IN (${Prisma.join(distinct)}) AND "IsDeleted" = 0
+      SELECT u."InventoryId" as "inventoryId", msi."UnitCode" as "unitCode", u."UnitFactor" as "unitFactor", u."UnitDivisor" as "unitDivisor"
+      FROM "IM_ItemUnitItemSize" u
+      JOIN "MD_UnitSetItem" msi ON msi."RecId" = u."UnitItemId"
+      WHERE u."InventoryId" IN (${Prisma.join(distinct)}) AND u."IsDeleted" = 0
     `);
     for (const r of sanitizeRawRow(rows)) {
-      map.set(`${Number(r.inventoryId)}:${Number(r.unitItemId)}`, { unitFactor: Number(r.unitFactor), unitDivisor: Number(r.unitDivisor) });
+      map.set(`${Number(r.inventoryId)}:${String(r.unitCode || '').toUpperCase()}`, { unitFactor: Number(r.unitFactor), unitDivisor: Number(r.unitDivisor) });
     }
     return map;
   }
@@ -377,19 +409,23 @@ export class FabricYarnRequirementsService {
   // unit-conversion.util.ts formulas, never re-derived. `unitInventoryId` is the item whose
   // Requirement Unit this conversion targets — the SAME item for Fabric/Trim, but the YARN item
   // (not the source Fabric's) for getYarnRequirements, per that method's own comment on why Yarn's
-  // Requirement Unit is always resolved from its own Inventory Item. Falls back to the raw,
-  // unconverted quantity whenever no Requirement Unit is configured (unresolvedIds/ambiguousIds —
-  // already surfaced separately via getMappingWarnings/buildUnitWarnings) or Consumption's own Unit
-  // has no matching per-item conversion row — never silently guesses a factor.
+  // Requirement Unit is always resolved from its own Inventory Item. `consumptionUnitCode` is the
+  // source line's own Consumption Unit already resolved down to its portable Code (resolveUnitCodes)
+  // — NOT the raw UnitItemId, which is only meaningful within the SOURCE item's own Unit Set (see
+  // resolveConsumptionUnitFactors' own comment on why matching by raw id silently failed whenever
+  // the target Item's Unit Set differs from the source line's). Falls back to the raw, unconverted
+  // quantity whenever no Requirement Unit is configured (unresolvedIds/ambiguousIds — already
+  // surfaced separately via getMappingWarnings/buildUnitWarnings) or the target item has no unit
+  // configured under that same Code — never silently guesses a factor.
   private convertRawRequirementToUnit(
     rawQuantity: number,
     unitInventoryId: number | null | undefined,
-    consumptionUnitId: number | null | undefined,
+    consumptionUnitCode: string | null | undefined,
     requirementUnit: { unitFactor: number; unitDivisor: number } | null | undefined,
     consumptionUnitFactors: Map<string, { unitFactor: number; unitDivisor: number }>,
   ): number {
     if (!requirementUnit || unitInventoryId == null) return rawQuantity;
-    const consumptionFactors = consumptionUnitId != null ? consumptionUnitFactors.get(`${Number(unitInventoryId)}:${Number(consumptionUnitId)}`) : null;
+    const consumptionFactors = consumptionUnitCode ? consumptionUnitFactors.get(`${Number(unitInventoryId)}:${consumptionUnitCode.toUpperCase()}`) : null;
     const baseQuantity = consumptionFactors ? toBaseAmount(rawQuantity, consumptionFactors.unitFactor, consumptionFactors.unitDivisor) : rawQuantity;
     return applyUnitFactor(baseQuantity, requirementUnit.unitFactor, requirementUnit.unitDivisor);
   }
@@ -504,6 +540,10 @@ export class FabricYarnRequirementsService {
     const colors = await this.resolveColorCards(lines.map((l: any) => l.colorCardId));
     const { units: requirementUnits } = await this.resolveRequirementUnits(lines.map((l: any) => l.inventoryId));
     const consumptionUnitFactors = await this.resolveConsumptionUnitFactors(lines.map((l: any) => l.inventoryId));
+    // Each line's own Consumption Unit resolved down to its portable Code (see resolveUnitCodes'
+    // own comment) — self-referential here (source and target Item are the same for Fabric/Trim),
+    // but resolved the same way convertRawRequirementToUnit now requires everywhere.
+    const consumptionUnitCodes = await this.resolveUnitCodes(lines.map((l: any) => l.unitId));
     // flatMap, not map — a single BOM line can now generate MULTIPLE Requirement rows. A
     // color-specific line (Variant2 set) still yields exactly one row, unchanged. A COMMON line
     // (Variant2 blank) on a Work Order with more than one Production Color expands into one row PER
@@ -604,7 +644,7 @@ export class FabricYarnRequirementsService {
         // behavior change for every item that hasn't been configured for this feature yet. This is
         // the field getTotalRequirements/save() already sum/persist, so both now reflect the real,
         // unit-converted requirement instead of a raw same-unit-as-Consumption echo.
-        quantity: Math.round(this.convertRawRequirementToUnit(consumption * scope.quantity, l.inventoryId, l.unitId, requirementUnit, consumptionUnitFactors) * 10000) / 10000,
+        quantity: Math.round(this.convertRawRequirementToUnit(consumption * scope.quantity, l.inventoryId, l.unitId != null ? consumptionUnitCodes.get(Number(l.unitId)) ?? null : null, requirementUnit, consumptionUnitFactors) * 10000) / 10000,
       }));
     });
   }
@@ -760,7 +800,7 @@ export class FabricYarnRequirementsService {
     // blank — this is what makes Yarn inherit the SAME corrected color scope Fabric now resolves
     // to, instead of re-deriving its own (potentially still cross-joined) scope independently.
     const fabricColors = await this.resolveColorCards(fabricLines.map((l: any) => l.colorCardId));
-    const exploded: { fabricLineId: number; yarnInventoryId: number | null; process: string | null; variant1: string | null; variant2: string | null; quantity: number; sourceColorCardId: string | null; garmentColor: string | null; sourceConsumptionUnitId: number | null }[] = [];
+    const exploded: { fabricLineId: number; yarnInventoryId: number | null; process: string | null; variant1: string | null; variant2: string | null; quantity: number; recipePercentage: number; sourceColorCardId: string | null; garmentColor: string | null; sourceConsumptionUnitId: number | null }[] = [];
     for (const line of fabricLines) {
       if (line.inventoryId == null) continue;
       // Color-Specific Yarn Recipe if one exists for THIS line's own Material Color, otherwise the
@@ -814,6 +854,12 @@ export class FabricYarnRequirementsService {
             // would be the exact "convert before the calculation is complete" mistake this fix
             // exists to avoid).
             quantity: Math.round(calculatedQty * (pct / 100) * 10000) / 10000,
+            // The exact resolved FabricYarnRecipeLine.percentage this row's own Requirement was
+            // just computed from above — Common or Color-Specific, whichever resolveEffectiveRecipe
+            // actually returned for THIS line's own colorCardId (never re-derived/guessed on the
+            // frontend, never a second recipe lookup — see the DTO's own comment on why this is
+            // additive/display-only and never feeds back into the Requirement math itself).
+            recipePercentage: pct,
             // Yarn has no color selection of its own anywhere in this app (FabricYarnRecipeLine's
             // own variant1/variant2 are plain free text, never linked to ColorCard — confirmed
             // during the Multi-Color BOM audit) — it inherits the Fabric BOM line's REAL Material
@@ -843,6 +889,15 @@ export class FabricYarnRequirementsService {
     // convertRawRequirementToUnit's own comment on why the item side of this lookup is always the
     // item whose Requirement Unit is being converted into.
     const consumptionUnitFactors = await this.resolveConsumptionUnitFactors(exploded.map((e) => e.yarnInventoryId));
+    // Each row's OWN sourceConsumptionUnitId is a UnitItemId in the SOURCE FABRIC's own Unit Set —
+    // resolved here down to its portable Code (resolveUnitCodes) BEFORE being matched against the
+    // YARN item's own (different) Unit Set below. This is the actual fix for the "millions of KG/
+    // BAG" bug: matching by raw UnitItemId across two different items' Unit Sets could silently miss
+    // (Fabric's own "GRM" and Yarn's own "grm" are two different MD_UnitSetItem rows, confirmed live
+    // — see resolveUnitCodes' own comment), leaving the raw Fabric-scale quantity unconverted and
+    // then multiplied by the Yarn's own Requirement Unit factor as if it were already in the Yarn's
+    // Base Unit.
+    const consumptionUnitCodes = await this.resolveUnitCodes(exploded.map((e) => e.sourceConsumptionUnitId));
     return exploded.map((e, i) => {
       const color = e.sourceColorCardId ? colors.get(String(e.sourceColorCardId)) : null;
       const requirementUnit = e.yarnInventoryId != null ? requirementUnits.get(Number(e.yarnInventoryId)) ?? null : null;
@@ -867,12 +922,17 @@ export class FabricYarnRequirementsService {
         // Response shape kept to exactly {id,code,name,unitItemId} — see getMaterialRequirements'
         // own identical comment.
         requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name, unitItemId: requirementUnit.unitItemId } : null,
+        // Additive, display-only — the real FabricYarnRecipeLine.percentage this row was actually
+        // computed from (see the exploded-row comment above for exactly which one/why). Never used
+        // in the Requirement math itself (that already happened, above, via `e.quantity`) — a
+        // frontend consumer must never recompute Requirement from this, only display it alongside.
+        recipePercentage: e.recipePercentage,
         garmentColor: e.garmentColor,
         // e.quantity is still the RAW exploded quantity (Fabric Requirement x Wastage x Recipe %,
         // in the source Fabric's own Consumption Unit) — converted here, once, into the YARN item's
         // own configured Requirement Calculation Unit, exactly the same final-step-only rule
         // getMaterialRequirements applies to Fabric/Trim (see that method's own comment).
-        quantity: Math.round(this.convertRawRequirementToUnit(e.quantity, e.yarnInventoryId, e.sourceConsumptionUnitId, requirementUnit, consumptionUnitFactors) * 10000) / 10000,
+        quantity: Math.round(this.convertRawRequirementToUnit(e.quantity, e.yarnInventoryId, e.sourceConsumptionUnitId != null ? consumptionUnitCodes.get(Number(e.sourceConsumptionUnitId)) ?? null : null, requirementUnit, consumptionUnitFactors) * 10000) / 10000,
       };
     });
   }
@@ -1135,10 +1195,18 @@ export class FabricYarnRequirementsService {
   // this method that took no id at all and bulk-deleted every saved record of the type — which is
   // exactly the "Delete" action was wired to a misleading "delete everything, not just the
   // selected row" confirmation and endpoint; fixed by giving Delete a real target instead.
-  async deleteRequirement(workOrderId: number, tab: RequirementTab, recordId: number, currentUserId: string) {
-    await this.workOrderSvc.get(workOrderId);
+  async deleteRequirement(workOrderId: number, tab: RequirementTab, recordId: number, currentUserId: string, companyId?: string) {
+    const workOrder = await this.workOrderSvc.get(workOrderId);
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
     const requirementType = REQUIREMENT_TYPE[tab];
+    // Last valid state before deletion (Section 3/4) — the raw persisted MA_Requirement row is
+    // captured BEFORE the soft-delete below, not a live requery of it afterward.
+    const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT * FROM "MA_Requirement"
+      WHERE "RecId" = ${recordId} AND "RequirementType" = ${requirementType}
+        AND "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
+        AND "IsDeleted" = 0
+    `);
     const affected = await this.prisma.$executeRaw(Prisma.sql`
       UPDATE "MA_Requirement" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${Number(currentUserId) || 1}
       WHERE "RecId" = ${recordId}
@@ -1148,6 +1216,21 @@ export class FabricYarnRequirementsService {
     `);
     if (Number(affected) === 0) {
       throw new NotFoundException(`${this.tabLabel(tab)} Requirement record not found — it may already be deleted, or belong to a different Work Order/type.`);
+    }
+    if (companyId && beforeRows.length) {
+      await this.audit.recordSafe({
+        userId: currentUserId,
+        companyId,
+        screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'MA_Requirement',
+        entityId: String(recordId),
+        parentEntityType: 'MA_WorkOrder',
+        parentEntityId: String(workOrderId),
+        parentDocumentNo: (workOrder as any)?.workOrderNo,
+        action: AUDIT_ACTIONS.DELETE,
+        documentNo: (workOrder as any)?.workOrderNo,
+        before: { [`${this.tabLabel(tab)} Requirement (MA_Requirement)`]: sanitizeRawRow(beforeRows)[0] },
+      });
     }
     return { message: `${this.tabLabel(tab)} Requirement record deleted.` };
   }
@@ -1163,16 +1246,37 @@ export class FabricYarnRequirementsService {
   // Lock check also narrowed to match: only THIS tab's own lock is consulted
   // (assertMutationAllowed — the same helper every other mutation on this tab already uses), so
   // Fabric Delete All is no longer blocked by Trim or Yarn being locked, and vice versa.
-  async deleteAllRequirements(workOrderId: number, tab: RequirementTab, currentUserId: string) {
-    await this.workOrderSvc.get(workOrderId);
+  async deleteAllRequirements(workOrderId: number, tab: RequirementTab, currentUserId: string, companyId?: string) {
+    const workOrder = await this.workOrderSvc.get(workOrderId);
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
     const requirementType = REQUIREMENT_TYPE[tab];
+    const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT * FROM "MA_Requirement"
+      WHERE "RequirementType" = ${requirementType}
+        AND "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
+        AND "IsDeleted" = 0
+    `);
     await this.prisma.$executeRaw(Prisma.sql`
       UPDATE "MA_Requirement" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${Number(currentUserId) || 1}
       WHERE "RequirementType" = ${requirementType}
         AND "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
         AND "IsDeleted" = 0
     `);
+    if (companyId && beforeRows.length) {
+      await this.audit.recordSafe({
+        userId: currentUserId,
+        companyId,
+        screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'MA_Requirement',
+        entityId: String(workOrderId),
+        parentEntityType: 'MA_WorkOrder',
+        parentEntityId: String(workOrderId),
+        parentDocumentNo: (workOrder as any)?.workOrderNo,
+        action: AUDIT_ACTIONS.DELETE,
+        documentNo: (workOrder as any)?.workOrderNo,
+        before: { [`${this.tabLabel(tab)} Requirements (MA_Requirement, all)`]: sanitizeRawRow(beforeRows) },
+      });
+    }
     return { message: `${this.tabLabel(tab)} Requirement records deleted.` };
   }
 
@@ -1371,5 +1475,29 @@ export class FabricYarnRequirementsService {
       // when isSaved) keeps working exactly as before.
       return { ...r, lineId: r.id, id: savedId ?? r.id, isSaved: savedId != null };
     });
+  }
+
+  // Distinguishes two states getSavedRequirements' own "nothing currently active" case collapses
+  // into one (`[]`): a Work Order/type that has NEVER been saved at all, vs one that WAS saved and
+  // has since had every one of its MA_Requirement rows explicitly soft-deleted (a single Delete
+  // that removed the last one, or Delete All). Deliberately ignores "IsDeleted" (checks for ANY
+  // row, deleted or not) — the real, reported bug this exists to fix: the Requirements screen's own
+  // reload previously had no way to tell these two apart, so after Delete All it silently fell back
+  // to the SAME live BOM/Yarn-Recipe preview a never-yet-saved Work Order shows (loadGrids' own
+  // "else" branch) — meaning a genuinely successful, confirmed DB deletion (see deleteRequirement/
+  // deleteAllRequirements above) was immediately, invisibly overwritten by a live recalculation on
+  // the very next load, which is exactly why the deleted row kept reappearing. The frontend uses
+  // this flag to show genuinely empty Requirements/Total Requirements after a delete instead of
+  // regenerating them — only an explicit Calculate (which also re-Saves, see this screen's own
+  // calculate()) is allowed to repopulate them again.
+  async hasSavedHistory(workOrderId: number, tab: RequirementTab): Promise<boolean> {
+    const requirementType = REQUIREMENT_TYPE[tab];
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "MA_Requirement"
+      WHERE "RequirementType" = ${requirementType}
+        AND "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
+      LIMIT 1
+    `);
+    return rows.length > 0;
   }
 }

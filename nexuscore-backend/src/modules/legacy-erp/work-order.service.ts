@@ -4,6 +4,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { assertAllNonNegative } from './numeric-guards.util';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+
+// Real MenuItem.href for the Work Order List screen (confirmed live: MenuItem row {title:"Work
+// Order", group:"Legacy ERP", href:"/dashboard/legacy-erp/work-orders-list"}) — same screenKey
+// convention ApprovalConfiguration/AuditService already use, not a new/invented key.
+// Exported for fabric-yarn-requirements.service.ts's own audit calls — Requirements is a tab
+// within the Work Order document, not a separate screen, so it deliberately shares this exact
+// screenKey rather than inventing a second one.
+export const WORK_ORDER_SCREEN_KEY = '/dashboard/legacy-erp/work-orders-list';
 
 // Work Order — NOT a new entity. MA_WorkOrder/MA_WorkOrderItem/MA_WorkOrderItemVariant are
 // already-existing, already-migrated legacy tables (confirmed via information_schema: 161/100/21
@@ -129,7 +138,10 @@ const RECIPE_ITEM_SELECT = Prisma.raw(['"RecId" as id', '"RecipeId" as "recipeId
 
 @Injectable()
 export class WorkOrderService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   private async headerToDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, HEADER_TABLE));
@@ -196,7 +208,7 @@ export class WorkOrderService {
     });
   }
 
-  async create(dto: Record<string, any>, userId: number) {
+  async create(dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     this.assertHeaderQuantitiesNonNegative(dto);
     const toDb = await this.headerToDb();
     const manualNo = String(dto.workOrderNo ?? '').trim();
@@ -215,7 +227,18 @@ export class WorkOrderService {
         VALUES (1, 1, ${workOrderNo}, ${valuesMiddle}now(), ${userId}, 0, gen_random_uuid())
         RETURNING ${HEADER_SELECT}
       `);
-      return sanitizeRawRow(rows[0]);
+      const created = sanitizeRawRow(rows[0]);
+      // Audit — real, structured snapshot (this exact row), never a placeholder text. Best-effort:
+      // currentUserId/companyId are only absent for a caller that hasn't been updated to pass them
+      // yet (none currently); a missing companyId is skipped rather than guessed.
+      if (currentUserId && companyId) {
+        await this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+          entityType: 'MA_WorkOrder', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+          documentNo: created.workOrderNo, after: { 'Work Order': created },
+        });
+      }
+      return created;
     } catch (err: any) {
       const msg = String(err?.message ?? '');
       if (msg.includes('23505') && msg.includes('WorkOrderNo')) throw new ConflictException('A work order already exists with this number.');
@@ -223,8 +246,8 @@ export class WorkOrderService {
     }
   }
 
-  async update(id: number, dto: Record<string, any>, userId: number) {
-    await this.get(id);
+  async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id);
     this.assertHeaderQuantitiesNonNegative(dto);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'WorkOrderNo' && toDb(c, dto[camel(c)]) !== undefined);
@@ -244,14 +267,30 @@ export class WorkOrderService {
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const updated = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId) {
+      await this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'MA_WorkOrder', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
+        documentNo: updated?.workOrderNo ?? before.workOrderNo,
+        before: { 'Work Order': before }, after: { 'Work Order': updated },
+      });
+    }
+    return updated;
   }
 
-  async remove(id: number, userId: number) {
-    await this.get(id);
+  async remove(id: number, userId: number, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id);
     await this.prisma.$executeRaw`
       UPDATE "MA_WorkOrder" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
     `;
+    if (currentUserId && companyId) {
+      await this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'MA_WorkOrder', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
+        documentNo: before.workOrderNo, before: { 'Work Order': before },
+      });
+    }
     return { message: 'Deleted' };
   }
 

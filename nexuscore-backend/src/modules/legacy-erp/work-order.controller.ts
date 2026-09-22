@@ -28,16 +28,21 @@ export class WorkOrderController {
     return this.svc.get(id);
   }
 
-  @Post() create(@Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
-    return this.svc.create(dto, Number(userId) || 1);
+  // Real UUID userId + companyId (@CurrentUser, the same live-Prisma-User-row source every other
+  // audited call site in this session uses) threaded through ADDITIONALLY to the pre-existing
+  // legacy numeric `Number(userId) || 1` (InsertedBy/UpdatedBy/DeletedBy on MA_WorkOrder itself,
+  // unchanged) — AuditLog.changedBy is a real User.id FK, which the legacy numeric id can never
+  // satisfy.
+  @Post() create(@Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.create(dto, Number(userId) || 1, userId, companyId);
   }
 
-  @Put(':id') update(@Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
-    return this.svc.update(id, dto, Number(userId) || 1);
+  @Put(':id') update(@Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.update(id, dto, Number(userId) || 1, userId, companyId);
   }
 
-  @Delete(':id') remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
-    return this.svc.remove(id, Number(userId) || 1);
+  @Delete(':id') remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.remove(id, Number(userId) || 1, userId, companyId);
   }
 
   // Style Info lines
