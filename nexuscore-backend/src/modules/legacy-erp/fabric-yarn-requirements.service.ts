@@ -370,6 +370,32 @@ export class FabricYarnRequirementsService {
     return map;
   }
 
+  // Display-only sibling of resolveUnitCodes above (same table, same batched-by-unitItemId shape,
+  // same "MD_UnitSetItem.RecId is a real, portable id, no Item-scoping needed to resolve it"
+  // reasoning) — the difference is this one keeps the human-facing {id,code,name} shape instead of
+  // collapsing to a bare uppercased code, because it feeds a NEW, purely additive output field
+  // (`consumptionUnit` on getMaterialRequirements below), not the internal conversion math
+  // resolveUnitCodes' own callers use. Added for Trim Planning (trim-planning.service.ts): a BOM
+  // line's own Consumption Unit (MA_RecipeItem.UnitId / StyleBomLine.unitId — the exact unit its
+  // own real, persisted Quantity was entered in) is a real, always-present fact whenever a line
+  // has a unitId at all, unlike `requirementUnit` below (null whenever the target Item's Unit tab
+  // has no Unit flagged "Requirement Calculation" yet — confirmed live: TRIM-00003 has two real
+  // configured units, "cone"/"yard", neither flagged for Requirement Calculation, so
+  // `requirementUnit` is correctly null for it and always will be until that master-data flag is
+  // set). Exposing the real Consumption Unit alongside gives a caller that wants to show SOME real
+  // unit rather than a blank dash an honest, DB-backed fallback to use — this method never guesses
+  // or hardcodes a unit, it only surfaces what resolveUnitCodes' own query already proves exists.
+  private async resolveUnitDisplay(unitItemIds: (number | null | undefined)[]): Promise<Map<number, { id: number; code: string; name: string }>> {
+    const distinct = Array.from(new Set(unitItemIds.filter((id): id is number => id != null).map(Number)));
+    const map = new Map<number, { id: number; code: string; name: string }>();
+    if (!distinct.length) return map;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "RecId" as id, "UnitCode" as code, "UnitName" as name FROM "MD_UnitSetItem" WHERE "RecId" IN (${Prisma.join(distinct)})
+    `);
+    for (const r of sanitizeRawRow(rows)) map.set(Number(r.id), { id: Number(r.id), code: r.code, name: r.name });
+    return map;
+  }
+
   // ── Final Requirement Unit Conversion ───────────────────────────────────────────────────────
   // Resolves, batched across every distinct target Item a page of BOM/recipe lines needs, that
   // Item's OWN IM_ItemUnitItemSize rows — used ONLY to convert a line's own Consumption (entered in
@@ -544,6 +570,9 @@ export class FabricYarnRequirementsService {
     // own comment) — self-referential here (source and target Item are the same for Fabric/Trim),
     // but resolved the same way convertRawRequirementToUnit now requires everywhere.
     const consumptionUnitCodes = await this.resolveUnitCodes(lines.map((l: any) => l.unitId));
+    // Display-only sibling of the line above — see resolveUnitDisplay's own comment. Feeds the new
+    // `consumptionUnit` output field only; never used in the quantity/conversion math.
+    const consumptionUnitDisplay = await this.resolveUnitDisplay(lines.map((l: any) => l.unitId));
     // flatMap, not map — a single BOM line can now generate MULTIPLE Requirement rows. A
     // color-specific line (Variant2 set) still yields exactly one row, unchanged. A COMMON line
     // (Variant2 blank) on a Work Order with more than one Production Color expands into one row PER
@@ -621,6 +650,15 @@ export class FabricYarnRequirementsService {
         // carries unitFactor/unitDivisor for the conversion below — those two stay an internal
         // calculation input, not part of this field's own public contract.
         requirementUnit: requirementUnit ? { id: requirementUnit.id, code: requirementUnit.code, name: requirementUnit.name, unitItemId: requirementUnit.unitItemId } : null,
+        // Consumption Unit — NEW, purely additive field (existing consumers that don't read it are
+        // byte-for-byte unaffected — see resolveUnitDisplay's own comment). This BOM line's own
+        // real Consumption Unit (l.unitId — the exact unit its persisted Quantity was entered in),
+        // always present whenever the line has a unitId at all, unlike requirementUnit above (only
+        // set when the target Item has an explicit "Requirement Calculation" unit configured). A
+        // caller that wants to show SOME real unit rather than a blank dash when requirementUnit is
+        // null (e.g. trim-planning.service.ts's own Unit column) uses this as its fallback; this
+        // method itself makes no choice between the two — that's the caller's own display decision.
+        consumptionUnit: l.unitId != null ? consumptionUnitDisplay.get(Number(l.unitId)) ?? null : null,
         // Consumption — this BOM line's OWN existing Quantity field, unchanged (still exactly what
         // bom-tab.tsx's own "Quantity" column already saved/shows on the Work Order's BOM tab), the
         // SAME value across every color-expansion of this one line. NEVER converted — see
@@ -1297,6 +1335,13 @@ export class FabricYarnRequirementsService {
   // row) are passed through to scope this down to receipts for exactly that material, using
   // IM_ReceiptItem's own real InventoryId/ColorCardId columns (confirmed via information_schema
   // — the same physical columns this table already carries for every other receipt screen).
+  //
+  // `receiptId` (IM_Receipt.RecId, the real header primary key — additive, every existing
+  // consumer that doesn't read it is unaffected) lets the frontend open the EXACT persisted
+  // receipt this row came from via the existing inventory-receipts screen's own real
+  // `?id=<receiptId>&mode=view|edit&receiptType=<receiptType>` convention (the same one
+  // receipt-menu.ts's own openReceipt/openSubcontractReceipt already navigate to) — never a
+  // second lookup by ReceiptNo/DocumentNo/date, none of which are guaranteed unique.
   async getTransactionDetails(workOrderId: number, inventoryId?: number, colorCardId?: string) {
     const itemIds = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0
@@ -1311,6 +1356,7 @@ export class FabricYarnRequirementsService {
         ri."RecId" as id,
         ri."InventoryId" as "inventoryId",
         ri."ColorCardId" as "colorCardId",
+        r."RecId" as "receiptId",
         r."ReceiptDate" as "receiptDate",
         r."ReceiptType" as "receiptType",
         st."SubcontractTypeName" as subcontractor,

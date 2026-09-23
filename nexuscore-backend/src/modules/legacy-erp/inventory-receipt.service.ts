@@ -10,7 +10,7 @@ import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { RELATED_IMPORT_SOURCE_TYPES, getReceiptTypeConfig } from './receipt-types.config';
 import { getOrderTypeConfig } from './order-types.config';
-import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -501,8 +501,23 @@ export class InventoryReceiptService {
     // just re-flips the same IsApproved=1 it already had, so this is safe to run unconditionally
     // on every header Save while approval isn't required.
     const result = await this.autoApproveIfNotRequired(id, userId, receiptType);
-    if (currentUserId && companyId) {
+    // Only log UPDATE when a submitted header value actually differs from what was already
+    // persisted — see hasRealChanges' own comment (a no-op Save must never fabricate an Updated
+    // history entry; confirmed live as the root cause of "CREATE produces Created + Updated" — a
+    // subsequent unchanged Save wrote oldValues === newValues before this guard existed).
+    if (currentUserId && companyId && hasRealChanges(before, result)) {
       const label = this.labelFor(receiptType);
+      // Header-only update, but the audit snapshot still covers the full document (Details/
+      // Variants) per Phase 4's "audit the complete relevant document structure" — this endpoint
+      // never touches items/variants itself, so both sides show the same (accurate, unchanged)
+      // current line state; ChangedFields in Log Details still diffs only the header section,
+      // since that's the only section present as a plain object on both before/after.
+      const items = await this.listItems(id).catch(() => []);
+      const variants = items.flatMap((it: any) => (it.variants ?? []).map((v: any) => ({ ...v, inventoryReceiptItemId: it.id })));
+      const detailSections = {
+        [`${label} Details (IM_ReceiptItem)`]: items.map(({ variants: _v, ...rest }: any) => rest),
+        [`${label} Variants (IM_ReceiptItemVariant)`]: variants,
+      };
       await this.audit.recordSafe({
         userId: currentUserId,
         companyId,
@@ -511,8 +526,8 @@ export class InventoryReceiptService {
         entityId: String(id),
         action: AUDIT_ACTIONS.UPDATE,
         documentNo: (result as any)?.receiptNo ?? before.receiptNo,
-        before: { [`${label} (IM_Receipt)`]: before },
-        after: { [`${label} (IM_Receipt)`]: result },
+        before: { [`${label} (IM_Receipt)`]: before, ...detailSections },
+        after: { [`${label} (IM_Receipt)`]: result, ...detailSections },
       });
     }
     return result;
@@ -555,13 +570,13 @@ export class InventoryReceiptService {
   // specific completion side effect (the same "SET IsApproved = 1" the old row-action already
   // made) once the policy engine confirms the approval actually succeeded.
 
-  async submitForApproval(id: number, userId: string, receiptType: number = RECEIPT_TYPE) {
-    await this.get(id, receiptType);
-    return this.approvalSvc.submit(screenKeyFor(receiptType), String(id), userId);
+  async submitForApproval(id: number, userId: string, receiptType: number = RECEIPT_TYPE, companyId?: string) {
+    const header = await this.get(id, receiptType);
+    return this.approvalSvc.submit(screenKeyFor(receiptType), String(id), userId, undefined, this.approvalCtx(header, receiptType, companyId));
   }
 
-  async approve(id: number, userId: string, remarks: string | undefined, receiptType: number = RECEIPT_TYPE) {
-    await this.get(id, receiptType);
+  async approve(id: number, userId: string, remarks: string | undefined, receiptType: number = RECEIPT_TYPE, companyId?: string) {
+    const header = await this.get(id, receiptType);
     const screenKey = screenKeyFor(receiptType);
     // "When approval is NOT required, existing workflow remains completely unchanged" — this
     // screen's original Approval row-action was an unrestricted direct write, so it stays
@@ -576,7 +591,7 @@ export class InventoryReceiptService {
     // still gated, or "not approved" with stock already counting it).
     const rows = await this.prisma.$transaction(async (tx) => {
       if (approvalRequired) {
-        await this.approvalSvc.approve(screenKey, String(id), userId, remarks, tx);
+        await this.approvalSvc.approve(screenKey, String(id), userId, remarks, tx, this.approvalCtx(header, receiptType, companyId));
       }
       // Number(userId)||1 matches this file's own existing UpdatedBy convention everywhere else
       // (the legacy column is a small numeric id with no real mapping to NexusCore's uuid users).
@@ -589,9 +604,19 @@ export class InventoryReceiptService {
     return sanitizeRawRow(rows[0]);
   }
 
-  async reject(id: number, userId: string, remarks: string, receiptType: number = RECEIPT_TYPE) {
-    await this.get(id, receiptType);
-    return this.approvalSvc.reject(screenKeyFor(receiptType), String(id), userId, remarks);
+  async reject(id: number, userId: string, remarks: string, receiptType: number = RECEIPT_TYPE, companyId?: string) {
+    const header = await this.get(id, receiptType);
+    return this.approvalSvc.reject(screenKeyFor(receiptType), String(id), userId, remarks, undefined, this.approvalCtx(header, receiptType, companyId));
+  }
+
+  // Real entity identity for an approval transition audit row — see ApprovalAuditContext's own
+  // comment on why this is threaded through rather than left to the old screenKey-as-entityType
+  // bypass. `companyId` optional/undefined (e.g. a caller not yet updated) makes ApprovalService
+  // fall back to its own pre-existing behavior, same "additive, never a hard requirement"
+  // convention as every other audit integration in this file.
+  private approvalCtx(header: any, receiptType: number, companyId?: string): import('../approval/approval.service').ApprovalAuditContext | undefined {
+    if (!companyId) return undefined;
+    return { companyId, entityType: 'IM_Receipt', documentNo: header?.receiptNo ?? null };
   }
 
   async getApprovalStatus(id: number, receiptType: number = RECEIPT_TYPE) {
@@ -751,6 +776,26 @@ export class InventoryReceiptService {
       const byId = new Map(poRows.map((r: any) => [Number(r.orderReceiptItemId), r.orderReceiptNo]));
       for (const r of clean) {
         if (r.orderReceiptItemId != null) r.orderReceiptNo = byId.get(Number(r.orderReceiptItemId)) ?? null;
+      }
+    }
+    // Work Order — same "separate small follow-up query" shape as the orderReceiptNo lookup
+    // above, resolving each WorkOrderReceiptItemId-linked line's real Work Order No for display
+    // (the raw FK alone isn't human-readable — see inventory-receipt-line-grid.tsx's own
+    // LineRow.workOrderNo comment). WorkOrderReceiptItemId is a real, pre-existing column
+    // (confirmed via ITEM_COLUMNS above; already read by fabric-planning.service.ts's own
+    // aggregateReceipts join), populated via the Planning menu's own prefill flow — this is what
+    // makes that relationship survive a save -> reload, not just the initial prefilled display.
+    const workOrderItemIds = clean.map((r: any) => r.workOrderReceiptItemId).filter((v: any) => v != null);
+    if (workOrderItemIds.length) {
+      const woRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT wi."RecId" as "workOrderReceiptItemId", wo."WorkOrderNo" as "workOrderNo"
+        FROM "MA_WorkOrderItem" wi
+        JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId"
+        WHERE wi."RecId" IN (${Prisma.join(workOrderItemIds)})
+      `);
+      const byId = new Map(woRows.map((r: any) => [Number(r.workOrderReceiptItemId), r.workOrderNo]));
+      for (const r of clean) {
+        if (r.workOrderReceiptItemId != null) r.workOrderNo = byId.get(Number(r.workOrderReceiptItemId)) ?? null;
       }
     }
     // Related Receipt import — same "separate small follow-up query" shape as the orderReceiptNo

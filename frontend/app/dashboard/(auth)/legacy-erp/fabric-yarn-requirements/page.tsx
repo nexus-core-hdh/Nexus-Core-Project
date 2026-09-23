@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ImageOff, ExternalLink, Lock, LockOpen, Trash2, ListX, Search } from "lucide-react";
 import { toast } from "sonner";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { getReceiptTypeLabel } from "@/lib/legacy-erp/receipt-types";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
@@ -41,6 +42,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ReportGrid, type ReportColumn } from "./_components/report-grid";
+import { openTransactionReceipt, buildTransactionRowActions } from "./_components/transaction-row-actions";
 
 interface StyleCardLookupRow extends CardLookupRow { raw: any }
 
@@ -113,6 +115,9 @@ interface ManufacturingQtySummary { hasAny: boolean; total: number; byColor: { c
 
 interface TransactionRow {
   id: string | number;
+  // Real IM_Receipt.RecId — the primary key needed to open the exact persisted receipt this row
+  // came from (see transaction-row-actions.ts's own comment). Never used for display.
+  receiptId: number | null;
   receiptDate: string | null;
   receiptType: number | null;
   subcontractor: string | null;
@@ -809,7 +814,10 @@ export default function FabricYarnRequirementsPage() {
 
   const transactionColumns: ReportColumn<TransactionRow>[] = [
     { key: "receiptDate", label: "Receipt Date", defaultWidth: 110, render: (r) => fmtDate(r.receiptDate) },
-    { key: "receiptType", label: "Receipt Type", defaultWidth: 150, render: (r) => (r.receiptType != null ? String(r.receiptType) : "—") },
+    // Human-readable label — "<Subcontract Type> Send/Receive/Return" for a subcontract
+    // transaction (e.g. "Dyeing Send"), else the existing RECEIPT_TYPES label. Never the raw
+    // numeric ReceiptType. See lib/legacy-erp/receipt-types.ts's own getReceiptTypeLabel comment.
+    { key: "receiptType", label: "Receipt Type", defaultWidth: 150, render: (r) => getReceiptTypeLabel(r.receiptType, r.subcontractor) },
     { key: "subcontractor", label: "Subcontractor", defaultWidth: 160, render: (r) => r.subcontractor || "—" },
     { key: "receiptNo", label: "Receipt No", defaultWidth: 110, render: (r) => r.receiptNo || "—" },
     { key: "documentNo", label: "Document No", defaultWidth: 110, render: (r) => r.documentNo || "—" },
@@ -1037,6 +1045,11 @@ export default function FabricYarnRequirementsPage() {
                 : transactionFilter ? `No receipts found for ${transactionFilter.label}.`
                 : "No outside-process receipts linked to this Work Order yet."
             }
+            // Opens the EXACT existing, persisted receipt this row came from (view) — same
+            // right-click Open/Edit menu the shared row-actions framework already provides
+            // elsewhere in this app (see transaction-row-actions.ts's own comment).
+            onRowDoubleClick={(r) => openTransactionReceipt(router, r, "view")}
+            getRowActions={(r) => buildTransactionRowActions(router, r)}
           />
         </div>
       )}

@@ -8,6 +8,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { RecipeUsageDialog } from "@/components/legacy-erp/recipe-usage-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
   Search, RefreshCw, Plus, Boxes, SearchX, FileClock,
-  ChevronRight, MousePointerClick, XCircle,
+  ChevronRight, MousePointerClick, XCircle, Network,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { type Worklist } from "@/lib/legacy-erp/worklist-types";
@@ -66,6 +67,7 @@ export default function InventoryCardListPage() {
   const activateTab = useWorkspaceStore((s) => s.activateTab);
   const resolveLookup = useWorkspaceLookupStore((s) => s.resolve);
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
+  const [usageTarget, setUsageTarget] = useState<{ id: number; label: string } | null>(null);
 
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<any[]>([]);
@@ -204,6 +206,10 @@ export default function InventoryCardListPage() {
 
   const getRowActions = (row: any): RowAction[] => [
     { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row) },
+    {
+      key: "recipe-usage", label: "Recipe Usage Information", icon: Network,
+      onSelect: () => setUsageTarget({ id: row.id, label: `${row.inventoryCode} — ${row.inventoryName}` }),
+    },
   ];
 
   // Preserves the existing keyboard-nav/selected-row-highlight behavior (tabIndex/onFocus/
@@ -219,7 +225,7 @@ export default function InventoryCardListPage() {
       tabIndex: 0,
       onFocus: () => setSelectedRowKey(rowKey),
       onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
-      className: cn((el as React.ReactElement<any>).props.className, selectedRowKey === rowKey && "bg-primary/10"),
+      className: cn((el as React.ReactElement<any>).props.className, selectedRowKey === rowKey && "bg-selected hover:bg-selected-hover"),
     });
     return mode === "lookup" ? withNav : <RowContextMenu key={rowKey} actions={getRowActions(row)}>{withNav}</RowContextMenu>;
   };
@@ -339,6 +345,13 @@ export default function InventoryCardListPage() {
           <Button variant="outline" size="sm" onClick={closeSelf}><XCircle className="h-3.5 w-3.5 mr-2" />Close</Button>
         </div>
       )}
+
+      <RecipeUsageDialog
+        open={!!usageTarget}
+        onOpenChange={(open) => !open && setUsageTarget(null)}
+        inventoryId={usageTarget?.id ?? null}
+        itemLabel={usageTarget?.label}
+      />
     </div>
   );
 }

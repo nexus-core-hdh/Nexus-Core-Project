@@ -466,6 +466,19 @@ export const legacyErpApi = {
       return api.get(`/legacy-erp/yarn-planning${qs ? `?${qs}` : ""}`);
     },
   },
+  // Trim Planning — same read-only cross-Work-Order report shape as fabricPlanning above, sourced
+  // from FabricYarnRequirementsService.getMaterialRequirements(workOrderId, 'trim') (see
+  // trim-planning.service.ts's own top comment). Row shape matches fabricPlanning (Consumption/
+  // Applicable Qty both real for Trim, unlike Yarn). Transaction Details reuses workOrders.
+  // requirements.getTransactions verbatim, same as Fabric/Yarn Planning.
+  trimPlanning: {
+    list: (filters?: { orderNo?: string; style?: string; customer?: string; inventory?: string; process?: string; variant?: string; color?: string }) => {
+      const params = new URLSearchParams();
+      if (filters) for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return api.get(`/legacy-erp/trim-planning${qs ? `?${qs}` : ""}`);
+    },
+  },
   workOrders: {
     // Plain string keeps the existing search-box call site unchanged; the object form adds the
     // optional styleCardId filter (Style Card's own Order Info tab) without a second method.
@@ -1039,6 +1052,38 @@ export const auditApi = {
   listModules: () => api.get<string[]>('/audit/logs/filters/modules'),
   listActions: () => api.get<string[]>('/audit/logs/filters/actions'),
   listEntityTypes: () => api.get<string[]>('/audit/logs/filters/entity-types'),
+};
+
+// Recipe Usage ("Where Used") — one shared endpoint behind Fabric/Yarn/Trim/Inventory Cards' own
+// "Recipe Usage Information" right-click action (see recipe-usage.service.ts's own header
+// comment). Server-side filtered/paginated, same {rows,total,skip,take} shape as auditApi.list.
+export type RecipeUsageType = 'Style' | 'Sample' | 'Order' | 'Fabric';
+
+export interface RecipeUsageRow {
+  type: RecipeUsageType;
+  code: string | null;
+  name: string | null;
+  documentNo: string | null;
+  sourceId: string;
+  quantity: number | null;
+}
+
+export interface RecipeUsageFilters {
+  inventoryId: number;
+  search?: string;
+  type?: RecipeUsageType;
+  skip?: number;
+  take?: number;
+}
+
+export const recipeUsageApi = {
+  list: (filters: RecipeUsageFilters) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+    }
+    return api.get<{ rows: RecipeUsageRow[]; total: number; skip: number; take: number }>(`/legacy-erp/recipe-usage?${qs.toString()}`);
+  },
 };
 
 // BPM helpers

@@ -7,6 +7,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { RecipeUsageDialog } from "@/components/legacy-erp/recipe-usage-dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -21,7 +22,7 @@ import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Layers, SearchX, FileClock,
-  ChevronRight, MousePointerClick, XCircle,
+  ChevronRight, MousePointerClick, XCircle, Network,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
@@ -59,6 +60,7 @@ export default function YarnCardListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
+  const [usageTarget, setUsageTarget] = useState<{ id: number; label: string } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("inventoryCode");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const wl = useWorklist({ storageKey: "yarnCardsListWorklists" });
@@ -141,6 +143,10 @@ export default function YarnCardListPage() {
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
     { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
     { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
+    {
+      key: "recipe-usage", label: "Recipe Usage Information", icon: Network,
+      onSelect: () => setUsageTarget({ id: row.id, label: `${row.inventoryCode} — ${row.inventoryName}` }),
+    },
     { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
   ];
 
@@ -272,7 +278,7 @@ export default function YarnCardListPage() {
             onFocus: () => setSelectedId(row.id),
             onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
             onDoubleClick: () => returnAndClose(row),
-            className: cn("group outline-none", selectedId === row.id && "bg-primary/10", mode === "lookup" && "cursor-pointer"),
+            className: cn("group outline-none", selectedId === row.id && "bg-selected hover:bg-selected-hover", mode === "lookup" && "cursor-pointer"),
           })}
           renderRowActions={(row) => (
             // Maintenance actions (View/Update/Delete) stay exactly as they were, regardless of
@@ -341,6 +347,13 @@ export default function YarnCardListPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RecipeUsageDialog
+        open={!!usageTarget}
+        onOpenChange={(open) => !open && setUsageTarget(null)}
+        inventoryId={usageTarget?.id ?? null}
+        itemLabel={usageTarget?.label}
+      />
     </div>
   );
 }

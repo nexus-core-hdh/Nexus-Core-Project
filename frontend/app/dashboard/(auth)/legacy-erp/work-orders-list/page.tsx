@@ -160,6 +160,9 @@ export default function WorkOrderListPage() {
           <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/fabric-planning")}>
             <ClipboardList className="h-3.5 w-3.5 mr-2" />Fabric Planning
           </Button>
+          <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/trim-planning")}>
+            <ClipboardList className="h-3.5 w-3.5 mr-2" />Trim Planning
+          </Button>
           <Button size="sm" onClick={createNew}>
             <Plus className="h-3.5 w-3.5 mr-2" />Create New
           </Button>

@@ -1,18 +1,38 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 export type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'completed';
+
+// Real entity identity for an approval transition, so it can be written through the central
+// AuditService (company-scoped, real entityType/documentNo, Module/Menu resolution) instead of
+// the old direct-write bypass — see writeAudit's own comment below for why this is additive/
+// optional rather than a required param. The caller (inventory-receipt.service.ts/
+// purchase-order.service.ts) already has all of this at its own submitForApproval/approve/
+// reject call sites — it's the exact same data its own create()/update()/remove() audit calls
+// already use.
+export interface ApprovalAuditContext {
+  companyId: string;
+  entityType: string;
+  documentNo?: string | null;
+  parentEntityType?: string | null;
+  parentEntityId?: string | null;
+  parentDocumentNo?: string | null;
+}
 
 // Centralized approval policy engine (General Settings -> Approval Configuration). Generic on
 // purpose — knows nothing about IM_Receipt/IM_OrderReceipt/etc.; a module that wants approval
 // gating calls submit()/approve()/reject() here and, only on success, performs its own existing
 // completion side effect (e.g. inventory-receipt.service.ts still owns "SET IsApproved = 1").
 // History is never duplicated into a second table — every transition is written to the
-// existing generic AuditLog (entityType = screenKey, entityId = transactionId), reused as-is.
+// existing generic AuditLog, reused as-is (now via the central AuditService — see writeAudit).
 @Injectable()
 export class ApprovalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   // `tx` (an in-flight Prisma.$transaction client) is optional and additive everywhere below —
   // every call site that omits it keeps writing through `this.prisma` exactly as before. It
@@ -21,7 +41,45 @@ export class ApprovalService {
   // in ONE atomic transaction: if either write fails, neither is committed, satisfying "approval
   // + stock/business-column update must be atomic" without this generic service knowing anything
   // about the caller's own table.
-  private async writeAudit(screenKey: string, transactionId: string, action: string, changedBy: string, oldValues: any, newValues: any, tx?: Prisma.TransactionClient) {
+  //
+  // HARDENING FIX (Category B -> migrated to the central AuditService): this used to always
+  // `prisma.auditLog.create()` directly, with entityType = screenKey (a URL path, not the real
+  // entity type — never matched the CREATE/UPDATE/DELETE rows for the same document) and no
+  // companyId at all (nullable column, so it wrote successfully but the row was then invisible to
+  // every company-scoped Log Tracking query — a silent, permanent orphan). Now routes through
+  // AuditService.record (real entityType, companyId, Module/Menu resolution, documentNo) whenever
+  // the caller passes an ApprovalAuditContext; `ctx` stays optional so a hypothetical future
+  // caller that hasn't been updated yet still gets an audit row (old shape) instead of none.
+  private async writeAudit(
+    screenKey: string,
+    transactionId: string,
+    action: string,
+    changedBy: string,
+    oldValues: any,
+    newValues: any,
+    tx?: Prisma.TransactionClient,
+    ctx?: ApprovalAuditContext,
+  ) {
+    if (ctx?.companyId) {
+      await this.audit.record(
+        {
+          userId: changedBy,
+          companyId: ctx.companyId,
+          screenKey,
+          entityType: ctx.entityType,
+          entityId: transactionId,
+          action,
+          before: oldValues,
+          after: newValues,
+          documentNo: ctx.documentNo ?? undefined,
+          parentEntityType: ctx.parentEntityType ?? undefined,
+          parentEntityId: ctx.parentEntityId ?? undefined,
+          parentDocumentNo: ctx.parentDocumentNo ?? undefined,
+        },
+        tx,
+      );
+      return;
+    }
     const client = tx ?? this.prisma;
     await client.auditLog.create({
       data: { entityType: screenKey, entityId: transactionId, action, changedBy, oldValues, newValues },
@@ -45,7 +103,7 @@ export class ApprovalService {
   // fresh submission and a resubmission after rejection both just move the same row back to
   // pending_approval, clearing any prior decision — the full transition trail lives in AuditLog,
   // not in row history here.
-  async submit(screenKey: string, transactionId: string, userId: string, tx?: Prisma.TransactionClient) {
+  async submit(screenKey: string, transactionId: string, userId: string, tx?: Prisma.TransactionClient, ctx?: ApprovalAuditContext) {
     const client = tx ?? this.prisma;
     const cfg = await this.getConfig(screenKey);
     const existing = await this.getStatus(screenKey, transactionId);
@@ -62,20 +120,20 @@ export class ApprovalService {
         decidedBy: null, decidedAt: null, remarks: null,
       },
     });
-    await this.writeAudit(screenKey, transactionId, 'submit', userId, { status: previousStatus }, { status: 'pending_approval' }, tx);
+    await this.writeAudit(screenKey, transactionId, 'submit', userId, { status: previousStatus }, { status: 'pending_approval' }, tx, ctx);
     return row;
   }
 
-  approve(screenKey: string, transactionId: string, userId: string, remarks?: string, tx?: Prisma.TransactionClient) {
-    return this.decide(screenKey, transactionId, userId, 'approved', remarks, tx);
+  approve(screenKey: string, transactionId: string, userId: string, remarks?: string, tx?: Prisma.TransactionClient, ctx?: ApprovalAuditContext) {
+    return this.decide(screenKey, transactionId, userId, 'approved', remarks, tx, ctx);
   }
 
-  reject(screenKey: string, transactionId: string, userId: string, remarks: string, tx?: Prisma.TransactionClient) {
+  reject(screenKey: string, transactionId: string, userId: string, remarks: string, tx?: Prisma.TransactionClient, ctx?: ApprovalAuditContext) {
     if (!remarks?.trim()) throw new BadRequestException('A rejection reason is required.');
-    return this.decide(screenKey, transactionId, userId, 'rejected', remarks, tx);
+    return this.decide(screenKey, transactionId, userId, 'rejected', remarks, tx, ctx);
   }
 
-  private async decide(screenKey: string, transactionId: string, userId: string, newStatus: 'approved' | 'rejected', remarks?: string, tx?: Prisma.TransactionClient) {
+  private async decide(screenKey: string, transactionId: string, userId: string, newStatus: 'approved' | 'rejected', remarks?: string, tx?: Prisma.TransactionClient, ctx?: ApprovalAuditContext) {
     const client = tx ?? this.prisma;
     const existing = await client.approvalRequest.findUnique({ where: { screenKey_transactionId: { screenKey, transactionId } } });
     if (!existing) throw new NotFoundException('No approval request found for this transaction.');
@@ -103,7 +161,7 @@ export class ApprovalService {
     if (count === 0) {
       throw new BadRequestException('This transaction was already decided by another request.');
     }
-    await this.writeAudit(screenKey, transactionId, newStatus, userId, { status: 'pending_approval' }, { status: newStatus, remarks: remarks ?? null }, tx);
+    await this.writeAudit(screenKey, transactionId, newStatus, userId, { status: 'pending_approval' }, { status: newStatus, remarks: remarks ?? null }, tx, ctx);
     return client.approvalRequest.findUniqueOrThrow({ where: { screenKey_transactionId: { screenKey, transactionId } } });
   }
 

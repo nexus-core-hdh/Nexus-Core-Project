@@ -60,10 +60,14 @@ import { FabricPlanningController } from './fabric-planning.controller';
 import { FabricPlanningService } from './fabric-planning.service';
 import { YarnPlanningController } from './yarn-planning.controller';
 import { YarnPlanningService } from './yarn-planning.service';
+import { TrimPlanningController } from './trim-planning.controller';
+import { TrimPlanningService } from './trim-planning.service';
 import { CuttingCardController } from './cutting-card.controller';
 import { CuttingCardService } from './cutting-card.service';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
+import { RecipeUsageController } from './recipe-usage.controller';
+import { RecipeUsageService } from './recipe-usage.service';
 import { ApprovalModule } from '../approval/approval.module';
 import { AuditModule } from '../audit/audit.module';
 
@@ -118,6 +122,8 @@ import { AuditModule } from '../audit/audit.module';
     WorkOrderController,
     FabricPlanningController,
     YarnPlanningController,
+    TrimPlanningController,
+    RecipeUsageController,
   ],
   providers: [
     WarehouseService,
@@ -156,6 +162,8 @@ import { AuditModule } from '../audit/audit.module';
     ReceiptTraceabilityService,
     FabricPlanningService,
     YarnPlanningService,
+    TrimPlanningService,
+    RecipeUsageService,
   ],
   // LegacyMasterLookupService.listItemUnits is the same per-item configured-Unit source Purchase
   // Order/Purchase Receipt already resolve Unit through (unit-conversion.util.ts's

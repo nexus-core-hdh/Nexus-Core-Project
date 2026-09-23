@@ -241,7 +241,12 @@ const COLUMNS: ColumnDef[] = [
   ro("packageCode", "Package Code", "text"),
   ro("manProductCode", "Man.Product Code", "text"),
   ro("manufacturingOrder", "Manufacturing Order", "text"),
-  ro("workOrderNo", "Work Order No", "number", "workOrderReceiptItemId"),
+  // Work Order No — special-cased in render (like PO NO below): reads the dedicated
+  // LineRow.workOrderNo display field, not extra[dataKey], since a fresh Planning-prefilled line
+  // has its real display text immediately (from PlanningPrefillLine.workOrderNo) but no `extra`
+  // yet (nothing has been saved/reloaded). No dataKey here — the generic ro() fallback would
+  // otherwise show the raw WorkOrderReceiptItemId integer, not a human-readable Work Order No.
+  ro("workOrderNo", "Work Order No", "text"),
   ro("workOrderCertification", "Work Order Certification", "text"),
   ro("vatReportGroupingField1", "VAT Report Grouping Field-1", "text", "vatListGField01"),
   ro("vatReportGroupingField2", "VAT Report Grouping Field-2", "text", "vatListGField02"),
@@ -389,6 +394,21 @@ interface LineRow {
   // through buildDto (colorCardId is the single source of truth), same convention as PO's own
   // LineRow.color.
   color: string;
+  // Work Order relationship — IM_ReceiptItem.WorkOrderReceiptItemId, a real, pre-existing FK to
+  // MA_WorkOrderItem (confirmed via inventory-receipt.service.ts's own ITEM_COLUMNS; already
+  // read by fabric-planning.service.ts's own aggregateReceipts join — this is the SAME column
+  // Planning's own Transaction Details depends on to find a receipt line at all). Populated from
+  // the Planning menu's own prefill (Fabric/Yarn/Trim Planning -> Subcontractor Transactions ->
+  // ... -> Send/Receive/Return) by resolving the target Work Order's own real "primary" Style
+  // Info line (work-order.service.ts's listItems()[0] — the same primary-line convention
+  // fabric-yarn-requirements.service.ts's own getManufacturingQuantityTotals already uses), never
+  // a fabricated id. `workOrderNo` is the paired display-only text (never itself sent through
+  // buildDto — same "live-only" treatment as poReceiptNo above): set immediately from the
+  // Planning row's own already-real PlanningPrefillLine.workOrderNo for a fresh prefilled line,
+  // or resolved server-side (inventory-receipt.service.ts's listItems(), mirroring its own
+  // existing orderReceiptNo follow-up query) once a line is actually saved and reloaded.
+  workOrderReceiptItemId: number | null;
+  workOrderNo: string;
   // Variant breakdown rows copied from the source PO line at import time, not yet created on
   // the server (createItemVariant needs this line's own real __rowId, which only exists after
   // this line itself is persisted — see persistRow/commitDrafts). Cleared once created; never
@@ -417,6 +437,7 @@ const emptyLine = (): LineRow => ({
   orderReceiptItemId: null, poReceiptNo: "",
   purchaseReceiptItemId: null, sourceReceiptNo: "", sourceReceiptType: null,
   colorCardId: null, color: "", pendingVariants: [],
+  workOrderReceiptItemId: null, workOrderNo: "",
   variantLines: [], variant1Name: "",
   extra: {},
 });
@@ -439,11 +460,17 @@ function recalc(row: LineRow): LineRow {
 // colorCardId/color are the exact same fields a manually looked-up item already sets (see
 // selectItemOnRow below), never a parallel/invented set. `price` is deliberately left blank (a
 // Planning row has a Requirement quantity, never a receipt price — inventing one would be a real
-// fabrication). This grid has no settable Work Order link field of its own on a fresh line (its
-// only "Work Order No" column — workOrderReceiptItemId — is a read-only value resolved server-side
-// via a real MA_WorkOrderItem join, never something a new draft line can set directly), so unlike
-// Purchase Order's own line-from-prefill, no Work Order context is carried here — a genuine,
-// confirmed architectural gap on THIS grid specifically, not an oversight.
+// fabrication).
+//
+// Work Order — workOrderNo is set immediately (display-only, already-real text straight off the
+// Planning row, same as code/name/unit above). The real persisted FK, workOrderReceiptItemId
+// (IM_ReceiptItem.WorkOrderReceiptItemId -> MA_WorkOrderItem), is deliberately left null HERE:
+// PlanningPrefillLine only carries workOrderId (MA_WorkOrder.RecId, the HEADER), and this column
+// needs a specific MA_WorkOrderItem LINE id, which this synchronous mapping function has no way
+// to resolve. `p.workOrderId` is stashed on `extra` (this row's own scratch bag, same field every
+// hydrate* function already reads/writes) purely so the async resolvePrefillWorkOrderLinks effect
+// below can find it after mount — never sent through buildDto itself, same "internal-only,
+// never persisted" convention as every other extra.* value.
 const lineFromPrefill = (p: PlanningPrefillLine): LineRow =>
   recalc({
     ...emptyLine(),
@@ -451,6 +478,8 @@ const lineFromPrefill = (p: PlanningPrefillLine): LineRow =>
     quantity: p.quantity ? String(p.quantity) : "",
     unitId: p.unitId, unit: p.unit ?? "",
     colorCardId: p.colorCardId, color: p.color ?? "",
+    workOrderNo: p.workOrderNo ?? "",
+    extra: { __prefillWorkOrderId: p.workOrderId ?? null },
   });
 
 const isBlankLine = (row: LineRow) => !row.inventoryId && !row.code.trim();
@@ -545,6 +574,46 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   useEffect(() => {
     if (inventoryReceiptId != null || !initialLines?.length) return;
     setRows((prev) => (prev.length === 1 && isBlankLine(prev[0]) ? initialLines.map(lineFromPrefill) : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLines, inventoryReceiptId]);
+  // Resolves the real, persisted Work Order relationship for every Planning-prefilled row
+  // (lineFromPrefill's own `extra.__prefillWorkOrderId` stash — see that function's own comment)
+  // into IM_ReceiptItem.WorkOrderReceiptItemId, the actual FK column buildDto below now sends and
+  // Planning's own Transaction Details aggregation (fabric-planning.service.ts's
+  // aggregateReceipts) already joins on. A Work Order's real "primary" Style Info line —
+  // legacyErpApi.workOrders.listItems(workOrderId)[0].id — is the SAME primary-line convention
+  // fabric-yarn-requirements.service.ts's own getManufacturingQuantityTotals already establishes
+  // for this exact table (MA_WorkOrderItem, ordered by ItemOrderNo/RecId), not a new one. Cached
+  // per workOrderId (a multi-row Planning selection from the SAME Work Order resolves it once).
+  // Only runs for a genuinely new/unsaved receipt — an existing receipt's own real persisted
+  // WorkOrderReceiptItemId (loaded via listItems() -> fromApiRow) is never overwritten here.
+  useEffect(() => {
+    if (inventoryReceiptId != null || !initialLines?.some((l) => l.workOrderId != null)) return;
+    let cancelled = false;
+    const cache = new Map<number, Promise<number | null>>();
+    const resolvePrimaryItemId = (workOrderId: number): Promise<number | null> => {
+      let p = cache.get(workOrderId);
+      if (!p) {
+        p = legacyErpApi.workOrders.listItems(workOrderId)
+          .then((r: any) => (Array.isArray(r) && r.length ? Number(r[0].id) : null))
+          .catch(() => null);
+        cache.set(workOrderId, p);
+      }
+      return p;
+    };
+    (async () => {
+      const distinctWorkOrderIds = Array.from(new Set(initialLines!.map((l) => l.workOrderId).filter((id): id is number => id != null)));
+      const resolvedByWorkOrderId = new Map<number, number | null>();
+      await Promise.all(distinctWorkOrderIds.map(async (id) => resolvedByWorkOrderId.set(id, await resolvePrimaryItemId(id))));
+      if (cancelled) return;
+      setRows((prev) => prev.map((row) => {
+        const pendingWorkOrderId = row.extra?.__prefillWorkOrderId;
+        if (pendingWorkOrderId == null || row.workOrderReceiptItemId != null) return row;
+        const itemId = resolvedByWorkOrderId.get(Number(pendingWorkOrderId));
+        return itemId == null ? row : { ...row, workOrderReceiptItemId: itemId };
+      }));
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialLines, inventoryReceiptId]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -749,6 +818,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     sourceReceiptType: r.sourceReceiptType ?? null,
     colorCardId: r.colorCardId ?? null, color: "",
     pendingVariants: [],
+    workOrderReceiptItemId: r.workOrderReceiptItemId ?? null,
+    workOrderNo: r.workOrderNo ?? "",
     // r.variants — already resolved by listItems()'s existing "Variant breakdown read-back"
     // query (inventory-receipt.service.ts), so this needs no extra fetch to arrive; only the
     // human-readable Variant1 name still needs hydrateVariants() below.
@@ -826,6 +897,10 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // Colour — IM_ReceiptItem.ColorCardId, carried across from the source PO line at import
     // time (see importLines below); undefined for every manually-added line.
     colorCardId: row.colorCardId ?? undefined,
+    // Work Order — IM_ReceiptItem.WorkOrderReceiptItemId, resolved from a Planning-menu prefill
+    // (see the resolvePrimaryItemId effect above); undefined for every manually-added line, same
+    // "only sent when real" convention as every other optional FK here.
+    workOrderReceiptItemId: row.workOrderReceiptItemId ?? undefined,
   }), [round]);
 
   // Variant breakdown — creates each of a just-persisted line's still-pending
@@ -1333,6 +1408,16 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       return (
                         <TableCell key={col.key} className={cellCls(r.clientId, "poNo", firstBorder)}>
                           <div {...staticCellProps(r, "poNo", r.poReceiptNo || "—", "left", !r.poReceiptNo)} />
+                        </TableCell>
+                      );
+                    }
+
+                    // WORK ORDER NO — read-only, Planning menu context (see LineRow.workOrderNo
+                    // comment above).
+                    if (col.key === "workOrderNo") {
+                      return (
+                        <TableCell key={col.key} className={cellCls(r.clientId, "workOrderNo", firstBorder)}>
+                          <div {...staticCellProps(r, "workOrderNo", r.workOrderNo || "—", "left", !r.workOrderNo)} />
                         </TableCell>
                       );
                     }

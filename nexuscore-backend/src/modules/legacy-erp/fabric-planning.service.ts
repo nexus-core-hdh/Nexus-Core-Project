@@ -55,7 +55,14 @@ export class FabricPlanningService {
   // either. Reusing this method (rather than a second, near-identical copy) is what keeps that
   // guarantee true by construction instead of by convention. No behavior change to Fabric Planning
   // itself — this widened visibility does not alter what this method does or how it's called here.
-  async findCandidateWorkOrderIds(search?: { orderNo?: string; styleQuery?: string; customerQuery?: string }, limit = 60): Promise<number[]> {
+  //
+  // `recipeType` — added for TrimPlanningService's own reuse (trim-planning.service.ts): a Work
+  // Order's OWN BOM source is scoped by MA_Recipe.RecipeType, the same real, pre-existing
+  // work-order.service.ts convention every BOM-backed screen already keys off (RECIPE_TYPE_BY_
+  // LINE_TYPE: fabric=1, trim=2, ornament=3, process=4) — Fabric Planning/Yarn Planning are both
+  // always fabric-sourced, so they both keep the exact byte-for-byte default (1) and neither call
+  // site below changed. Trim Planning is the first caller to pass 2.
+  async findCandidateWorkOrderIds(search?: { orderNo?: string; styleQuery?: string; customerQuery?: string }, limit = 60, recipeType = 1): Promise<number[]> {
     const filters: Prisma.Sql[] = [Prisma.sql`wo."IsDeleted" = 0`];
     if (search?.orderNo) filters.push(Prisma.sql`wo."WorkOrderNo" ILIKE ${`%${search.orderNo}%`}`);
     if (search?.customerQuery) {
@@ -72,7 +79,7 @@ export class FabricPlanningService {
           EXISTS (
             SELECT 1 FROM "MA_Recipe" rec
             JOIN "MA_RecipeItem" ri ON ri."RecipeId" = rec."RecId" AND ri."IsDeleted" = 0
-            WHERE rec."WorkOrderId" = wo."RecId" AND rec."RecipeType" = 1 AND rec."IsDeleted" = 0
+            WHERE rec."WorkOrderId" = wo."RecId" AND rec."RecipeType" = ${recipeType} AND rec."IsDeleted" = 0
           )
           OR wo."StyleCardId" IS NOT NULL
         )
@@ -134,30 +141,24 @@ export class FabricPlanningService {
     return out;
   }
 
-  // Received / Process Sent / Process Received / Manufacturing Send — all four from the SAME
-  // IM_Receipt/IM_ReceiptItem join getTransactionDetails() already uses, differing only by
-  // ReceiptType (receipt-types.config.ts's own real, curated values — never guessed from a column
-  // name): 2 = Purchase Receipt ("Received"), 134 = Outside Process Sent Receipt, 11 = Outside
-  // Process Receive Receipt, 140 = Manufacture Send Receipt. See this file's own top comment on why
-  // "Dye"/"Others"/"Repair" are NOT separately queryable here — no distinct ReceiptType or column
-  // backs those as independent categories; they'd all fall under 134/11 (Outside Process), only
-  // distinguishable by MD_SubcontractType, a free-text user-configurable master with no fixed
-  // Dye-vs-Process-vs-Repair taxonomy (confirmed empirically: real values in this DB are "Dyeing",
-  // "Knitting", "Washing", "Printing", "Factory", "General" — an installation-specific list, not a
-  // legacy-fixed category set). Reported as a genuine unsupported split in the final report, not
-  // fabricated here.
-  // Not private — reused by YarnPlanningService, same reasoning as aggregatePurchase above: this
-  // is a generic (Work Order, Inventory Item) receipt aggregation, not Fabric-specific.
+  // Received / Manufacturing Send — from the SAME IM_Receipt/IM_ReceiptItem join
+  // getTransactionDetails() already uses, differing only by ReceiptType (receipt-types.config.ts's
+  // own real, curated values — never guessed from a column name): 2 = Purchase Receipt
+  // ("Received"), 140 = Manufacture Send Receipt. Outside Process Sent/Receive (134/11) — formerly
+  // collapsed here into blanket "Process Sent"/"Process Received" totals across every subcontract
+  // type at once — now come from aggregateSubcontractReceipts() below instead, broken out per real
+  // MD_SubcontractType (see that method's own comment on why the blanket totals were replaced, not
+  // kept alongside). Not private — reused by YarnPlanningService/TrimPlanningService, same
+  // reasoning as aggregatePurchase above: this is a generic (Work Order, Inventory Item) receipt
+  // aggregation, not Fabric-specific.
   async aggregateReceipts(workOrderIds: number[], inventoryIds: number[]) {
-    const out = new Map<string, { received: number; processSent: number; processReceived: number; manufacturingSend: number }>();
+    const out = new Map<string, { received: number; manufacturingSend: number }>();
     if (!workOrderIds.length || !inventoryIds.length) return out;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         wi."WorkOrderId" as "workOrderId",
         ri."InventoryId" as "inventoryId",
         SUM(CASE WHEN r."ReceiptType" = 2 THEN ri."Quantity" ELSE 0 END) as received,
-        SUM(CASE WHEN r."ReceiptType" = 134 THEN ri."Quantity" ELSE 0 END) as "processSent",
-        SUM(CASE WHEN r."ReceiptType" = 11 THEN ri."Quantity" ELSE 0 END) as "processReceived",
         SUM(CASE WHEN r."ReceiptType" = 140 THEN ri."Quantity" ELSE 0 END) as "manufacturingSend"
       FROM "IM_ReceiptItem" ri
       JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
@@ -165,16 +166,66 @@ export class FabricPlanningService {
       WHERE ri."IsDeleted" = 0
         AND wi."WorkOrderId" IN (${Prisma.join(workOrderIds)})
         AND ri."InventoryId" IN (${Prisma.join(inventoryIds)})
-        AND r."ReceiptType" IN (2, 134, 11, 140)
+        AND r."ReceiptType" IN (2, 140)
       GROUP BY wi."WorkOrderId", ri."InventoryId"
     `);
     for (const r of sanitizeRawRow(rows)) {
       out.set(`${r.workOrderId}:${r.inventoryId}`, {
         received: Number(r.received) || 0,
-        processSent: Number(r.processSent) || 0,
-        processReceived: Number(r.processReceived) || 0,
         manufacturingSend: Number(r.manufacturingSend) || 0,
       });
+    }
+    return out;
+  }
+
+  // Dynamic Subcontractor Transaction columns — replaces the old blanket "Process Sent"/"Process
+  // Received" totals (which summed EVERY MD_SubcontractType together into one indistinguishable
+  // number) with a real per-(Work Order, Inventory Item, Subcontract Type) breakdown, keyed by
+  // MD_SubcontractType.RecId — the same real id receipt-menu.ts's own "Subcontractor Transactions"
+  // submenu and inventory-receipt.service.ts's own IM_Receipt.SubcontractTypeId already use, never
+  // a name/label match. `receiptType` mapping (134=Send, 11=Receive) is the SAME real, curated
+  // convention receipt-menu.ts already hardcodes for its own menu construction — reused, not
+  // duplicated, and intentionally still only these two (Return, 12, is a real receipt type but has
+  // no column slot in this screen's own reference layout, same documented gap
+  // buildSubcontractTypeActions' own comment already discloses for the menu side).
+  //
+  // A row whose receipt has NO SubcontractTypeId set (confirmed live: real legacy rows exist, e.g.
+  // OPS-1/OPS-2 in this dev DB) is EXCLUDED here (`SubcontractTypeId IS NOT NULL`) — it can't be
+  // attributed to any real type without guessing, so it simply doesn't appear under any dynamic
+  // column, matching this task's own "never fabricate" rule. It was never part of the Balance
+  // formula either way (Balance = Required - Received, ReceiptType 2 only — see listPlanningRows'
+  // own comment), so this exclusion changes no calculation, only which display column a Send/
+  // Receive quantity that already couldn't be labeled would have shown under.
+  //
+  // One batched query regardless of how many subcontract types exist or how many planning rows
+  // result — GROUP BY already collapses to (Work Order, Item, Type) triples, not per-row. Not
+  // private — reused by YarnPlanningService/TrimPlanningService, same as every other aggregate*
+  // method in this file.
+  async aggregateSubcontractReceipts(workOrderIds: number[], inventoryIds: number[]): Promise<Map<string, Map<number, { send: number; receive: number }>>> {
+    const out = new Map<string, Map<number, { send: number; receive: number }>>();
+    if (!workOrderIds.length || !inventoryIds.length) return out;
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        wi."WorkOrderId" as "workOrderId",
+        ri."InventoryId" as "inventoryId",
+        r."SubcontractTypeId" as "subcontractTypeId",
+        SUM(CASE WHEN r."ReceiptType" = 134 THEN ri."Quantity" ELSE 0 END) as send,
+        SUM(CASE WHEN r."ReceiptType" = 11 THEN ri."Quantity" ELSE 0 END) as receive
+      FROM "IM_ReceiptItem" ri
+      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
+      JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      WHERE ri."IsDeleted" = 0
+        AND wi."WorkOrderId" IN (${Prisma.join(workOrderIds)})
+        AND ri."InventoryId" IN (${Prisma.join(inventoryIds)})
+        AND r."ReceiptType" IN (134, 11)
+        AND r."SubcontractTypeId" IS NOT NULL
+      GROUP BY wi."WorkOrderId", ri."InventoryId", r."SubcontractTypeId"
+    `);
+    for (const r of sanitizeRawRow(rows)) {
+      const key = `${r.workOrderId}:${r.inventoryId}`;
+      const inner = out.get(key) ?? new Map<number, { send: number; receive: number }>();
+      inner.set(Number(r.subcontractTypeId), { send: Number(r.send) || 0, receive: Number(r.receive) || 0 });
+      out.set(key, inner);
     }
     return out;
   }
@@ -224,9 +275,10 @@ export class FabricPlanningService {
     if (!flat.length) return [];
 
     const inventoryIds = Array.from(new Set(flat.map((r) => r.inventoryId).filter((id): id is number => id != null)));
-    const [purchaseByKey, receiptsByKey] = await Promise.all([
+    const [purchaseByKey, receiptsByKey, subcontractByKey] = await Promise.all([
       this.aggregatePurchase(workOrderIds, inventoryIds),
       this.aggregateReceipts(workOrderIds, inventoryIds),
+      this.aggregateSubcontractReceipts(workOrderIds, inventoryIds),
     ]);
 
     return flat.map((r) => {
@@ -235,6 +287,14 @@ export class FabricPlanningService {
       const purchase = key ? purchaseByKey.get(key) ?? 0 : 0;
       const required = Number(r.quantity) || 0;
       const received = receipts?.received ?? 0;
+      // Plain object, not a Map — this crosses an HTTP/JSON boundary to the frontend (a Map
+      // silently serializes to "{}" through JSON.stringify). Keyed by the real
+      // MD_SubcontractType.RecId (string, since JSON object keys are always strings) so the
+      // frontend's own dynamic column builder (subcontract-planning-columns.tsx) can look up
+      // {send,receive} per type without a second request.
+      const subcontractTransactions = Object.fromEntries(
+        Array.from((key ? subcontractByKey.get(key) : undefined) ?? new Map()).map(([typeId, v]) => [String(typeId), v]),
+      );
       return {
         id: `${r.workOrderId}:${r.id}`,
         workOrderId: r.workOrderId,
@@ -263,12 +323,17 @@ export class FabricPlanningService {
         required,
         purchase,
         received,
-        processSent: receipts?.processSent ?? 0,
-        processReceived: receipts?.processReceived ?? 0,
+        // Dynamic per-Subcontract-Type Send/Receive breakdown — see aggregateSubcontractReceipts'
+        // own comment. Replaces the old blanket processSent/processReceived totals entirely (not
+        // alongside them); the frontend's dynamic column builder reads this instead.
+        subcontractTransactions,
         manufacturingSend: receipts?.manufacturingSend ?? 0,
-        // Derived, not a separate source — Required minus Received, both already real. A negative
-        // balance (over-received relative to this color-scoped Required) is possible and left
-        // as-is; it's real arithmetic over real numbers, not clamped/hidden.
+        // Derived, not a separate source — Required minus Received, both already real. UNCHANGED
+        // by the dynamic subcontract breakdown above: Balance never included processSent/
+        // processReceived/subcontractTransactions either before or after this change — see this
+        // method's own top comment. A negative balance (over-received relative to this
+        // color-scoped Required) is possible and left as-is; it's real arithmetic over real
+        // numbers, not clamped/hidden.
         balance: Math.round((required - received) * 10000) / 10000,
       };
     });

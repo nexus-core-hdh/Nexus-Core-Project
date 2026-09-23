@@ -90,6 +90,70 @@ function scrub(value: unknown, depth = 0): unknown {
   return value;
 }
 
+// PRODUCTION HARDENING (root cause of "CREATE produces Created + Updated" / any no-op Save
+// producing a false Updated event — confirmed live: PUT-ing back the exact same values a record
+// already had still wrote a second AuditLog row with oldValues === newValues, because every
+// update() unconditionally logged UPDATE whenever the dto carried any defined column, never
+// checking whether a value actually differs from what's already persisted).
+//
+// Every update() should call this BEFORE recordSafe()/record() for AUDIT_ACTIONS.UPDATE and skip
+// the audit write entirely when it returns false — the business UPDATE statement itself is left
+// untouched (still runs exactly as before; only the audit event is conditional), so this can never
+// change what gets persisted, only whether a real change is reported. Compares the same flat or
+// single-section snapshot object a service already composes for before/after (see this file's own
+// RecordAuditParams comment on that shape) key-by-key with a deep (JSON) equality check.
+export function hasRealChanges(before: Record<string, any> | null | undefined, after: Record<string, any> | null | undefined, ignoreKeys: string[] = []): boolean {
+  const a = before ?? {};
+  const b = after ?? {};
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    if (ignoreKeys.includes(k)) continue;
+    if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) return true;
+  }
+  return false;
+}
+
+// GENERIC FK DISPLAY ENRICHMENT — a raw foreign-key id (e.g. currentAccountId: 200130) is
+// useless to a human reading Log Details. This lets any calling service replace such a field,
+// at the exact moment it composes an audit snapshot, with `{ id, code, name }` — the id kept
+// alongside for technical reference, code/name resolved ONCE at write time (not a live join at
+// read time, so a master renamed/deleted later can never rewrite what an old audit row shows —
+// see this file's own "snapshot at write time" design and RecordAuditParams' own comment).
+//
+// Deliberately NOT a universal "any id, any table" auto-resolver — that would have to guess
+// which table a bare number belongs to. Each calling service already knows its own real FK
+// columns and already has (or can trivially get, via LegacyMasterLookupService or a Prisma
+// model) a way to read that table's Code/Name — this just gives every service the SAME reusable
+// shape/plumbing for doing so, instead of each one hand-rolling its own enrichment.
+export interface DisplayRef {
+  id: number | string;
+  code: string | null;
+  name: string | null;
+}
+export type FkResolver = (id: any) => Promise<{ code: string | null; name: string | null } | null>;
+
+// Best-effort by design: a resolver that throws, times out, or returns null just leaves that
+// field as the original raw value — enrichment can never block or fail an audit write. Only
+// fields actually present on `obj` AND listed in `resolvers` are touched; everything else
+// (including fields with no registered resolver) passes through unchanged. Works on a flat
+// header row or a single line/detail row — call it per-row for an array section.
+export async function enrichDisplayRefs<T extends Record<string, any>>(obj: T, resolvers: Record<string, FkResolver>): Promise<T> {
+  const out: Record<string, any> = { ...obj };
+  await Promise.all(
+    Object.keys(resolvers).map(async (field) => {
+      const rawId = obj[field];
+      if (rawId === null || rawId === undefined) return;
+      try {
+        const resolved = await resolvers[field](rawId);
+        out[field] = resolved ? { id: rawId, code: resolved.code ?? null, name: resolved.name ?? null } : rawId;
+      } catch {
+        // resolver failure -> leave the raw id in place, never throw
+      }
+    }),
+  );
+  return out as T;
+}
+
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
@@ -184,7 +248,17 @@ export class AuditService {
     const [rows, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        include: { user: { select: { name: true, email: true } } },
+        // PERFORMANCE/SAFETY: explicit select, deliberately omitting oldValues/newValues — the
+        // worklist must never load complete document snapshots for every row on every page (that
+        // data can be arbitrarily large per row); Log Details' own getById() below is the only
+        // place a snapshot is fetched, and only for the one row actually opened.
+        select: {
+          id: true, entityType: true, entityId: true, action: true, changedBy: true, companyId: true,
+          screenKey: true, moduleName: true, menuTitle: true, documentNo: true,
+          parentEntityType: true, parentEntityId: true, parentDocumentNo: true,
+          correlationId: true, ipAddress: true, createdAt: true,
+          user: { select: { name: true, email: true } },
+        },
         orderBy: { createdAt: params.sortDir ?? 'desc' },
         skip,
         take,

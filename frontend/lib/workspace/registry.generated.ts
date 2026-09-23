@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import type { WorkspaceModule } from "./registry";
 
 export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
+  { path: "/dashboard/administration/log-tracking", Component: dynamic(() => import("@/app/dashboard/(auth)/administration/log-tracking/page"), { ssr: false }) },
   { path: "/dashboard/apps/chat", Component: dynamic(() => import("@/app/dashboard/(auth)/apps/chat/page"), { ssr: false }) },
   { path: "/dashboard/apps/mail", Component: dynamic(() => import("@/app/dashboard/(auth)/apps/mail/page"), { ssr: false }) },
   { path: "/dashboard/apps/pos-system", Component: dynamic(() => import("@/app/dashboard/(auth)/apps/pos-system/page"), { ssr: false }) },
@@ -100,6 +101,7 @@ export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/dashboard/legacy-erp/trim-cards-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/trim-cards-list/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/trim-inventory-cards", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/trim-inventory-cards/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/trim-inventory-cards-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/trim-inventory-cards-list/page"), { ssr: false }) },
+  { path: "/dashboard/legacy-erp/trim-planning", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/trim-planning/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/unit-sets", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/unit-sets/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/unit-sets-list", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/unit-sets-list/page"), { ssr: false }) },
   { path: "/dashboard/legacy-erp/warehouse-parameters", Component: dynamic(() => import("@/app/dashboard/(auth)/legacy-erp/warehouse-parameters/page"), { ssr: false }) },

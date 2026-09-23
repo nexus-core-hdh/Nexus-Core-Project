@@ -49,20 +49,20 @@ export class InventoryReceiptController {
     return this.svc.getApprovalStatus(id);
   }
 
-  @Post(':id/submit-for-approval') submitForApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
-    return this.svc.submitForApproval(id, userId);
+  @Post(':id/submit-for-approval') submitForApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.submitForApproval(id, userId, undefined, companyId);
   }
 
   @Permissions({ module: 'approval', action: 'approve' })
   @Post(':id/approve')
-  approve(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks?: string }, @CurrentUser('id') userId: string) {
-    return this.svc.approve(id, userId, dto?.remarks);
+  approve(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks?: string }, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.approve(id, userId, dto?.remarks, undefined, companyId);
   }
 
   @Permissions({ module: 'approval', action: 'reject' })
   @Post(':id/reject')
-  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks: string }, @CurrentUser('id') userId: string) {
-    return this.svc.reject(id, userId, dto.remarks);
+  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks: string }, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.reject(id, userId, dto.remarks, undefined, companyId);
   }
 
   // Universal Action Menu -> Return/Purchase Receipt submenu.

@@ -216,7 +216,7 @@ export default function CurrentAccountListPage() {
       tabIndex: 0,
       onFocus: () => setSelectedRowKey(String(row.id)),
       onKeyDown: (e: React.KeyboardEvent) => handleRowKeyDown(e, row, index),
-      className: cn((el as React.ReactElement<any>).props.className, selectedRowKey === String(row.id) && "bg-primary/10"),
+      className: cn((el as React.ReactElement<any>).props.className, selectedRowKey === String(row.id) && "bg-selected hover:bg-selected-hover"),
     });
     return mode === "lookup" ? withNav : <RowContextMenu key={row.id} actions={getRowActions(row)}>{withNav}</RowContextMenu>;
   };

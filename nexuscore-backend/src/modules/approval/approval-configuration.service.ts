@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 
 interface UpdateConfigDto {
   approvalRequired?: boolean;
@@ -11,7 +12,10 @@ interface UpdateConfigDto {
 
 @Injectable()
 export class ApprovalConfigurationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   // Merges every Legacy ERP MenuItem row (the existing screen/module registry — already 38
   // real rows, one per Legacy ERP screen) with its ApprovalConfiguration row if one exists.
@@ -60,7 +64,7 @@ export class ApprovalConfigurationService {
     });
   }
 
-  async update(screenKey: string, dto: UpdateConfigDto, userId: string) {
+  async update(screenKey: string, dto: UpdateConfigDto, userId: string, companyId?: string) {
     const existing = await this.prisma.approvalConfiguration.findUnique({ where: { screenKey } });
     const next = await this.prisma.approvalConfiguration.upsert({
       where: { screenKey },
@@ -83,18 +87,28 @@ export class ApprovalConfigurationService {
     });
     // Configuration changes are audited via the same existing AuditLog table the approval
     // transactions themselves use — entityType names the config record, not a screen instance.
-    await this.prisma.auditLog.create({
-      data: {
-        entityType: 'ApprovalConfiguration',
-        entityId: screenKey,
-        action: 'config-changed',
-        changedBy: userId,
-        oldValues: existing
-          ? { approvalRequired: existing.approvalRequired, approvalLevel: existing.approvalLevel, isActive: existing.isActive }
-          : Prisma.JsonNull,
-        newValues: { approvalRequired: next.approvalRequired, approvalLevel: next.approvalLevel, isActive: next.isActive },
-      },
-    });
+    //
+    // HARDENING FIX (Category B -> migrated to the central AuditService): this used to always
+    // `prisma.auditLog.create()` directly with no companyId (nullable column, so it wrote
+    // successfully but the row was then invisible to every company-scoped Log Tracking query).
+    // Routed through AuditService.recordSafe now that the controller passes companyId; falls
+    // back to the old direct write only if a caller somehow omits it, so this never regresses to
+    // silently dropping the event.
+    const oldValues = existing
+      ? { approvalRequired: existing.approvalRequired, approvalLevel: existing.approvalLevel, isActive: existing.isActive }
+      : null;
+    const newValues = { approvalRequired: next.approvalRequired, approvalLevel: next.approvalLevel, isActive: next.isActive };
+    if (companyId) {
+      await this.audit.recordSafe({
+        userId, companyId, screenKey,
+        entityType: 'ApprovalConfiguration', entityId: screenKey, action: 'config-changed',
+        documentNo: screenKey, before: oldValues, after: newValues,
+      });
+    } else {
+      await this.prisma.auditLog.create({
+        data: { entityType: 'ApprovalConfiguration', entityId: screenKey, action: 'config-changed', changedBy: userId, oldValues: oldValues ?? Prisma.JsonNull, newValues },
+      });
+    }
     return next;
   }
 }

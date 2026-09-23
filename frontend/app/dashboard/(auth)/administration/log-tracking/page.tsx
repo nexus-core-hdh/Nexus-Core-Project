@@ -25,12 +25,16 @@ import { ScrollText, RefreshCw, Eye, ChevronRight, ChevronLeft, SearchX } from "
 // LogDetailsDialog for the selected row.
 const PAGE_SIZE = 50;
 
+// Shared semantic status tokens (globals.css), not per-badge hardcoded colors — create/approve
+// share the same real-world meaning ("succeeded") so they share the same token, same for
+// delete/reject ("destructive") and update/restore's own distinct meanings. No `dark:` variant
+// needed: each token already branches light/dark itself (see globals.css's own :root/.dark).
 const ACTION_BADGE: Record<string, string> = {
-  create: "bg-emerald-600 hover:bg-emerald-600/90 dark:bg-emerald-500 text-white border-transparent",
-  update: "bg-blue-600 hover:bg-blue-600/90 dark:bg-blue-500 text-white border-transparent",
+  create: "bg-success hover:bg-success/90 text-success-foreground border-transparent",
+  update: "bg-info hover:bg-info/90 text-info-foreground border-transparent",
   delete: "bg-destructive hover:bg-destructive/90 text-white border-transparent",
-  restore: "bg-amber-600 hover:bg-amber-600/90 dark:bg-amber-500 text-white border-transparent",
-  approve: "bg-emerald-600 hover:bg-emerald-600/90 dark:bg-emerald-500 text-white border-transparent",
+  restore: "bg-warning hover:bg-warning/90 text-warning-foreground border-transparent",
+  approve: "bg-success hover:bg-success/90 text-success-foreground border-transparent",
   reject: "bg-destructive hover:bg-destructive/90 text-white border-transparent",
 };
 
@@ -215,7 +219,7 @@ export default function LogTrackingPage() {
           loading={loading}
           onRowDoubleClick={openDetails}
           getRowProps={(row) => ({
-            className: `group cursor-pointer hover:bg-muted/40 ${selected?.id === row.id ? "bg-primary/5 hover:bg-primary/10" : ""}`,
+            className: `group cursor-pointer hover:bg-muted/40 ${selected?.id === row.id ? "bg-selected hover:bg-selected-hover" : ""}`,
             onClick: () => setSelected(row),
           })}
           renderRowActions={(row) => (

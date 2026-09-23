@@ -229,37 +229,41 @@ function unsupported(key: string, label: string, icon: RowAction["icon"], reason
   return { key, label, icon, onSelect: () => {}, disabled: true, title: reason, separatorBefore };
 }
 
-// One subcontract type's own 4-category cascade — "Order Transactions (Directives)" / "Issued
-// Transactions" / "Received Transactions" / "Subcontractor Return Transactions", matching the
-// legacy screenshot's own wording exactly. Receipt type mapping (real, from receipt-types.config.
-// ts's SUBCONTRACT_RECEIPT_TYPES = [11, 12, 134, 133], plus the separate Subcontract Order entity
-// for Directives) — fixed per this task's own instruction #8 ("may remain fixed only if they
-// already map to the existing receipt system"), only the PROCESS level above them is dynamic:
+// One subcontract type's own 4-category cascade. Receipt type mapping (real, from
+// receipt-types.config.ts's SUBCONTRACT_RECEIPT_TYPES = [11, 12, 134, 133], plus the separate
+// Subcontract Order entity for Directives) — fixed per this task's own instruction #8 ("may
+// remain fixed only if they already map to the existing receipt system"), only the PROCESS level
+// above them is dynamic:
 //   Order Transactions (Directives) -> Subcontract Order (receiptType 3, IM_OrderReceipt) — no
-//     type passed (see openSubcontractOrder's own comment on the confirmed field gap).
-//   Issued Transactions             -> Outside Process Sent Receipt (134) — we send TO the
+//     type passed (see openSubcontractOrder's own comment on the confirmed field gap). Label kept
+//     generic/fixed (NOT "<Type> Order") — IM_OrderReceiptItem has no SubcontractTypeId column at
+//     all (only SubcontractorId, the vendor FK, a different concept), so unlike the 3 below, this
+//     action is never actually scoped to the clicked type; a per-type label here would imply a
+//     precision the underlying data doesn't have.
+//   <Type> Send    -> Outside Process Sent Receipt (134) — we send TO the subcontractor.
+//   <Type> Receive -> Outside Process Receive Receipt (11) — we receive processed goods FROM the
 //     subcontractor.
-//   Received Transactions           -> Outside Process Receive Receipt (11) — we receive
-//     processed goods FROM the subcontractor.
-//   Subcontractor Return Transactions -> Outside Process Return Receipt (12) — the direct return
-//     counterpart of Received (11), same "Receive/Return" pairing convention Purchase Receipt (2)
-//     / Purchase Return (122) already use elsewhere in this same menu.
+//   <Type> Return  -> Outside Process Return Receipt (12) — the direct return counterpart of
+//     Receive (11), same "Receive/Return" pairing convention Purchase Receipt (2) / Purchase
+//     Return (122) already use elsewhere in this same menu.
+// Labels read naturally per ERP convention (e.g. "Dyeing Send" / "Dyeing Receive" / "Dyeing
+// Return") — generated from the type's own real name, never hardcoded per process, so a new
+// MD_SubcontractType row gets its own correctly-labeled Send/Receive/Return automatically.
 //
-// NOT mapped here: Outside Process Sent Return Receipt (133) — the return counterpart of Issued
+// NOT mapped here: Outside Process Sent Return Receipt (133) — the return counterpart of Send
 // (134). The legacy reference structure (per the attached screenshot) has exactly 4 category
-// slots per type with no further nesting under "Subcontractor Return Transactions", so 133 has no
-// slot to occupy without either inventing a 5th category (not in the legacy reference) or
-// silently blending two semantically different receipt types under one ambiguous label. This is a
-// genuine, confirmed structural gap versus the previous flat 4-item menu (which did expose all 4
-// real types as siblings) — reported here and in the final report, not silently dropped. Type 133
-// remains reachable exactly as before via the un-scoped Subcontract Receipts screen elsewhere in
-// the app; it is only this cascading Planning menu that no longer surfaces it.
+// slots per type with no further nesting under Return, so 133 has no slot to occupy without
+// either inventing a 5th category (not in the legacy reference) or silently blending two
+// semantically different receipt types under one ambiguous label. This is a genuine, confirmed
+// structural gap — reported here and in the final report, not silently dropped. Type 133 remains
+// reachable exactly as before via the un-scoped Subcontract Receipts screen elsewhere in the app;
+// it is only this cascading Planning menu that no longer surfaces it.
 function buildSubcontractTypeActions(router: Router, type: SubcontractTypeOption, lines: PlanningPrefillLine[]): RowAction[] {
   return [
     { key: `sub-${type.id}-order`, label: 'Order Transactions (Directives)', icon: FileSignature, onSelect: () => openSubcontractOrder(router, lines) },
-    { key: `sub-${type.id}-issued`, label: 'Issued Transactions', icon: Send, onSelect: () => openSubcontractReceipt(router, 134, type, lines) },
-    { key: `sub-${type.id}-received`, label: 'Received Transactions', icon: PackageCheck, onSelect: () => openSubcontractReceipt(router, 11, type, lines) },
-    { key: `sub-${type.id}-return`, label: 'Subcontractor Return Transactions', icon: Undo2, onSelect: () => openSubcontractReceipt(router, 12, type, lines) },
+    { key: `sub-${type.id}-issued`, label: `${type.name} Send`, icon: Send, onSelect: () => openSubcontractReceipt(router, 134, type, lines) },
+    { key: `sub-${type.id}-received`, label: `${type.name} Receive`, icon: PackageCheck, onSelect: () => openSubcontractReceipt(router, 11, type, lines) },
+    { key: `sub-${type.id}-return`, label: `${type.name} Return`, icon: Undo2, onSelect: () => openSubcontractReceipt(router, 12, type, lines) },
   ];
 }
 

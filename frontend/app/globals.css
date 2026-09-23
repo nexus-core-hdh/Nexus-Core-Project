@@ -71,6 +71,48 @@
   --fc-border-color: var(--border);
   --fc-page-bg-color: var(--muted);
   --fc-today-bg-color: var(--muted);
+
+  /* ── Semantic ERP design tokens ────────────────────────────────────────────────────────────
+     Project-wide, shared-component-level tokens (grid row selection, status colors) — defined
+     ONCE here, never per-page. Unlike --primary/--secondary (which each of the 7 theme presets
+     in themes.css re-derives from its own brand hue), these follow the SAME convention already
+     established by --destructive: every preset already repeats the identical destructive value
+     rather than re-deriving it, i.e. it's already treated as a fixed semantic, not a themed one.
+     Selection/success/warning/info follow that same precedent — a "selected row" or "success"
+     badge must read the same regardless of which brand preset (Ocean Breeze, Lavender Dream, ...)
+     is active, so no preset needs to (or should) redefine any of these. */
+
+  /* Selected row/item — a dedicated, always-visible tint (NOT a low-opacity --primary blend,
+     which is what report-grid.tsx's own previous `bg-primary/10` bug actually was: --primary is
+     near-black in light mode, so a 10% blend over a white row is barely perceptible, especially
+     in a dense small-text ERP grid). Fixed, professional blue — the same convention spreadsheet/
+     ERP grids (Excel, Google Sheets) already use for row selection, independent of brand color so
+     it can never wash out against a preset whose own --primary happens to sit close in lightness
+     to the row background. */
+  --selected: oklch(0.93 0.035 245);
+  --selected-hover: oklch(0.885 0.05 245);
+  --selected-border: oklch(0.6 0.15 245);
+  --selected-foreground: var(--foreground);
+
+  /* Status colors — success/warning/info, the missing siblings of the existing --destructive
+     token (danger). */
+  --success: oklch(0.6 0.14 152);
+  --success-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.77 0.16 80);
+  --warning-foreground: oklch(0.2 0.03 80);
+  --info: oklch(0.62 0.14 235);
+  --info-foreground: oklch(0.99 0 0);
+
+  /* Surface/border/text hierarchy — mostly aliases onto tokens that already exist (never a second
+     color system), plus the few genuinely-missing intermediate steps. */
+  --surface: var(--card);
+  --surface-hover: var(--muted);
+  --border-strong: var(--base-300);
+  --text-secondary: var(--base-600);
+  /* Hover shift for --primary, direction-safe regardless of whether --primary is near-black or
+     near-white in the active preset/theme: mixes a small amount of the CURRENT --background in,
+     which always nudges toward the surface rather than risking an inverted-looking darken. */
+  --primary-hover: color-mix(in oklch, var(--primary) 88%, var(--background));
 }
 
 .dark {
@@ -106,6 +148,28 @@
   --sidebar-accent-foreground: oklch(0.97 0.006 258);
   --sidebar-border: oklch(0.27 0.028 262);
   --sidebar-ring: var(--primary);
+
+  /* ── Semantic ERP design tokens (dark) — see :root's own comment for why these are fixed
+     rather than per-preset. Lightness/chroma raised versus :root, same treatment --destructive
+     already gets between its own light/dark values, so each still reads clearly against a
+     near-black surface instead of washing out. */
+  --selected: oklch(0.32 0.06 245);
+  --selected-hover: oklch(0.38 0.07 245);
+  --selected-border: oklch(0.68 0.14 245);
+  --selected-foreground: var(--foreground);
+
+  --success: oklch(0.72 0.15 152);
+  --success-foreground: oklch(0.15 0.02 152);
+  --warning: oklch(0.8 0.17 85);
+  --warning-foreground: oklch(0.2 0.03 85);
+  --info: oklch(0.72 0.15 235);
+  --info-foreground: oklch(0.15 0.02 235);
+
+  --surface: var(--card);
+  --surface-hover: var(--muted);
+  --border-strong: var(--base-700);
+  --text-secondary: var(--base-300);
+  --primary-hover: color-mix(in oklch, var(--primary) 88%, var(--background));
 }
 
 @theme inline {
@@ -164,6 +228,32 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ── Semantic ERP tokens as Tailwind utilities (bg-selected, text-success, border-focus, ...) —
+     see :root's own comment for the token definitions these alias. Danger/focus are deliberate
+     ALIASES onto the existing --destructive/--ring tokens (never a duplicate color), so
+     `bg-danger`/`border-focus` and every pre-existing `bg-destructive`/`ring-ring` usage always
+     stay perfectly in sync — there is exactly one red, one focus color, just two names for callers
+     that prefer the more semantic one. */
+  --color-selected: var(--selected);
+  --color-selected-hover: var(--selected-hover);
+  --color-selected-border: var(--selected-border);
+  --color-selected-foreground: var(--selected-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-danger: var(--destructive);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--foreground);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--muted-foreground);
+  --color-focus: var(--ring);
+  --color-primary-hover: var(--primary-hover);
 
   --font-display: var(--display-family);
   --display-weight: var(--display-weight);

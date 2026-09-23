@@ -1,31 +1,20 @@
 "use client";
 
-// Yarn Planning — a read-only, cross-Work-Order planning/reporting screen, built on the EXACT
-// same architecture as Fabric Planning (frontend/app/dashboard/(auth)/legacy-erp/fabric-planning/
-// page.tsx) — same ReportGrid, same filter bar, same Transaction Details drill-down pattern. NOT a
-// second calculation engine: Required quantity is the exact same FabricYarnRequirementsService.
-// getYarnRequirements(...) output the Fabric/Yarn Requirements screen's own Yarn tab already uses
-// (Fabric BOM line -> color-wise Applicable Quantity -> Will-Be-Cut -> Common/Color-Specific Yarn
-// Recipe resolution -> Yarn Recipe % -> Requirement Calculation Unit conversion — all untouched),
-// and Transaction Details below reuses that same screen's own getTransactions endpoint verbatim
-// (see nexuscore-backend/src/modules/legacy-erp/yarn-planning.service.ts's own top comment for the
-// full DB-first source mapping per column).
+// Trim Planning — a read-only, cross-Work-Order planning/reporting screen. NOT a second
+// calculation engine: Required quantity is the exact same FabricYarnRequirementsService.
+// getMaterialRequirements(workOrderId, 'trim') output the Fabric/Trim/Yarn Requirements screen's
+// own Trim tab already uses (color-wise Applicable Quantity, BOM source priority — Work Order's
+// own Trim BOM else Style Card BOM fallback, Requirement Calculation Unit — all untouched), and
+// Transaction Details below reuses that same screen's own getTransactions endpoint verbatim (see
+// nexuscore-backend/src/modules/legacy-erp/trim-planning.service.ts's own top comment for the
+// full DB-first source mapping per column — identical to fabric-planning.service.ts's, just
+// swapped to the real Trim BOM source, RecipeType=2).
 //
-// Genuinely unsupported fields, disclosed rather than fabricated (see the final report):
-// - Consumption / Applicable Quantity — Fabric Planning shows these because a Fabric row's
-//   Requirement IS Consumption x Applicable Quantity, a real per-line rate. A Yarn row has no
-//   single "Consumption" of its own: getYarnRequirements already collapses Consumption x
-//   Applicable Quantity x Wastage x Recipe % into one Requirement figure (see that method's own
-//   comment) — inventing a standalone Consumption column here would misrepresent a number that
-//   doesn't exist at this granularity, so it is intentionally omitted rather than shown as "—".
-// - Process Code / Process Name — this schema has exactly ONE free-text Process field per BOM line
-//   (MA_RecipeItem's own UD_Remarks — see fabric-yarn-requirements.service.ts's own comment), never
-//   split into a separate Code/Name pair anywhere. Shown as "—" (never fabricated), same convention
-//   Fabric Planning already established for its own Variant-1 Explanation column (always null in
-//   the underlying engine, shown honestly rather than hidden).
-// - Purchase / Manufacturing Send — same real-but-currently-empty data-availability gap already
-//   documented on Fabric Planning (IM_OrderReceiptItem.ManufacturingOrderId / ReceiptType=140 are
-//   real, correct queries against real columns that no existing screen has ever populated).
+// Same two real, honestly-disclosed data-availability gaps as Fabric/Yarn Planning (not code
+// defects): Purchase (IM_OrderReceiptItem.ManufacturingOrderId -> Work Order) and Manufacturing
+// Send (ReceiptType=140) both use real, correct queries against real columns, but no existing
+// screen has ever populated those specific links for Trim in this database, so they read 0 until
+// a real Purchase Order/Manufacturing Receipt actually sets them.
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -66,7 +55,14 @@ interface PlanningRow {
   colorCardId: string | null;
   colorCode: string | null;
   colorName: string | null;
+  consumption: number;
+  applicableQuantity: number;
   requirementUnit: { id: number; code: string; name: string; unitItemId: number } | null;
+  // Real Consumption Unit (e.g. "cone" for TRIM-00003) — present whenever the BOM line has a unit
+  // at all, unlike requirementUnit (only set when a "Requirement Calculation" unit is explicitly
+  // configured on the Item, which most Trim items in this database aren't yet). Used as the Unit
+  // column's fallback so a real, already-quantified row never shows a blank dash for its Unit.
+  consumptionUnit: { id: number; code: string; name: string } | null;
   required: number;
   purchase: number;
   received: number;
@@ -102,7 +98,7 @@ const emptyFilters = { orderNo: "", style: "", customer: "", inventory: "", proc
 
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
 
-export default function YarnPlanningPage() {
+export default function TrimPlanningPage() {
   const router = useRouter();
   const { round, ensureLoaded } = useDecimalParameters();
   useEffect(() => { ensureLoaded(); }, [ensureLoaded]);
@@ -112,12 +108,12 @@ export default function YarnPlanningPage() {
   const [rows, setRows] = useState<PlanningRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Shared row-selection + Transaction Details + right-click receipt-menu logic (same
-  // implementation Fabric Planning uses) — see use-planning-row-selection.ts's own top comment.
+  // Shared row-selection + Transaction Details + right-click receipt-menu logic (also used by
+  // Fabric/Yarn Planning) — see use-planning-row-selection.ts's own top comment.
   const {
     selectedRow, transactionRows, loadingTransactions, showTransactions, selectedIds,
     selectRow, handleRowContextMenu, getRowActions, clearSelection, closeTransactions,
-  } = usePlanningRowSelection(rows, { path: "/dashboard/legacy-erp/yarn-planning", label: "Yarn Planning", sourceType: "yarn" });
+  } = usePlanningRowSelection(rows, { path: "/dashboard/legacy-erp/trim-planning", label: "Trim Planning", sourceType: "trim" });
 
   // Real, active MD_SubcontractType rows — same cached hook receipt-menu.ts's own "Subcontractor
   // Transactions" menu already uses. Drives the dynamic Send/Receive columns below.
@@ -126,7 +122,7 @@ export default function YarnPlanningPage() {
   const load = async (f: typeof emptyFilters) => {
     setLoading(true);
     try {
-      const data: any = await legacyErpApi.yarnPlanning.list({
+      const data: any = await legacyErpApi.trimPlanning.list({
         orderNo: f.orderNo || undefined,
         style: f.style || undefined,
         customer: f.customer || undefined,
@@ -137,7 +133,7 @@ export default function YarnPlanningPage() {
       });
       setRows(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      toast.error(e.message || "Failed to load Yarn Planning");
+      toast.error(e.message || "Failed to load Trim Planning");
       setRows([]);
     } finally {
       setLoading(false);
@@ -164,24 +160,30 @@ export default function YarnPlanningPage() {
     { key: "inventoryCode", label: "Inventory Code", defaultWidth: 140, render: (r) => r.inventoryCode || "—" },
     { key: "inventoryName", label: "Inventory Name", defaultWidth: 260, render: (r) => r.inventoryName || "—" },
     { key: "process", label: "Process", defaultWidth: 120, render: (r) => r.process || "—" },
-    // Not separately backed anywhere in this schema (one free-text Process field only) — see this
-    // file's own top comment. Always "—", never fabricated.
-    { key: "processCode", label: "Process Code", defaultWidth: 100, render: () => <span className="text-muted-foreground">—</span> },
-    { key: "processName", label: "Process Name", defaultWidth: 140, render: () => <span className="text-muted-foreground">—</span> },
-    { key: "variant1", label: "Variant-1", defaultWidth: 110, render: (r) => r.variant1 || "—" },
-    // Never populated anywhere in the Yarn Requirements engine today (always null there too) —
-    // shown honestly as "—" rather than fabricated, same as Fabric Planning's own column.
+    { key: "variant1", label: "Trim Type (Variant-1)", defaultWidth: 130, render: (r) => r.variant1 || "—" },
+    // Never populated anywhere in the Requirements engine today (always null there too, same as
+    // Fabric/Yarn Planning) — shown honestly as "—" rather than fabricated.
     { key: "variant1Explanation", label: "Variant-1 Explanation", defaultWidth: 150, render: (r) => r.variant1Explanation || "—" },
-    { key: "variant2", label: "Variant-2 (Production Color)", defaultWidth: 170, render: (r) => r.variant2 || <span className="text-muted-foreground">—</span> },
+    { key: "variant2", label: "Variant-2 (Production Color)", defaultWidth: 170, render: (r) => r.variant2 || <span className="text-muted-foreground">All Colors</span> },
     {
       key: "materialColor", label: "Material Color", defaultWidth: 140,
       render: (r) => (r.colorCode || r.colorName ? <span>{r.colorCode || r.colorName}</span> : <span className="text-muted-foreground">—</span>),
     },
+    { key: "consumption", label: "Consumption", defaultWidth: 100, align: "right", render: (r) => round(r.consumption, "quantity").toLocaleString() },
+    { key: "applicableQuantity", label: "Applicable Qty", defaultWidth: 120, align: "right", render: (r) => round(r.applicableQuantity, "quantity").toLocaleString() },
     {
+      // requirementUnit (the configured "Requirement Calculation" unit) first when it exists —
+      // same convention Fabric/Yarn Planning use. Falls back to the BOM line's own real
+      // Consumption Unit when no Requirement Calculation unit is configured (most Trim items in
+      // this database today), rather than a blank dash for a row that DOES have a real, correctly
+      // quantified unit — see fabric-yarn-requirements.service.ts's own resolveUnitDisplay comment.
       key: "unit", label: "Unit", defaultWidth: 70,
-      render: (r) => r.requirementUnit ? <span title={r.requirementUnit.name}>{r.requirementUnit.code}</span> : <span className="text-muted-foreground">—</span>,
+      render: (r) => {
+        const u = r.requirementUnit ?? r.consumptionUnit;
+        return u ? <span title={u.name}>{u.code}</span> : <span className="text-muted-foreground">—</span>;
+      },
     },
-    { key: "required", label: "Requirement", defaultWidth: 120, align: "right", render: (r) => <span className="font-medium">{round(r.required, "quantity").toLocaleString()}</span> },
+    { key: "required", label: "Required", defaultWidth: 110, align: "right", render: (r) => <span className="font-medium">{round(r.required, "quantity").toLocaleString()}</span> },
     { key: "purchase", label: "Purchase", defaultWidth: 100, align: "right", render: (r) => round(r.purchase, "quantity").toLocaleString() },
     { key: "received", label: "Received", defaultWidth: 100, align: "right", render: (r) => round(r.received, "quantity").toLocaleString() },
     // Dynamic Subcontractor Transaction columns — one Send/Receive pair per real, active
@@ -218,7 +220,7 @@ export default function YarnPlanningPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <LegacyErpBreadcrumb trail={[{ label: "Legacy ERP" }, { label: "Yarn Planning" }]} />
+      <LegacyErpBreadcrumb trail={[{ label: "Legacy ERP" }, { label: "Trim Planning" }]} />
 
       <div className="grid grid-cols-2 gap-2 rounded-md border p-3 sm:grid-cols-4 lg:grid-cols-7">
         <div className="space-y-1">
@@ -234,7 +236,7 @@ export default function YarnPlanningPage() {
           <Input className="h-8 text-sm" value={filters.customer} onChange={(e) => setFilters((p) => ({ ...p, customer: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && find()} />
         </div>
         <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Inventory / Yarn</label>
+          <label className="text-xs text-muted-foreground">Inventory / Trim</label>
           <Input className="h-8 text-sm" value={filters.inventory} onChange={(e) => setFilters((p) => ({ ...p, inventory: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && find()} />
         </div>
         <div className="space-y-1">
@@ -264,7 +266,7 @@ export default function YarnPlanningPage() {
           <Skeleton className="h-96 w-full" />
         ) : (
           <ReportGrid
-            storageKey="yarnPlanningGrid"
+            storageKey="trimPlanningGrid"
             columns={columns}
             rows={rows}
             loading={loading}
@@ -275,11 +277,8 @@ export default function YarnPlanningPage() {
             onRowContextMenu={handleRowContextMenu}
             getRowActions={getRowActions}
             fixedColumns={["workOrderNo", "styleCode", "inventoryCode"]}
-            // Bounds this grid's own height so its real horizontal scrollbar sits at the bottom of
-            // the visible grid box instead of the bottom of however many rows this Work Order has
-            // (see ReportGrid's own comment on maxHeight) — Yarn Planning's own wide column set +
-            // many-rows-per-Work-Order shape is exactly the case this opts into; Fabric Planning and
-            // this screen's own Transaction Details grid below are unaffected (they pass nothing).
+            // Bounds this grid's own height, same fix/value as Fabric/Yarn Planning's own main grid
+            // (see ReportGrid's own comment on maxHeight).
             maxHeight="60vh"
           />
         )}
@@ -297,7 +296,7 @@ export default function YarnPlanningPage() {
             ) : null}
           </div>
           <ReportGrid
-            storageKey="yarnPlanningTransactionsGrid"
+            storageKey="trimPlanningTransactionsGrid"
             columns={transactionColumns}
             rows={transactionRows}
             loading={loadingTransactions}

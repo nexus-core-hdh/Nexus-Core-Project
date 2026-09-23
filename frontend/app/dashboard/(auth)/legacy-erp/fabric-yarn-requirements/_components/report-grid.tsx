@@ -26,7 +26,7 @@ export interface ReportColumn<T> {
 
 export function ReportGrid<T extends { id: string | number }>({
   storageKey, columns, rows, loading, emptyLabel,
-  getRowActions, selectedId, onRowClick, selectedIds, onRowContextMenu, fixedColumns, maxHeight,
+  getRowActions, selectedId, onRowClick, onRowDoubleClick, selectedIds, onRowContextMenu, fixedColumns, maxHeight,
 }: {
   storageKey: string;
   columns: ReportColumn<T>[];
@@ -43,6 +43,13 @@ export function ReportGrid<T extends { id: string | number }>({
   // caller that needs it (multi-select via ctrl/shift-click) can now read `event.ctrlKey`/
   // `event.metaKey`/`event.shiftKey` without a second click-handling path.
   onRowClick?: (row: T, event: React.MouseEvent) => void;
+  // Opens the real persisted record a row represents (e.g. Transaction Details -> the exact
+  // IM_Receipt this row came from) — independent of `onRowClick` above (that's the Planning
+  // grid's own single-click-selects-a-row concept; this is a distinct "double-click opens the
+  // underlying document" action any ReportGrid instance can opt into, same convention every other
+  // list screen's own onRowDoubleClick already uses). Every existing caller omits this and is
+  // completely unaffected.
+  onRowDoubleClick?: (row: T) => void;
   // Multi-row selection — opt-in, separate from `selectedId` (which is the single "active" row
   // driving a caller's own Transaction Details / detail-pane concept, unchanged). When provided,
   // every row whose id is in this Set renders the same selected highlight `selectedId` already
@@ -166,11 +173,26 @@ export function ReportGrid<T extends { id: string | number }>({
                   key={row.id}
                   data-row-id={String(row.id)}
                   onClick={onRowClick ? (e) => onRowClick(row, e) : undefined}
+                  onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                   onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(row, e) : undefined}
                   className={cn(
                     "[&>td]:border-r [&>td]:h-8",
-                    onRowClick && "cursor-pointer",
-                    isSelected && "bg-primary/10 hover:bg-primary/15",
+                    (onRowClick || onRowDoubleClick) && "cursor-pointer",
+                    // Shared selected-row token (globals.css) — a dedicated, always-visible tint,
+                    // not a low-opacity --primary blend (that was the actual bug: --primary is
+                    // near-black/near-white depending on theme, so a 10% blend was barely
+                    // perceptible). Drives every selection state this grid supports (single click,
+                    // ctrl/shift multi-select, right-click preserve/collapse) since all of them
+                    // ultimately just add/remove this row's id from the same selectedIds Set this
+                    // `isSelected` check already reads — no change to that logic, only to how a
+                    // `true` result is painted.
+                    isSelected
+                      ? "bg-selected hover:bg-selected-hover"
+                      // A row with no selection concept at all (e.g. Transaction Details) but that
+                      // IS actionable (double-click / right-click) still gets a subtle hover cue —
+                      // the same muted tint every other list grid in the app already uses for
+                      // "this row is interactive" — so it never looks inert.
+                      : (onRowClick || onRowDoubleClick || getRowActions) && "hover:bg-muted/40",
                   )}
                 >
                   {displayColumnDefs.map((col) => {

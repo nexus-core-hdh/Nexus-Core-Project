@@ -93,9 +93,10 @@ export class YarnPlanningService {
     if (!flat.length) return [];
 
     const inventoryIds = Array.from(new Set(flat.map((r) => r.inventoryId).filter((id): id is number => id != null)));
-    const [purchaseByKey, receiptsByKey] = await Promise.all([
+    const [purchaseByKey, receiptsByKey, subcontractByKey] = await Promise.all([
       this.fabricPlanningSvc.aggregatePurchase(workOrderIds, inventoryIds),
       this.fabricPlanningSvc.aggregateReceipts(workOrderIds, inventoryIds),
+      this.fabricPlanningSvc.aggregateSubcontractReceipts(workOrderIds, inventoryIds),
     ]);
 
     return flat.map((r) => {
@@ -104,6 +105,11 @@ export class YarnPlanningService {
       const purchase = key ? purchaseByKey.get(key) ?? 0 : 0;
       const required = Number(r.quantity) || 0;
       const received = receipts?.received ?? 0;
+      // Same dynamic per-Subcontract-Type breakdown as Fabric Planning — see
+      // fabric-planning.service.ts's own aggregateSubcontractReceipts comment.
+      const subcontractTransactions = Object.fromEntries(
+        Array.from((key ? subcontractByKey.get(key) : undefined) ?? new Map()).map(([typeId, v]) => [String(typeId), v]),
+      );
       return {
         id: `${r.workOrderId}:${r.id}`,
         workOrderId: r.workOrderId,
@@ -136,10 +142,10 @@ export class YarnPlanningService {
         required,
         purchase,
         received,
-        processSent: receipts?.processSent ?? 0,
-        processReceived: receipts?.processReceived ?? 0,
+        subcontractTransactions,
         manufacturingSend: receipts?.manufacturingSend ?? 0,
         // Same Required-minus-Received formula as Fabric Planning — no second balance concept.
+        // Unaffected by subcontractTransactions, same as Fabric Planning's own balance.
         balance: Math.round((required - received) * 10000) / 10000,
       };
     });

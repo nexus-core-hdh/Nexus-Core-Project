@@ -17,16 +17,21 @@
 // service's own comment) and are deliberately NOT fabricated here.
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Search, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { getReceiptTypeLabel } from "@/lib/legacy-erp/receipt-types";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { ReportGrid, type ReportColumn } from "../fabric-yarn-requirements/_components/report-grid";
 import { usePlanningRowSelection } from "../fabric-yarn-requirements/_components/use-planning-row-selection";
+import { useSubcontractTypes } from "../fabric-yarn-requirements/_components/receipt-menu";
+import { buildSubcontractPlanningColumns, type SubcontractTxnMap } from "../fabric-yarn-requirements/_components/subcontract-planning-columns";
+import { openTransactionReceipt, buildTransactionRowActions } from "../fabric-yarn-requirements/_components/transaction-row-actions";
 
 interface PlanningRow {
   id: string | number;
@@ -56,14 +61,19 @@ interface PlanningRow {
   required: number;
   purchase: number;
   received: number;
-  processSent: number;
-  processReceived: number;
+  // Dynamic Subcontractor Transaction breakdown — one {send,receive} entry per real, active
+  // MD_SubcontractType.RecId (see subcontract-planning-columns.tsx's own comment). Replaces the
+  // old static processSent/processReceived columns.
+  subcontractTransactions: SubcontractTxnMap;
   manufacturingSend: number;
   balance: number;
 }
 
 interface TransactionRow {
   id: string | number;
+  // Real IM_Receipt.RecId — needed to open the exact persisted receipt this row came from (see
+  // transaction-row-actions.ts's own comment). Never used for display.
+  receiptId: number | null;
   receiptDate: string | null;
   receiptType: number | null;
   subcontractor: string | null;
@@ -85,6 +95,7 @@ const emptyFilters = { orderNo: "", style: "", customer: "", inventory: "", proc
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
 
 export default function FabricPlanningPage() {
+  const router = useRouter();
   const { round, ensureLoaded } = useDecimalParameters();
   useEffect(() => { ensureLoaded(); }, [ensureLoaded]);
 
@@ -99,6 +110,12 @@ export default function FabricPlanningPage() {
     selectedRow, transactionRows, loadingTransactions, showTransactions, selectedIds,
     selectRow, handleRowContextMenu, getRowActions, clearSelection, closeTransactions,
   } = usePlanningRowSelection(rows, { path: "/dashboard/legacy-erp/fabric-planning", label: "Fabric Planning", sourceType: "fabric" });
+
+  // Real, active MD_SubcontractType rows — the SAME cached hook receipt-menu.ts's own
+  // "Subcontractor Transactions" menu already uses (see that file's own comment; a second call
+  // here shares its existing cache, not a second fetch). Drives the dynamic Send/Receive columns
+  // below — `null` while still loading, `[]` once loaded with genuinely zero active types.
+  const subcontractTypes = useSubcontractTypes();
 
   const load = async (f: typeof emptyFilters) => {
     setLoading(true);
@@ -159,8 +176,13 @@ export default function FabricPlanningPage() {
     { key: "required", label: "Required", defaultWidth: 110, align: "right", render: (r) => <span className="font-medium">{round(r.required, "quantity").toLocaleString()}</span> },
     { key: "purchase", label: "Purchase", defaultWidth: 100, align: "right", render: (r) => round(r.purchase, "quantity").toLocaleString() },
     { key: "received", label: "Received", defaultWidth: 100, align: "right", render: (r) => round(r.received, "quantity").toLocaleString() },
-    { key: "processSent", label: "Process Sent", defaultWidth: 110, align: "right", render: (r) => round(r.processSent, "quantity").toLocaleString() },
-    { key: "processReceived", label: "Process Received", defaultWidth: 130, align: "right", render: (r) => round(r.processReceived, "quantity").toLocaleString() },
+    // Dynamic Subcontractor Transaction columns — one Send/Receive pair per real, active
+    // MD_SubcontractType (see subcontract-planning-columns.tsx's own comment). Replaces the old
+    // static "Process Sent"/"Process Received" totals, which summed every subcontract type
+    // together into one indistinguishable number.
+    ...buildSubcontractPlanningColumns<PlanningRow>(subcontractTypes ?? [], round),
+    // Manufacturing Send — a genuinely separate transaction concept (ReceiptType=140, Manufacture
+    // Send Receipt), never confused with a subcontractor Send (134) above.
     { key: "manufacturingSend", label: "Manufacturing Send", defaultWidth: 140, align: "right", render: (r) => round(r.manufacturingSend, "quantity").toLocaleString() },
     {
       key: "balance", label: "Balance", defaultWidth: 100, align: "right",
@@ -170,7 +192,10 @@ export default function FabricPlanningPage() {
 
   const transactionColumns: ReportColumn<TransactionRow>[] = [
     { key: "receiptDate", label: "Receipt Date", defaultWidth: 110, render: (r) => fmtDate(r.receiptDate) },
-    { key: "receiptType", label: "Receipt Type", defaultWidth: 150, render: (r) => (r.receiptType != null ? String(r.receiptType) : "—") },
+    // Human-readable label — "<Subcontract Type> Send/Receive/Return" for a subcontract
+    // transaction (e.g. "Dyeing Send"), else the existing RECEIPT_TYPES label. Never the raw
+    // numeric ReceiptType. See lib/legacy-erp/receipt-types.ts's own getReceiptTypeLabel comment.
+    { key: "receiptType", label: "Receipt Type", defaultWidth: 150, render: (r) => getReceiptTypeLabel(r.receiptType, r.subcontractor) },
     { key: "subcontractor", label: "Subcontractor", defaultWidth: 160, render: (r) => r.subcontractor || "—" },
     { key: "receiptNo", label: "Receipt No", defaultWidth: 110, render: (r) => r.receiptNo || "—" },
     { key: "documentNo", label: "Document No", defaultWidth: 110, render: (r) => r.documentNo || "—" },
@@ -228,7 +253,7 @@ export default function FabricPlanningPage() {
           Requirement Planning
           <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row for Transaction Details, ctrl/shift-click to multi-select, right-click for receipt actions</span>
         </p>
-        {loading ? (
+        {loading || subcontractTypes === null ? (
           <Skeleton className="h-96 w-full" />
         ) : (
           <ReportGrid
@@ -269,6 +294,10 @@ export default function FabricPlanningPage() {
             rows={transactionRows}
             loading={loadingTransactions}
             emptyLabel={selectedRow ? "No receipts found for this item on this Work Order." : "Select a planning row above to see its Transaction Details."}
+            // Double-click / right-click Open/Edit opens the EXACT existing, persisted receipt
+            // this row came from — see transaction-row-actions.ts's own comment.
+            onRowDoubleClick={(r) => openTransactionReceipt(router, r, "view")}
+            getRowActions={(r) => buildTransactionRowActions(router, r)}
           />
         </div>
       )}

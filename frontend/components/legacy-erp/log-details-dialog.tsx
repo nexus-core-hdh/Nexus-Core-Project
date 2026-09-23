@@ -6,21 +6,35 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { auditApi, type AuditLogRow } from "@/lib/nexuscore-api";
+import { formatFieldLabel } from "@/lib/format-field-label";
 import { toast } from "sonner";
 import { History } from "lucide-react";
 
 // Generic F4 "Log Details" popup — the reusable Log Details Engine (Section 6/8 of the Audit
-// framework spec): resolves ONE audit event into (A) Audit Information, (B) Document Snapshot
-// (root + related child/variant sections, rendered generically from whatever top-level keys the
-// writing service composed into oldValues/newValues — see audit.service.ts's own model comment),
-// and (C) Change Information (old/new + changed fields for UPDATE, created values for INSERT,
-// last known state for DELETE). NOT entity-specific — this same component renders Work Order,
-// Purchase Order, Inventory Receipt (IMReceipt/IMReceiptItem/IMReceiptItemVariant), Requirements,
-// or any future screen's audit event identically, with zero per-entity branching.
+// framework spec): resolves ONE audit event into (A) Audit Summary, (B) Changed Fields (UPDATE
+// only), and (C) Document Snapshot (root + related child/variant sections, rendered generically
+// from whatever top-level keys the writing service composed into oldValues/newValues — see
+// audit.service.ts's own model comment). NOT entity-specific — this same component renders Work
+// Order, Purchase Order, Inventory Receipt, Requirements, or any future screen's audit event
+// identically, with zero per-entity branching.
+//
+// FK DISPLAY REFS: a service that used audit.service.ts's own enrichDisplayRefs() replaces a raw
+// foreign-key id with `{ id, code, name }` before writing the snapshot (see that file's own
+// comment) — isDisplayRef()/DisplayRefValue below is the one generic place that shape is
+// recognized and rendered as Code/Name instead of a raw id or a dumped object literal.
+
+interface DisplayRefShape { id: number | string; code: string | null; name: string | null }
+
+function isDisplayRef(v: unknown): v is DisplayRefShape {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const keys = Object.keys(v as object);
+  return keys.length <= 3 && "id" in (v as object) && ("code" in (v as object) || "name" in (v as object));
+}
 
 function formatValue(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (isDisplayRef(v)) return v.name || v.code || `#${v.id}`;
   if (typeof v === "object") return JSON.stringify(v);
   const s = String(v);
   // ISO-date-looking strings render as local date/time, same convention as every list screen.
@@ -31,17 +45,36 @@ function formatValue(v: unknown): string {
   return s;
 }
 
+// Compact "Code / Name" cell — used inline wherever a resolved FK ref appears, in both the
+// field/value grid and the data grid, so a reader sees the business identity (Section 3's own
+// requirement) instead of a bare database id, without a separate lookup or hardcoded mapping.
+function DisplayRefValue({ ref }: { ref: DisplayRefShape }) {
+  if (!ref.code && !ref.name) return <span className="text-muted-foreground">{`#${ref.id}`}</span>;
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      {ref.code && <span className="rounded bg-muted px-1 py-0.5 font-mono text-[10px] font-medium">{ref.code}</span>}
+      {ref.name && <span className="font-medium">{ref.name}</span>}
+    </span>
+  );
+}
+
 function ObjectFields({ obj }: { obj: Record<string, any> }) {
   const keys = Object.keys(obj).filter((k) => k !== "variants");
   if (!keys.length) return <p className="text-xs text-muted-foreground">No fields.</p>;
   return (
-    <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
-      {keys.map((k) => (
-        <div key={k} className="flex items-baseline justify-between gap-3 border-b border-dashed py-1 text-xs">
-          <span className="shrink-0 text-muted-foreground">{k}</span>
-          <span className="truncate text-right font-medium" title={formatValue(obj[k])}>{formatValue(obj[k])}</span>
-        </div>
-      ))}
+    <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+      {keys.map((k) => {
+        const v = obj[k];
+        const ref = isDisplayRef(v) ? v : null;
+        return (
+          <div key={k} className="flex items-baseline justify-between gap-3 border-b border-dashed py-1 text-xs">
+            <span className="shrink-0 text-muted-foreground">{formatFieldLabel(k, !!ref)}</span>
+            {ref ? <DisplayRefValue ref={ref} /> : (
+              <span className="truncate text-right font-medium" title={formatValue(v)}>{formatValue(v)}</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -51,16 +84,29 @@ function ArrayTable({ rows }: { rows: Record<string, any>[] }) {
   const colSet = new Set<string>();
   for (const r of rows) for (const k of Object.keys(r)) if (k !== "variants") colSet.add(k);
   const cols = Array.from(colSet);
+  // A column is a display-ref column if ANY row resolved it to {id,code,name} — decided once per
+  // column so the header label can drop its "...Id" suffix consistently down the whole column.
+  const refCols = new Set(cols.filter((c) => rows.some((r) => isDisplayRef(r[c]))));
   return (
-    <div className="overflow-x-auto rounded-md border">
+    <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
-        <thead className="bg-muted/40">
-          <tr>{cols.map((c) => <th key={c} className="whitespace-nowrap px-2 py-1.5 text-left font-semibold">{c}</th>)}</tr>
+        <thead className="bg-muted/50">
+          <tr>{cols.map((c) => (
+            <th key={c} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">{formatFieldLabel(c, refCols.has(c))}</th>
+          ))}</tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t">
-              {cols.map((c) => <td key={c} className="whitespace-nowrap px-2 py-1.5">{formatValue(r[c])}</td>)}
+            <tr key={i} className="border-t hover:bg-muted/30">
+              {cols.map((c) => {
+                const v = r[c];
+                const ref = isDisplayRef(v) ? v : null;
+                return (
+                  <td key={c} className="whitespace-nowrap px-3 py-2">
+                    {ref ? <DisplayRefValue ref={ref} /> : formatValue(v)}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
@@ -71,14 +117,16 @@ function ArrayTable({ rows }: { rows: Record<string, any>[] }) {
 
 function Section({ title, value }: { title: string; value: any }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</h4>
       {value == null ? (
         <p className="text-xs text-muted-foreground">No data.</p>
       ) : Array.isArray(value) ? (
         <ArrayTable rows={value} />
       ) : typeof value === "object" ? (
-        <ObjectFields obj={value} />
+        <div className="rounded-lg border p-3">
+          <ObjectFields obj={value} />
+        </div>
       ) : (
         <p className="text-xs">{formatValue(value)}</p>
       )}
@@ -91,23 +139,26 @@ function ChangedFields({ before, after }: { before: Record<string, any>; after: 
   const changed = keys.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
   if (!changed.length) return <p className="text-xs text-muted-foreground">No field-level changes recorded.</p>;
   return (
-    <div className="overflow-x-auto rounded-md border">
+    <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
-        <thead className="bg-muted/40">
+        <thead className="bg-muted/50">
           <tr>
-            <th className="whitespace-nowrap px-2 py-1.5 text-left font-semibold">Field</th>
-            <th className="whitespace-nowrap px-2 py-1.5 text-left font-semibold">Old Value</th>
-            <th className="whitespace-nowrap px-2 py-1.5 text-left font-semibold">New Value</th>
+            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">Field</th>
+            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">Previous Value</th>
+            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">New Value</th>
           </tr>
         </thead>
         <tbody>
-          {changed.map((k) => (
-            <tr key={k} className="border-t">
-              <td className="whitespace-nowrap px-2 py-1.5 font-medium">{k}</td>
-              <td className="px-2 py-1.5 text-red-600 dark:text-red-400">{formatValue(before[k])}</td>
-              <td className="px-2 py-1.5 text-emerald-600 dark:text-emerald-400">{formatValue(after[k])}</td>
-            </tr>
-          ))}
+          {changed.map((k) => {
+            const isRef = isDisplayRef(before[k]) || isDisplayRef(after[k]);
+            return (
+              <tr key={k} className="border-t">
+                <td className="whitespace-nowrap px-3 py-2 font-medium">{formatFieldLabel(k, isRef)}</td>
+                <td className="px-3 py-2 text-red-600 dark:text-red-400">{formatValue(before[k])}</td>
+                <td className="px-3 py-2 text-emerald-600 dark:text-emerald-400">{formatValue(after[k])}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -195,10 +246,10 @@ export function LogDetailsDialog({ id, open, onOpenChange }: { id: string | null
             </div>
           ) : (
             <div className="space-y-6">
-              {/* (A) Audit Information */}
+              {/* (A) Audit Summary */}
               <div>
-                <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Audit Information</h4>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg border p-3 sm:grid-cols-3 lg:grid-cols-4">
+                <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Audit Summary</h4>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border bg-muted/10 p-4 sm:grid-cols-3 lg:grid-cols-4">
                   <Field label="Action">
                     <Badge className={`text-[11px] font-normal ${ACTION_BADGE[row.action] ?? "bg-secondary text-secondary-foreground hover:bg-secondary/90"}`}>
                       {row.action}

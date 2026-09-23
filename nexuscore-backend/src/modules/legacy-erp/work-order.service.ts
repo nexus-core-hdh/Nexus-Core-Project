@@ -4,7 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { assertAllNonNegative } from './numeric-guards.util';
-import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
 
 // Real MenuItem.href for the Work Order List screen (confirmed live: MenuItem row {title:"Work
 // Order", group:"Legacy ERP", href:"/dashboard/legacy-erp/work-orders-list"}) — same screenKey
@@ -268,7 +268,10 @@ export class WorkOrderService {
       RETURNING ${HEADER_SELECT}
     `);
     const updated = sanitizeRawRow(rows[0]);
-    if (currentUserId && companyId) {
+    // Only log UPDATE when a submitted value actually differs from what was already persisted —
+    // see hasRealChanges' own comment for why this exists (a no-op Save must never fabricate an
+    // Updated history entry).
+    if (currentUserId && companyId && hasRealChanges(before, updated)) {
       await this.audit.recordSafe({
         userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
         entityType: 'MA_WorkOrder', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,

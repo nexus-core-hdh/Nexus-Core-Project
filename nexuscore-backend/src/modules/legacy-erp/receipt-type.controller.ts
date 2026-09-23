@@ -118,9 +118,10 @@ export class ReceiptTypeController {
     @Param('receiptType') receiptType: string,
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.submitForApproval(id, userId, cfg.receiptType);
+    return this.svc.submitForApproval(id, userId, cfg.receiptType, companyId);
   }
 
   @Permissions({ module: 'approval', action: 'approve' })
@@ -130,9 +131,10 @@ export class ReceiptTypeController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: { remarks?: string },
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.approve(id, userId, dto?.remarks, cfg.receiptType);
+    return this.svc.approve(id, userId, dto?.remarks, cfg.receiptType, companyId);
   }
 
   @Permissions({ module: 'approval', action: 'reject' })
@@ -142,9 +144,10 @@ export class ReceiptTypeController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: { remarks: string },
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.reject(id, userId, dto.remarks, cfg.receiptType);
+    return this.svc.reject(id, userId, dto.remarks, cfg.receiptType, companyId);
   }
 
   // Universal Action Menu -> Return/Purchase Receipt submenu.

@@ -3873,6 +3873,9 @@ model StyleBomLine {
   colorCard ColorCard? @relation(fields: [colorCardId], references: [id])
 
   @@index([styleCardId])
+  // Recipe Usage ("Where Used") — Fabric/Trim Card right-click lookup by the legacy IM_Item id
+  // this row points at (recipe-usage.service.ts). Without this, that lookup was a full table scan.
+  @@index([fabricInventoryId])
 }
 
 // Cutting Card — one per (Work Order, Production Color). Work Order itself is a raw legacy table
@@ -4017,6 +4020,9 @@ model FabricYarnRecipeLine {
   updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([fabricInventoryId, colorCardId])
+  // Recipe Usage ("Where Used") — Yarn Card right-click lookup by yarnInventoryId
+  // (recipe-usage.service.ts): "which Fabric(s) use this Yarn in their recipe".
+  @@index([yarnInventoryId])
 }
 
 model StyleWashCare {
@@ -4142,6 +4148,8 @@ model SampleBomLine {
   colorCard  ColorCard? @relation(fields: [colorCardId], references: [id])
 
   @@index([sampleCardId])
+  // Recipe Usage ("Where Used") — see StyleBomLine's own identical index comment.
+  @@index([fabricInventoryId])
 }
 
 // ── PLM — Swatches & Products ─────────────────────────────────────────────────

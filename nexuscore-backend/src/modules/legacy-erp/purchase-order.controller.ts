@@ -68,20 +68,20 @@ export class PurchaseOrderController {
     return this.svc.getApprovalStatus(id);
   }
 
-  @Post(':id/submit-for-approval') submitForApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
-    return this.svc.submitForApproval(id, userId);
+  @Post(':id/submit-for-approval') submitForApproval(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.submitForApproval(id, userId, undefined, companyId);
   }
 
   @Permissions({ module: 'approval', action: 'approve' })
   @Post(':id/approve')
-  approve(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks?: string }, @CurrentUser('id') userId: string) {
-    return this.svc.approve(id, userId, dto?.remarks);
+  approve(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks?: string }, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.approve(id, userId, dto?.remarks, undefined, companyId);
   }
 
   @Permissions({ module: 'approval', action: 'reject' })
   @Post(':id/reject')
-  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks: string }, @CurrentUser('id') userId: string) {
-    return this.svc.reject(id, userId, dto.remarks);
+  reject(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks: string }, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.reject(id, userId, dto.remarks, undefined, companyId);
   }
 
   // Detail lines (the grid)
@@ -89,20 +89,30 @@ export class PurchaseOrderController {
     return this.svc.listItems(id);
   }
 
-  @Post(':id/items') createItem(@Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
-    return this.svc.createItem(id, dto, Number(userId) || 1);
+  @Post(':id/items') createItem(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: Record<string, any>,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
+  ) {
+    return this.svc.createItem(id, dto, Number(userId) || 1, undefined, userId, companyId);
   }
 
   @Put(':id/items/:itemId') updateItem(
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.updateItem(itemId, dto, Number(userId) || 1);
+    return this.svc.updateItem(itemId, dto, Number(userId) || 1, userId, companyId);
   }
 
-  @Delete(':id/items/:itemId') removeItem(@Param('itemId', ParseIntPipe) itemId: number, @CurrentUser('id') userId: string) {
-    return this.svc.removeItem(itemId, Number(userId) || 1);
+  @Delete(':id/items/:itemId') removeItem(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
+  ) {
+    return this.svc.removeItem(itemId, Number(userId) || 1, userId, companyId);
   }
 
   // Variant breakdown (Variant2 column) — one line's quantity split across composite

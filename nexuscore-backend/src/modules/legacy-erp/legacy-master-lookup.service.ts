@@ -142,6 +142,14 @@ const TABLES: Record<string, TableLookupConfig> = {
   certification: { table: 'MD_Certification', codeColumn: 'CertificationCode', nameColumn: 'CertificationName', searchColumns: ['CertificationCode', 'CertificationName'] },
   'initial-cost': { table: 'MA_InitialCost', codeColumn: 'Code', nameColumn: 'Name', searchColumns: ['Code', 'Name'] },
   project: { table: 'FI_Project', codeColumn: 'ProjectCode', nameColumn: 'ProjectName', searchColumns: ['ProjectCode', 'ProjectName'] },
+  // Current Account / Inventory Item — both already-existing, already-managed masters with
+  // their own dedicated services (account.service.ts, the Yarn/Fabric/Trim Card family), added
+  // here read-only (no activeColumn/label, same as employee/certification/project above) purely
+  // so AuditService's generic FK-display-enrichment (audit.service.ts's enrichDisplayRefs) can
+  // resolve a raw CurrentAccountId/InventoryId into a Code/Name pair through this same existing
+  // generic getById(), instead of a bespoke query per audited service. No new table.
+  'current-account': { table: 'FI_Account', codeColumn: 'CurrentAccountCode', nameColumn: 'CurrentAccountName', searchColumns: ['CurrentAccountCode', 'CurrentAccountName'] },
+  'inventory-item': { table: 'IM_Item', codeColumn: 'InventoryCode', nameColumn: 'InventoryName', searchColumns: ['InventoryCode', 'InventoryName'] },
 };
 export type MasterLookupKey = keyof typeof TABLES;
 

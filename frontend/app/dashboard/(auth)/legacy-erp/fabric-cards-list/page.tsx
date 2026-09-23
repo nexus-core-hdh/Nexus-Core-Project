@@ -7,6 +7,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { RecipeUsageDialog } from "@/components/legacy-erp/recipe-usage-dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import {
   Search, RefreshCw, Plus, Eye, Pencil, Trash2, Shirt, SearchX, FileClock,
-  ChevronRight,
+  ChevronRight, Network,
 } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
@@ -36,6 +37,7 @@ export default function FabricCardListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
+  const [usageTarget, setUsageTarget] = useState<{ id: number; label: string } | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("inventoryCode");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const wl = useWorklist({ storageKey: "fabricCardsListWorklists" });
@@ -144,6 +146,10 @@ export default function FabricCardListPage() {
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
     { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
     { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
+    {
+      key: "recipe-usage", label: "Recipe Usage Information", icon: Network,
+      onSelect: () => setUsageTarget({ id: row.id, label: `${row.inventoryCode} — ${row.inventoryName}` }),
+    },
     { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
   ];
 
@@ -252,6 +258,13 @@ export default function FabricCardListPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RecipeUsageDialog
+        open={!!usageTarget}
+        onOpenChange={(open) => !open && setUsageTarget(null)}
+        inventoryId={usageTarget?.id ?? null}
+        itemLabel={usageTarget?.label}
+      />
     </div>
   );
 }

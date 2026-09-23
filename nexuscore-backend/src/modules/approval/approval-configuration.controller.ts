@@ -22,7 +22,7 @@ export class ApprovalConfigurationController {
 
   @Permissions({ module: 'general-settings', action: 'manage-approval-configuration' })
   @Put()
-  update(@Body() dto: any, @CurrentUser('id') userId: string) {
-    return this.svc.update(dto.screenKey, dto, userId);
+  update(@Body() dto: any, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.update(dto.screenKey, dto, userId, companyId);
   }
 }
