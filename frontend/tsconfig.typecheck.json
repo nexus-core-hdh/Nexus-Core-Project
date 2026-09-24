@@ -1,0 +1,11 @@
+{
+  // Same compiler options/strictness as tsconfig.json (extends it) — only the file set differs:
+  // it excludes .next, whose dev-server-generated route-type files (.next/dev/types/validator.ts)
+  // are rewritten while `next dev` runs and can be left half-written/duplicated. One syntax error
+  // in such a file makes tsc stop at "syntactic diagnostics" and silently SKIP all real semantic
+  // type checking, so the check appeared to pass in ~5s while validating nothing. Real source is
+  // checked fully; nothing is skipped or loosened. `next build` still runs its own full check.
+  "extends": "./tsconfig.json",
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", ".next"]
+}

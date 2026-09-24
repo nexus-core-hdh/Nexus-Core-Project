@@ -3,9 +3,10 @@
   "version": "1.2.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/generate-workspace-registry.mjs",
+    "predev": "node ../scripts/ensure-port-free.mjs 3000 \"frontend :3000\" && node scripts/generate-workspace-registry.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/generate-workspace-registry.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "prebuild": "node scripts/generate-workspace-registry.mjs && node -e \"require('fs').rmSync('.next/dev/types',{recursive:true,force:true})\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

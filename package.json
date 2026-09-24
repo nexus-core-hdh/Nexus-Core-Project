@@ -6,6 +6,13 @@
     "frontend",
     "nexuscore-backend"
   ],
+  "scripts": {
+    "dev": "node scripts/dev-all.mjs",
+    "dev:backend": "npm run start:dev -w nexuscore-backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "typecheck": "npm run typecheck -w nexuscore-backend && npm run typecheck -w frontend",
+    "verify": "npm run verify -w nexuscore-backend && npm run typecheck -w frontend && npm run build -w frontend"
+  },
   "dependencies": {
     "@alloc/quick-lru": "^5.2.0"
   }

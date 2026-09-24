@@ -6,7 +6,7 @@
 // screen automatically: adding a new page.tsx (and a nav entry pointing at
 // it) is enough — nobody has to hand-register it here. Runs automatically
 // before `next dev`/`next build` (see package.json's predev/prebuild).
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,5 +80,10 @@ ${entries}
 ];
 `;
 
-writeFileSync(OUTPUT_FILE, content, "utf8");
-console.log(`[workspace-registry] Generated ${routes.length} entries -> ${path.relative(FRONTEND_ROOT, OUTPUT_FILE)}`);
+// Skip the write when nothing changed (line-ending-insensitive, since git autocrlf may store CRLF)
+// so an unchanged registry is never re-touched — a needless mtime bump makes the dev server's file
+// watcher/cache treat this file as modified on every start.
+const normalize = (t) => t.replace(/\r\n/g, "\n");
+const unchanged = existsSync(OUTPUT_FILE) && normalize(readFileSync(OUTPUT_FILE, "utf8")) === normalize(content);
+if (!unchanged) writeFileSync(OUTPUT_FILE, content, "utf8");
+console.log(`[workspace-registry] ${unchanged ? "Up to date" : "Generated"} ${routes.length} entries -> ${path.relative(FRONTEND_ROOT, OUTPUT_FILE)}`);

@@ -4,3 +4,6 @@ dist/
 *.js.map
 generated/
 backend-run.log
+
+# tsc incremental info / verification output (never committed)
+.cache/
