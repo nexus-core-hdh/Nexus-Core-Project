@@ -10,7 +10,7 @@ import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { RELATED_IMPORT_SOURCE_TYPES, getReceiptTypeConfig } from './receipt-types.config';
 import { getOrderTypeConfig } from './order-types.config';
-import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -20,18 +20,23 @@ import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.serv
 // Exported for inventory-card.service.ts's stockLateral() — Stock on Hand must be gated by
 // this exact same screenKey formula, not a second copy of it.
 //
-// HARDENING FIX (audit framework Section 7 follow-up): this used to special-case
-// receiptType===RECEIPT_TYPE(2) to the bare "/dashboard/legacy-erp/inventory-receipts-list"
-// (no query string). That bare form matches NO real MenuItem row — every real "Inventory
-// Receipts" MenuItem, INCLUDING "2 - Purchase Receipt" itself, was seeded with the
-// `?receiptType=N` query string (confirmed live: MenuItem, ApprovalConfiguration and
-// ApprovalRequest all only ever contain the query-string form, zero rows with the bare form).
-// The special case was therefore never a real screen identifier — it silently broke
-// isApprovalRequired()/AuditService.resolveScreen() lookups for Purchase Receipt specifically
-// (both do an exact-match findFirst against MenuItem.href/ApprovalConfiguration.screenKey).
-// Removing it — Purchase Receipt now resolves the exact same way every other receipt type
-// already does, with zero new MenuItem rows and zero schema change.
-export const screenKeyFor = (receiptType: number) => `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
+// CORRECTED (audit hardening — Log Details Module/Menu resolution): a prior pass removed a
+// receiptType===RECEIPT_TYPE(2) special case here, on the claim that every real MenuItem row —
+// "2 - Purchase Receipt" included — only ever used the `?receiptType=N` query-string form. Live
+// re-verification (querying MenuItem/ApprovalConfiguration/ApprovalRequest directly) shows that
+// claim no longer holds: all three tables' Purchase Receipt rows use the BARE path with no query
+// string (`/dashboard/legacy-erp/inventory-receipts-list`) — every OTHER receipt type's rows do
+// use the query-string form, receiptType=2 alone doesn't. Generating the query-string form for
+// receiptType=2 therefore matched NO row in any of the three tables, silently breaking both
+// isApprovalRequired() and AuditService.resolveScreen() (each an exact-match findFirst against
+// MenuItem.href/ApprovalConfiguration.screenKey) — this was the actual live cause of Log Tracking
+// showing Module/Menu as "—" for real Purchase Receipt events. Restoring the bare-path special
+// case for receiptType=2 only; every other receipt type is untouched (still query-string form,
+// confirmed still correct against live MenuItem data for all of them).
+export const screenKeyFor = (receiptType: number) =>
+  receiptType === RECEIPT_TYPE
+    ? `/dashboard/legacy-erp/inventory-receipts-list`
+    : `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
 
 // Inventory Receipt — NOT the same entity as Purchase Order. IM_Receipt/IM_ReceiptItem is a
 // separate, pre-existing "physical goods receipt" spine (DriverName/PlateNumber/IsApproved —
@@ -163,20 +168,45 @@ export class InventoryReceiptService {
     return receiptType === RECEIPT_TYPE ? 'Purchase Receipt' : (getReceiptTypeConfig(receiptType)?.label ?? 'Inventory Receipt');
   }
 
+  // Display resolvers for this document's own real FK columns — same generic
+  // enrichDisplayRefs()/FkResolver mechanism purchase-order.service.ts's own displayResolvers()
+  // already uses (audit.service.ts:116-155), every entry reusing an already-existing
+  // LegacyMasterLookupService key or Prisma model — no bespoke per-field SQL, no new lookups.
+  // `includeInactive: true` matches "historical reliability": an OLD audit row referencing a
+  // since-deactivated master must still resolve its Code/Name, not silently go blank.
+  private displayResolvers(): Record<string, FkResolver> {
+    const byKey = (key: string): FkResolver => (id) => this.masterLookupSvc.getById(key, Number(id), { includeInactive: true });
+    return {
+      currentAccountId: byKey('current-account'),
+      inWarehouseId: byKey('warehouse'),
+      subcontractTypeId: byKey('subcontract-type'),
+      subcontractReceiptId: byKey('subcontract-receipt'),
+      inventoryId: byKey('inventory-item'),
+      unitId: byKey('unit'),
+      forexId: byKey('forex'),
+      colorCardId: async (id) => this.prisma.colorCard.findUnique({ where: { id: String(id) }, select: { code: true, name: true } }),
+    };
+  }
+
   // Full document snapshot — root (IM_Receipt) + detail lines (IM_ReceiptItem) + variant
   // breakdown (IM_ReceiptItemVariant), matching this exact reference document's real structure
   // (see this file's own header comment). Composed once at write time (not a live requery) so
   // Log Details always shows what the document looked like AT THAT MOMENT, per audit.service.ts's
   // own "snapshot at write time" design. listItems() already resolves variants per line, so this
-  // needs no extra query beyond the one it already makes.
+  // needs no extra query beyond the one it already makes. Header + each item run through
+  // enrichDisplayRefs() so FK columns (Current Account/Warehouse/Subcontract Type/Receipt/
+  // Inventory/Unit/Forex/Color) render as {id,code,name} in Log Details, not bare ids.
   private async snapshotDocument(id: number, receiptType: number) {
     const label = this.labelFor(receiptType);
+    const resolvers = this.displayResolvers();
     const header = await this.get(id, receiptType).catch(() => null);
+    const enrichedHeader = header ? await enrichDisplayRefs(header, resolvers) : null;
     const items = await this.listItems(id).catch(() => []);
+    const enrichedItems = await Promise.all((items as any[]).map((it) => enrichDisplayRefs(it, resolvers)));
     const variants = items.flatMap((it: any) => (it.variants ?? []).map((v: any) => ({ ...v, inventoryReceiptItemId: it.id })));
     return {
-      [`${label} (IM_Receipt)`]: header,
-      [`${label} Details (IM_ReceiptItem)`]: items.map(({ variants: _v, ...rest }: any) => rest),
+      [`${label} (IM_Receipt)`]: enrichedHeader,
+      [`${label} Details (IM_ReceiptItem)`]: enrichedItems.map(({ variants: _v, ...rest }: any) => rest),
       [`${label} Variants (IM_ReceiptItemVariant)`]: variants,
     };
   }
@@ -408,6 +438,12 @@ export class InventoryReceiptService {
         `);
         const result = await this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
         if (currentUserId && companyId) {
+          // Audited via the same joined get() the DELETE snapshot already uses (not the bare,
+          // unjoined `result` — approve()'s HEADER_SELECT has no Subcontract Type/Receipt/Script
+          // joins), then FK-enriched so Current Account/Warehouse/Subcontract Type render as
+          // {id,code,name} instead of bare ids. API response (`result`) is untouched.
+          const snapshotHeader = await this.get(rows[0].id, receiptType).catch(() => result);
+          const enriched = await enrichDisplayRefs(snapshotHeader, this.displayResolvers());
           await this.audit.recordSafe({
             userId: currentUserId,
             companyId,
@@ -416,7 +452,7 @@ export class InventoryReceiptService {
             entityId: String(rows[0].id),
             action: AUDIT_ACTIONS.CREATE,
             documentNo: rows[0].receiptNo,
-            after: { [`${this.labelFor(receiptType)} (IM_Receipt)`]: result },
+            after: { [`${this.labelFor(receiptType)} (IM_Receipt)`]: enriched },
           });
         }
         return result;
@@ -441,6 +477,8 @@ export class InventoryReceiptService {
         `);
         const result = await this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
         if (currentUserId && companyId) {
+          const snapshotHeader = await this.get(rows[0].id, receiptType).catch(() => result);
+          const enriched = await enrichDisplayRefs(snapshotHeader, this.displayResolvers());
           await this.audit.recordSafe({
             userId: currentUserId,
             companyId,
@@ -449,7 +487,7 @@ export class InventoryReceiptService {
             entityId: String(rows[0].id),
             action: AUDIT_ACTIONS.CREATE,
             documentNo: rows[0].receiptNo,
-            after: { [`${this.labelFor(receiptType)} (IM_Receipt)`]: result },
+            after: { [`${this.labelFor(receiptType)} (IM_Receipt)`]: enriched },
           });
         }
         return result;
@@ -512,12 +550,21 @@ export class InventoryReceiptService {
       // never touches items/variants itself, so both sides show the same (accurate, unchanged)
       // current line state; ChangedFields in Log Details still diffs only the header section,
       // since that's the only section present as a plain object on both before/after.
+      const resolvers = this.displayResolvers();
       const items = await this.listItems(id).catch(() => []);
+      const enrichedItems = await Promise.all((items as any[]).map((it) => enrichDisplayRefs(it, resolvers)));
       const variants = items.flatMap((it: any) => (it.variants ?? []).map((v: any) => ({ ...v, inventoryReceiptItemId: it.id })));
       const detailSections = {
-        [`${label} Details (IM_ReceiptItem)`]: items.map(({ variants: _v, ...rest }: any) => rest),
+        [`${label} Details (IM_ReceiptItem)`]: enrichedItems.map(({ variants: _v, ...rest }: any) => rest),
         [`${label} Variants (IM_ReceiptItemVariant)`]: variants,
       };
+      // `result` (from autoApproveIfNotRequired) may come from approve()'s unjoined HEADER_SELECT
+      // — re-fetch via the same joined get() `before` already used so Subcontract Type/Receipt/
+      // Script names are present on both sides, same "already-proven receipt snapshot mechanism"
+      // as CREATE/DELETE.
+      const afterHeader = await this.get(id, receiptType).catch(() => result);
+      const enrichedBefore = await enrichDisplayRefs(before, resolvers);
+      const enrichedAfter = await enrichDisplayRefs(afterHeader, resolvers);
       await this.audit.recordSafe({
         userId: currentUserId,
         companyId,
@@ -526,8 +573,8 @@ export class InventoryReceiptService {
         entityId: String(id),
         action: AUDIT_ACTIONS.UPDATE,
         documentNo: (result as any)?.receiptNo ?? before.receiptNo,
-        before: { [`${label} (IM_Receipt)`]: before, ...detailSections },
-        after: { [`${label} (IM_Receipt)`]: result, ...detailSections },
+        before: { [`${label} (IM_Receipt)`]: enrichedBefore, ...detailSections },
+        after: { [`${label} (IM_Receipt)`]: enrichedAfter, ...detailSections },
       });
     }
     return result;
@@ -1022,7 +1069,26 @@ export class InventoryReceiptService {
     }
   }
 
-  async createItem(inventoryReceiptId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
+  // Mirrors purchase-order.service.ts's own lineAuditCtx() exactly.
+  private async lineAuditCtx(inventoryReceiptId: number, receiptType: number) {
+    const header = await this.get(inventoryReceiptId, receiptType).catch(() => null);
+    const label = this.labelFor(receiptType);
+    return { label, screenKey: screenKeyFor(receiptType), parentDocumentNo: (header as any)?.receiptNo ?? null };
+  }
+
+  // Mirrors purchase-order.service.ts's own variantAuditCtx() — a variant's immediate parent is
+  // the item line, not the receipt header, so this resolves that item's own receipt/receiptType
+  // first before delegating to lineAuditCtx().
+  private async variantAuditCtx(inventoryReceiptItemId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "InventoryReceiptId" as "inventoryReceiptId", "ReceiptType" as "receiptType" FROM "IM_ReceiptItem" WHERE "RecId" = ${inventoryReceiptItemId}
+    `);
+    if (!rows.length) return null;
+    const { inventoryReceiptId, receiptType } = sanitizeRawRow(rows[0]);
+    return this.lineAuditCtx(inventoryReceiptId, receiptType);
+  }
+
+  async createItem(inventoryReceiptId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
     if (!dto.inventoryId) throw new BadRequestException('An inventory item is required');
     const toDb = await this.itemToDb();
     const effective: Record<string, any> = { ...dto, receiptType };
@@ -1044,6 +1110,20 @@ export class InventoryReceiptService {
       RETURNING ${ITEM_SELECT}
     `);
 
+    const auditCreatedItem = async (created: any) => {
+      if (currentUserId && companyId) {
+        const ctx = await this.lineAuditCtx(inventoryReceiptId, receiptType);
+        const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}Item`, entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+          parentEntityType: 'IM_Receipt', parentEntityId: String(inventoryReceiptId), parentDocumentNo: ctx.parentDocumentNo,
+          after: { [`${ctx.label} Line (IM_ReceiptItem)`]: enriched },
+        });
+      }
+      return created;
+    };
+
     if (effective['orderReceiptItemId']) {
       const rows = await this.prisma.$transaction(async (tx) => {
         await this.assertPendingSource(tx, inventoryReceiptId, Number(effective['orderReceiptItemId']), receiptType);
@@ -1056,7 +1136,7 @@ export class InventoryReceiptService {
         );
         return insert(tx);
       });
-      return sanitizeRawRow(rows[0]);
+      return auditCreatedItem(sanitizeRawRow(rows[0]));
     }
 
     if (effective['purchaseReceiptItemId']) {
@@ -1071,11 +1151,11 @@ export class InventoryReceiptService {
         );
         return insert(tx);
       });
-      return sanitizeRawRow(rows[0]);
+      return auditCreatedItem(sanitizeRawRow(rows[0]));
     }
 
     const rows = await insert(this.prisma);
-    return sanitizeRawRow(rows[0]);
+    return auditCreatedItem(sanitizeRawRow(rows[0]));
   }
 
   // BUG FIX (found during final data-integrity review): neither method verified that `itemId`
@@ -1087,7 +1167,25 @@ export class InventoryReceiptService {
   // `inventoryReceiptId` is optional so any caller that omits it keeps today's exact behavior;
   // both controllers (Purchase Receipt's dedicated route and the generic 16-type route) now pass
   // it, so the check is active everywhere in practice.
-  async updateItem(itemId: number, dto: Record<string, any>, userId: number, inventoryReceiptId?: number, receiptType: number = RECEIPT_TYPE) {
+  async updateItem(itemId: number, dto: Record<string, any>, userId: number, inventoryReceiptId?: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    const beforeForAudit = currentUserId && companyId
+      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId}`).then((r) => (r.length ? sanitizeRawRow(r[0]) : null))
+      : null;
+    const auditUpdatedItem = async (updated: any) => {
+      if (currentUserId && companyId && beforeForAudit && hasRealChanges(beforeForAudit, updated)) {
+        const receiptId = inventoryReceiptId ?? updated.inventoryReceiptId;
+        const ctx = await this.lineAuditCtx(receiptId, receiptType);
+        const resolvers = this.displayResolvers();
+        const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(beforeForAudit, resolvers), enrichDisplayRefs(updated, resolvers)]);
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}Item`, entityId: String(itemId), action: AUDIT_ACTIONS.UPDATE,
+          parentEntityType: 'IM_Receipt', parentEntityId: String(receiptId), parentDocumentNo: ctx.parentDocumentNo,
+          before: { [`${ctx.label} Line (IM_ReceiptItem)`]: enrichedBefore }, after: { [`${ctx.label} Line (IM_ReceiptItem)`]: enrichedAfter },
+        });
+      }
+      return updated;
+    };
     const toDb = await this.itemToDb();
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
     const effective = { ...dto };
@@ -1154,7 +1252,7 @@ export class InventoryReceiptService {
     if (!cols.length) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId} ${owner}`);
       if (!rows.length) throw new NotFoundException('Line not found');
-      return sanitizeRawRow(rows[0]);
+      return auditUpdatedItem(sanitizeRawRow(rows[0]));
     }
     const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, effective[camel(c)])}`));
     const doUpdate = (client: Prisma.TransactionClient | PrismaService) => client.$queryRaw<any[]>(Prisma.sql`
@@ -1180,7 +1278,7 @@ export class InventoryReceiptService {
         return doUpdate(tx);
       });
       if (!rows.length) throw new NotFoundException('Line not found');
-      return sanitizeRawRow(rows[0]);
+      return auditUpdatedItem(sanitizeRawRow(rows[0]));
     }
 
     if (effectiveOrderReceiptItemId != null) {
@@ -1195,17 +1293,20 @@ export class InventoryReceiptService {
         return doUpdate(tx);
       });
       if (!rows.length) throw new NotFoundException('Line not found');
-      return sanitizeRawRow(rows[0]);
+      return auditUpdatedItem(sanitizeRawRow(rows[0]));
     }
 
     const rows = await doUpdate(this.prisma);
     if (!rows.length) throw new NotFoundException('Line not found');
-    return sanitizeRawRow(rows[0]);
+    return auditUpdatedItem(sanitizeRawRow(rows[0]));
   }
 
   // Same bug/fix as updateItem() above.
-  async removeItem(itemId: number, userId: number, inventoryReceiptId?: number) {
+  async removeItem(itemId: number, userId: number, inventoryReceiptId?: number, currentUserId?: string, companyId?: string) {
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
+    const beforeForAudit = currentUserId && companyId
+      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT}, "ReceiptType" as "receiptType" FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId} ${owner}`).then((r) => (r.length ? sanitizeRawRow(r[0]) : null))
+      : null;
     const result = await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_ReceiptItem', itemId, tx);
       return tx.$executeRaw(Prisma.sql`
@@ -1213,6 +1314,17 @@ export class InventoryReceiptService {
       `);
     });
     if (!result) throw new NotFoundException('Line not found');
+    if (currentUserId && companyId && beforeForAudit) {
+      const receiptId = inventoryReceiptId ?? beforeForAudit.inventoryReceiptId;
+      const ctx = await this.lineAuditCtx(receiptId, beforeForAudit.receiptType ?? RECEIPT_TYPE);
+      const enriched = await enrichDisplayRefs(beforeForAudit, this.displayResolvers());
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: ctx.screenKey,
+        entityType: `${ctx.label}Item`, entityId: String(itemId), action: AUDIT_ACTIONS.DELETE,
+        parentEntityType: 'IM_Receipt', parentEntityId: String(receiptId), parentDocumentNo: ctx.parentDocumentNo,
+        before: { [`${ctx.label} Line (IM_ReceiptItem)`]: enriched },
+      });
+    }
     return { message: 'Deleted' };
   }
 
@@ -1270,7 +1382,7 @@ export class InventoryReceiptService {
     if (!rows.length) throw new BadRequestException('Selected Variant1 does not belong to this line\'s Item.');
   }
 
-  async createItemVariantLine(inventoryReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
+  async createItemVariantLine(inventoryReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
     if (!dto.inventoryVariantId) throw new BadRequestException('A variant is required');
     await this.assertVariantBelongsToLineItem(inventoryReceiptItemId, Number(dto.inventoryVariantId));
     const toDb = await this.itemVariantToDb();
@@ -1283,10 +1395,23 @@ export class InventoryReceiptService {
       VALUES (${inventoryReceiptItemId}, ${receiptType}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       RETURNING ${ITEM_VARIANT_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const created = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId) {
+      const ctx = await this.variantAuditCtx(inventoryReceiptItemId);
+      if (ctx) {
+        const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}ItemVariant`, entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+          parentEntityType: `${ctx.label}Item`, parentEntityId: String(inventoryReceiptItemId), parentDocumentNo: ctx.parentDocumentNo,
+          after: { [`${ctx.label} Line Variant (IM_ReceiptItemVariant)`]: enriched },
+        });
+      }
+    }
+    return created;
   }
 
-  async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number) {
+  async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     if (dto.inventoryVariantId !== undefined && dto.inventoryVariantId !== null) {
       const lineRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
         SELECT "InventoryReceiptItemId" as id FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
@@ -1295,27 +1420,58 @@ export class InventoryReceiptService {
       await this.assertVariantBelongsToLineItem(Number(lineRows[0].id), Number(dto.inventoryVariantId));
     }
     const toDb = await this.itemVariantToDb();
+    const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId}`);
+    if (!beforeRows.length) throw new NotFoundException('Variant line not found');
+    const before = sanitizeRawRow(beforeRows[0]);
     const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
-    if (!cols.length) {
-      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId}`);
+    let updated = before;
+    if (cols.length) {
+      const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
+      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        UPDATE "IM_ReceiptItemVariant" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
+        WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
+        RETURNING ${ITEM_VARIANT_SELECT}
+      `);
       if (!rows.length) throw new NotFoundException('Variant line not found');
-      return sanitizeRawRow(rows[0]);
+      updated = sanitizeRawRow(rows[0]);
     }
-    const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      UPDATE "IM_ReceiptItemVariant" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
-      WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
-      RETURNING ${ITEM_VARIANT_SELECT}
-    `);
-    if (!rows.length) throw new NotFoundException('Variant line not found');
-    return sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId && hasRealChanges(before, updated)) {
+      const ctx = await this.variantAuditCtx(updated.inventoryReceiptItemId);
+      if (ctx) {
+        const resolvers = this.displayResolvers();
+        const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(before, resolvers), enrichDisplayRefs(updated, resolvers)]);
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}ItemVariant`, entityId: String(variantLineId), action: AUDIT_ACTIONS.UPDATE,
+          parentEntityType: `${ctx.label}Item`, parentEntityId: String(updated.inventoryReceiptItemId), parentDocumentNo: ctx.parentDocumentNo,
+          before: { [`${ctx.label} Line Variant (IM_ReceiptItemVariant)`]: enrichedBefore }, after: { [`${ctx.label} Line Variant (IM_ReceiptItemVariant)`]: enrichedAfter },
+        });
+      }
+    }
+    return updated;
   }
 
-  async removeItemVariantLine(variantLineId: number, userId: number) {
+  async removeItemVariantLine(variantLineId: number, userId: number, currentUserId?: string, companyId?: string) {
+    const beforeRows = currentUserId && companyId
+      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId}`)
+      : [];
     const result = await this.prisma.$executeRaw`
       UPDATE "IM_ReceiptItemVariant" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${variantLineId}
     `;
     if (!result) throw new NotFoundException('Variant line not found');
+    if (currentUserId && companyId && beforeRows.length) {
+      const before = sanitizeRawRow(beforeRows[0]);
+      const ctx = await this.variantAuditCtx(before.inventoryReceiptItemId);
+      if (ctx) {
+        const enriched = await enrichDisplayRefs(before, this.displayResolvers());
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}ItemVariant`, entityId: String(variantLineId), action: AUDIT_ACTIONS.DELETE,
+          parentEntityType: `${ctx.label}Item`, parentEntityId: String(before.inventoryReceiptItemId), parentDocumentNo: ctx.parentDocumentNo,
+          before: { [`${ctx.label} Line Variant (IM_ReceiptItemVariant)`]: enriched },
+        });
+      }
+    }
     return { message: 'Deleted' };
   }
 }

@@ -25,7 +25,7 @@ export class PlmCardsController {
   @Get('style-cards/:id') getStyleCard(@Param('id') id: string) { return this.svc.getStyleCard(id); }
   @Put('style-cards/:id') updateStyleCard(@Param('id') id: string, @Body() dto: any) { return this.svc.updateStyleCard(id, dto); }
   @Delete('style-cards/:id') deleteStyleCard(@Param('id') id: string) { return this.svc.deleteStyleCard(id); }
-  @Patch('style-cards/:id/status') updateStyleCardStatus(@Param('id') id: string, @Body() body: any, @CurrentUser() u: any) { return this.svc.updateStyleCardStatus(id, body.status, u.id); }
+  @Patch('style-cards/:id/status') updateStyleCardStatus(@Param('id') id: string, @Body() body: any, @CurrentUser() u: any) { return this.svc.updateStyleCardStatus(id, body.status, u.id, u.companyId); }
   @Get('style-cards/:id/details') getStyleCardDetails(@Param('id') id: string) { return this.svc.getStyleCardDetails(id); }
   @Post('style-cards/:id/details') addStyleCardDetail(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.addStyleCardDetail(id, dto, u.id); }
   @Put('style-cards/:id/details') upsertStyleCardDetails(@Param('id') id: string, @Body() details: any[], @CurrentUser() u: any) { return this.svc.upsertStyleCardDetails(id, details, u.id); }
@@ -40,7 +40,7 @@ export class PlmCardsController {
   @Get('sample-cards/:id') getSampleCard(@Param('id') id: string) { return this.svc.getSampleCard(id); }
   @Put('sample-cards/:id') updateSampleCard(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSampleCard(id, dto); }
   @Delete('sample-cards/:id') deleteSampleCard(@Param('id') id: string) { return this.svc.deleteSampleCard(id); }
-  @Patch('sample-cards/:id/status') updateSampleCardStatus(@Param('id') id: string, @Body() body: any, @CurrentUser() u: any) { return this.svc.updateSampleCardStatus(id, body.status, body.notes, u.id); }
+  @Patch('sample-cards/:id/status') updateSampleCardStatus(@Param('id') id: string, @Body() body: any, @CurrentUser() u: any) { return this.svc.updateSampleCardStatus(id, body.status, body.notes, u.id, u.companyId); }
   @Get('sample-cards/:id/history') getSampleCardHistory(@Param('id') id: string) { return this.svc.getSampleCardHistory(id); }
   @Post('sample-cards/:id/duplicate') duplicateSampleCard(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.duplicateSampleCard(id, u.id); }
   @Post('sample-cards/:id/create-style-card') createStyleCardFromSample(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.createStyleCardFromSample(id, u.id); }

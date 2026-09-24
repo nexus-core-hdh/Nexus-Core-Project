@@ -36,16 +36,16 @@ export class TrimInventoryCardController {
     return this.svc.get(id);
   }
 
-  @Post() create(@Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
-    return this.svc.create(dto, Number(userId) || 1, userId);
+  @Post() create(@Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.create(dto, Number(userId) || 1, userId, userId, companyId);
   }
 
-  @Put(':id') update(@Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string) {
-    return this.svc.update(id, dto, Number(userId) || 1);
+  @Put(':id') update(@Param('id', ParseIntPipe) id: number, @Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.update(id, dto, Number(userId) || 1, userId, companyId);
   }
 
-  @Delete(':id') remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string) {
-    return this.svc.remove(id, Number(userId) || 1);
+  @Delete(':id') remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.remove(id, Number(userId) || 1, userId, companyId);
   }
 
   @Get(':id/attachments') listAttachments(@Param('id', ParseIntPipe) id: number, @Query('kind') kind: 'document' | 'picture') {

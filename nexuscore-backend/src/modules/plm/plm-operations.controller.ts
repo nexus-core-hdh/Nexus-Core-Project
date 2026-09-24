@@ -18,7 +18,7 @@ export class PlmOperationsController {
   @Get('orders/:id') getOrder(@Param('id') id: string) { return this.svc.getOrder(id); }
   @Put('orders/:id') updateOrder(@Param('id') id: string, @Body() dto: any) { return this.svc.updateOrder(id, dto); }
   @Delete('orders/:id') deleteOrder(@Param('id') id: string) { return this.svc.deleteOrder(id); }
-  @Patch('orders/:id/status') updateOrderStatus(@Param('id') id: string, @Body() body: any, @CurrentUser() u: any) { return this.svc.updateOrderStatus(id, body.status, body.notes, u.id); }
+  @Patch('orders/:id/status') updateOrderStatus(@Param('id') id: string, @Body() body: any, @CurrentUser() u: any) { return this.svc.updateOrderStatus(id, body.status, body.notes, u.id, u.companyId); }
   @Get('orders/:id/tasks') getOrderTasks(@Param('id') id: string) { return this.svc.getOrderTasks(id); }
   @Post('orders/:id/tasks') createOrderTask(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.createOrderTask(id, dto, u.branchId, u.id); }
 

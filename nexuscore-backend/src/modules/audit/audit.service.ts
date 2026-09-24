@@ -79,6 +79,15 @@ const SENSITIVE_KEY_PATTERN = /password|token|secret|apikey|api_key|credential|p
 
 function scrub(value: unknown, depth = 0): unknown {
   if (value == null || depth > 8) return value;
+  // A Date instance is `typeof 'object'` but has zero own enumerable properties —
+  // Object.entries(new Date()) is `[]`, so without this guard the generic walk below silently
+  // rebuilds every Date field as `{}`. Same guard raw-row.util.ts's sanitizeRawRow already has,
+  // reinstated here since this is a separate recursive walk over the same kind of data.
+  if (value instanceof Date) return value;
+  // Prisma.Decimal / decimal.js-style wrapper — same convention as sanitizeRawRow.
+  if (value && typeof value === 'object' && typeof (value as any).toNumber === 'function') {
+    return Number((value as any).toNumber());
+  }
   if (Array.isArray(value)) return value.map((v) => scrub(v, depth + 1));
   if (typeof value === 'object') {
     const out: Record<string, unknown> = {};

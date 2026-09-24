@@ -123,7 +123,6 @@ const HIDDEN_GROUP_TITLES = new Set<string>(["AI Apps"]);
 const HIDDEN_ITEM_HREFS = new Set<string>([
   "/dashboard/apps/api-keys",
   "/dashboard/pages/user-profile",
-  "/dashboard/sales",
   "/dashboard/project-management",
   "/dashboard/payment",
   "/dashboard/apps/pos-system",

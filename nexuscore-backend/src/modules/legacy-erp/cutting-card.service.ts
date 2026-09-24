@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkOrderService } from './work-order.service';
+import { WorkOrderService, WORK_ORDER_SCREEN_KEY } from './work-order.service';
+import { LegacyMasterLookupService } from './legacy-master-lookup.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
 import { assertNonNegative, assertAllNonNegative } from './numeric-guards.util';
 
@@ -60,7 +62,51 @@ export class CuttingCardService {
     private readonly prisma: PrismaService,
     private readonly workOrderSvc: WorkOrderService,
     private readonly fabricYarnSvc: FabricYarnRequirementsService,
+    private readonly masterLookup: LegacyMasterLookupService,
+    private readonly audit: AuditService,
   ) {}
+
+  // ── Audit ────────────────────────────────────────────────────────────────────────────────
+  // A Cutting Card belongs to a Work Order (a tab/sub-screen of it, same as Requirements), so its
+  // events reuse WORK_ORDER_SCREEN_KEY exactly like fabric-yarn-requirements.service.ts does —
+  // Module/Menu resolve automatically once a real Work Order MenuItem exists (none does today, so
+  // they stay empty rather than being fabricated). The lazy get-or-create of the empty card shell
+  // on first open is deliberately NOT audited: it is a read-triggered placeholder with no user
+  // data; the first real change (Detail save / Entry add) is what gets recorded.
+  private displayResolvers(): Record<string, FkResolver> {
+    return { factoryId: (id) => this.masterLookup.getById('current-account', Number(id), { includeInactive: true }) };
+  }
+
+  private async workOrderNo(workOrderId: number): Promise<string | null> {
+    const wo = await this.workOrderSvc.get(workOrderId).catch(() => null);
+    return (wo as any)?.workOrderNo ?? null;
+  }
+
+  private entrySnapshot(entry: any) {
+    const sizes: Record<string, number> = {};
+    for (const sz of entry.sizes ?? []) sizes[sz.sizeCode] = Number(sz.quantity);
+    return { id: entry.id, cuttingCardId: entry.cuttingCardId, date: entry.date, factoryId: entry.factoryId, partyNo: entry.partyNo, document: entry.document, explanation: entry.explanation, sizes };
+  }
+
+  private async loadEntry(entryId: string) {
+    const e = await this.prisma.cuttingCardEntry.findUnique({ where: { id: entryId }, include: { sizes: true } });
+    return e ? enrichDisplayRefs(this.entrySnapshot(e), this.displayResolvers()) : null;
+  }
+
+  private async auditEntry(
+    action: string, workOrderId: number, cardId: string, entryId: string, before: any, after: any, userId?: string, companyId?: string,
+  ) {
+    if (!userId || !companyId) return;
+    const section = 'Cutting Entry (CuttingCardEntry)';
+    const woNo = await this.workOrderNo(workOrderId);
+    await this.audit.recordSafe({
+      userId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+      entityType: 'CuttingCardEntry', entityId: entryId, action,
+      documentNo: woNo,
+      parentEntityType: 'CuttingCard', parentEntityId: cardId, parentDocumentNo: woNo,
+      ...(before ? { before: { [section]: before } } : {}), ...(after ? { after: { [section]: after } } : {}),
+    });
+  }
 
   // Byte-for-byte copy of fabric-yarn-requirements.service.ts's own willBeCutQty() — see that
   // file's comment for why this must stay a private per-call copy, not a shared import: rounding
@@ -386,6 +432,7 @@ export class CuttingCardService {
       endOfRoll: number | null; clipping: number | null; markerGrams: number | null; actualGrams: number | null;
     }>,
     userId?: string,
+    companyId?: string,
   ) {
     assertAllNonNegative({
       'Marker Weight': detail.markerWeight, 'Marker Plies': detail.markerPlies, 'Marker Count': detail.markerCount,
@@ -393,7 +440,17 @@ export class CuttingCardService {
       'End of Roll': detail.endOfRoll, Clipping: detail.clipping, 'Marker (Grams)': detail.markerGrams, 'Actual (Grams)': detail.actualGrams,
     });
     const card = await this.getOrCreateCard(workOrderId, productionColor, materialKey, materialLabel, userId);
-    await this.prisma.cuttingCard.update({ where: { id: card.id }, data: detail as any });
+    const updatedCard = await this.prisma.cuttingCard.update({ where: { id: card.id }, data: detail as any });
+    // Only a real persisted change is an Updated event (updatedAt always moves, so it is ignored).
+    if (userId && companyId && hasRealChanges(card, updatedCard, ['updatedAt'])) {
+      const woNo = await this.workOrderNo(workOrderId);
+      await this.audit.recordSafe({
+        userId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'CuttingCard', entityId: card.id, action: AUDIT_ACTIONS.UPDATE, documentNo: woNo,
+        parentEntityType: 'MA_WorkOrder', parentEntityId: String(workOrderId), parentDocumentNo: woNo,
+        before: { 'Cutting Card (CuttingCard)': card }, after: { 'Cutting Card (CuttingCard)': updatedCard },
+      });
+    }
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
   }
 
@@ -413,9 +470,10 @@ export class CuttingCardService {
   // setCuttingEntrySize below); an entry with zero sizes simply contributes 0 to every size's Cut
   // total, exactly like a freshly Added Color row on Manufacturing Quantities contributes 0 until
   // sizes are typed in.
-  async addCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, userId?: string) {
+  async addCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, userId?: string, companyId?: string) {
     const card = await this.getOrCreateCard(workOrderId, productionColor, materialKey, materialLabel, userId);
-    await this.prisma.cuttingCardEntry.create({ data: { cuttingCardId: card.id } });
+    const entry = await this.prisma.cuttingCardEntry.create({ data: { cuttingCardId: card.id } });
+    await this.auditEntry(AUDIT_ACTIONS.CREATE, workOrderId, card.id, entry.id, null, await this.loadEntry(entry.id), userId, companyId);
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
   }
 
@@ -423,33 +481,46 @@ export class CuttingCardService {
     workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string,
     patch: Partial<{ date: string | null; factoryId: number | null; partyNo: string | null; document: string | null; explanation: string | null }>,
     userId?: string,
+    companyId?: string,
   ) {
-    await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const before = userId && companyId ? await this.loadEntry(entryId) : null;
     await this.prisma.cuttingCardEntry.update({
       where: { id: entryId },
       data: { ...patch, date: patch.date === undefined ? undefined : (patch.date ? new Date(patch.date) : null) },
     });
+    if (before) {
+      const after = await this.loadEntry(entryId);
+      if (hasRealChanges(before, after)) await this.auditEntry(AUDIT_ACTIONS.UPDATE, workOrderId, owned.cuttingCardId, entryId, before, after, userId, companyId);
+    }
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
   }
 
   // Upserts ONE size cell within ONE Cutting Entry — negative quantities rejected outright.
   async setCuttingEntrySize(
     workOrderId: number, productionColor: string, materialKey: string, materialLabel: string,
-    entryId: string, sizeCode: string, quantity: number, userId?: string,
+    entryId: string, sizeCode: string, quantity: number, userId?: string, companyId?: string,
   ) {
     assertNonNegative(quantity, `Cut Qty (${sizeCode})`);
-    await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const before = userId && companyId ? await this.loadEntry(entryId) : null;
     await this.prisma.cuttingCardEntrySize.upsert({
       where: { entryId_sizeCode: { entryId, sizeCode } },
       update: { quantity },
       create: { entryId, sizeCode, quantity },
     });
+    if (before) {
+      const after = await this.loadEntry(entryId);
+      if (hasRealChanges(before, after)) await this.auditEntry(AUDIT_ACTIONS.UPDATE, workOrderId, owned.cuttingCardId, entryId, before, after, userId, companyId);
+    }
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
   }
 
-  async deleteCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string, userId?: string) {
-    await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+  async deleteCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string, userId?: string, companyId?: string) {
+    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const before = userId && companyId ? await this.loadEntry(entryId) : null; // last valid state incl. sizes
     await this.prisma.cuttingCardEntry.delete({ where: { id: entryId } }); // CuttingCardEntrySize rows cascade
+    if (before) await this.auditEntry(AUDIT_ACTIONS.DELETE, workOrderId, owned.cuttingCardId, entryId, before, null, userId, companyId);
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
   }
 }

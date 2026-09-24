@@ -62,9 +62,10 @@ export class CuttingCardController {
     @Query('materialLabel') materialLabel: string | undefined,
     @Body() body: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     this.requireColorAndFabric(color, materialKey);
-    return this.svc.saveCuttingCardDetail(id, color!, materialKey!, materialLabel || '', body || {}, userId);
+    return this.svc.saveCuttingCardDetail(id, color!, materialKey!, materialLabel || '', body || {}, userId, companyId);
   }
 
   // Cutting Entries log — one real, persisted row per actual cutting batch.
@@ -74,9 +75,10 @@ export class CuttingCardController {
     @Query('materialKey') materialKey: string | undefined,
     @Query('materialLabel') materialLabel: string | undefined,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     this.requireColorAndFabric(color, materialKey);
-    return this.svc.addCuttingEntry(id, color!, materialKey!, materialLabel || '', userId);
+    return this.svc.addCuttingEntry(id, color!, materialKey!, materialLabel || '', userId, companyId);
   }
 
   @Put('entries/:entryId') updateEntry(
@@ -87,9 +89,10 @@ export class CuttingCardController {
     @Query('materialLabel') materialLabel: string | undefined,
     @Body() body: { date?: string | null; factoryId?: number | null; partyNo?: string | null; document?: string | null; explanation?: string | null },
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     this.requireColorAndFabric(color, materialKey);
-    return this.svc.updateCuttingEntry(id, color!, materialKey!, materialLabel || '', entryId, body || {}, userId);
+    return this.svc.updateCuttingEntry(id, color!, materialKey!, materialLabel || '', entryId, body || {}, userId, companyId);
   }
 
   @Post('entries/:entryId/size') setEntrySize(
@@ -100,10 +103,11 @@ export class CuttingCardController {
     @Query('materialLabel') materialLabel: string | undefined,
     @Body() body: { sizeCode: string; quantity: number },
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     this.requireColorAndFabric(color, materialKey);
     if (!body?.sizeCode) throw new BadRequestException('sizeCode is required.');
-    return this.svc.setCuttingEntrySize(id, color!, materialKey!, materialLabel || '', entryId, body.sizeCode, Number(body.quantity) || 0, userId);
+    return this.svc.setCuttingEntrySize(id, color!, materialKey!, materialLabel || '', entryId, body.sizeCode, Number(body.quantity) || 0, userId, companyId);
   }
 
   @Delete('entries/:entryId') deleteEntry(
@@ -113,8 +117,9 @@ export class CuttingCardController {
     @Query('materialKey') materialKey: string | undefined,
     @Query('materialLabel') materialLabel: string | undefined,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     this.requireColorAndFabric(color, materialKey);
-    return this.svc.deleteCuttingEntry(id, color!, materialKey!, materialLabel || '', entryId, userId);
+    return this.svc.deleteCuttingEntry(id, color!, materialKey!, materialLabel || '', entryId, userId, companyId);
   }
 }

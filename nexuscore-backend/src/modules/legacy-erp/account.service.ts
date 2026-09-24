@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
+import { LegacyMasterLookupService } from './legacy-master-lookup.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 
 const TABLE = 'FI_Account';
 
@@ -52,7 +54,28 @@ const CODE_ENTITY = 'FI_Account';
 
 @Injectable()
 export class AccountService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly masterLookup: LegacyMasterLookupService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // Only fields with an already-registered LegacyMasterLookupService key are enriched — Sector/
+  // TradingGroup/Seller/Channel/Transporter/CustomerGLAccount/SupplierGLAccount/PaymentPlan/
+  // SalesDiscount/PurchaseDiscount/TaxOffice/ForexRate/Parent/Status/FactoringCompany have no
+  // existing key and are left as raw ids rather than inventing one.
+  private displayResolvers(): Record<string, FkResolver> {
+    const byKey = (key: string): FkResolver => (id) => this.masterLookup.getById(key, Number(id), { includeInactive: true });
+    return {
+      groupId: byKey('group'),
+      employeeId: byKey('employee'),
+      brokerId: byKey('current-account'),
+      forexId: byKey('forex'),
+      warehouseId: byKey('warehouse'),
+      costCenterId: byKey('cost-center'),
+      certificationId: byKey('certification'),
+    };
+  }
 
   private async toDb() {
     const columnTypes = await getColumnTypeMap(this.prisma, TABLE);
@@ -168,7 +191,7 @@ export class AccountService {
     return sanitizeRawRow(rows[0]);
   }
 
-  async create(dto: Record<string, any>, userId: number) {
+  async create(dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     if (!dto.currentAccountName) {
       throw new NotFoundException('currentAccountName is required');
     }
@@ -198,7 +221,16 @@ export class AccountService {
           VALUES (${valuesSql}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return sanitizeRawRow(rows[0]);
+        const created = sanitizeRawRow(rows[0]);
+        if (currentUserId && companyId) {
+          const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+          this.audit.recordSafe({
+            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/current-accounts-list',
+            entityType: 'CurrentAccount', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+            documentNo: created.currentAccountCode, after: { 'Current Account (FI_Account)': enriched },
+          });
+        }
+        return created;
       } catch (err: any) {
         // Same convention as YarnCardService.create()/PurchaseOrderService — the DB's real
         // (CompanyId, CurrentAccountCode) unique index (FI_Account_IX0) is the actual source of
@@ -213,8 +245,8 @@ export class AccountService {
     throw new ConflictException('Could not generate a unique Current Account code — please try again.');
   }
 
-  async update(id: number, dto: Record<string, any>, userId: number) {
-    await this.get(id);
+  async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
+    const current = await this.get(id);
     const toDb = await this.toDb();
     // CurrentAccountCode is immutable after creation — never editable via update, regardless
     // of what the client sends (the frontend's own Code field is already disabled, but this
@@ -230,14 +262,33 @@ export class AccountService {
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const updated = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId && hasRealChanges(current, updated)) {
+      const resolvers = this.displayResolvers();
+      const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/current-accounts-list',
+        entityType: 'CurrentAccount', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
+        documentNo: updated.currentAccountCode,
+        before: { 'Current Account (FI_Account)': enrichedBefore }, after: { 'Current Account (FI_Account)': enrichedAfter },
+      });
+    }
+    return updated;
   }
 
-  async remove(id: number, userId: number) {
-    await this.get(id);
+  async remove(id: number, userId: number, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id);
     await this.prisma.$executeRaw`
       UPDATE "FI_Account" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
     `;
+    if (currentUserId && companyId) {
+      const enriched = await enrichDisplayRefs(before, this.displayResolvers());
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/current-accounts-list',
+        entityType: 'CurrentAccount', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
+        documentNo: before.currentAccountCode, before: { 'Current Account (FI_Account)': enriched },
+      });
+    }
     return { message: 'Deleted' };
   }
 }

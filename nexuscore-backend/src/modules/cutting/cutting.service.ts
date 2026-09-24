@@ -15,6 +15,7 @@ import { AddLineDto } from './dto/add-line.dto';
 import { CreateBatchDto } from './dto/create-batch.dto';
 import { UpdateMarkerPlanDto } from './dto/update-marker-plan.dto';
 import { UpdateCostDto } from './dto/update-cost.dto';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 
 @Injectable()
 export class CuttingService {
@@ -23,6 +24,7 @@ export class CuttingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly messaging: MessagingService,
+    private readonly audit: AuditService,
   ) {}
 
   private orderInclude = {
@@ -37,14 +39,14 @@ export class CuttingService {
 
   // ── Orders ───────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateCuttingOrderDto, createdBy: string) {
+  async create(dto: CreateCuttingOrderDto, createdBy: string, companyId?: string) {
     const orderNumber = `CUT-${Date.now()}`;
     const order = await this.prisma.cuttingOrder.create({
       data: { ...dto, orderNumber, triggeredBy: dto.triggeredBy || 'manual' },
       include: this.orderInclude,
     });
 
-    await this.createAuditLog(order.id, 'cutting_order', 'created', createdBy, null, order);
+    await this.recordOrderEvent({ actorId: createdBy, companyId, action: AUDIT_ACTIONS.CREATE, order, after: order });
     await this.messaging.publish(CuttingEvent.ORDER_CREATED, { orderId: order.id, orderNumber });
 
     // Auto-create BPM task in "Draft" stage
@@ -126,35 +128,38 @@ export class CuttingService {
     return { data: { ...order, bpmTasks } };
   }
 
-  async update(id: string, dto: Partial<CreateCuttingOrderDto>, updatedBy: string) {
+  async update(id: string, dto: Partial<CreateCuttingOrderDto>, updatedBy: string, companyId?: string) {
     const old = await this.findOne(id);
     const order = await this.prisma.cuttingOrder.update({
       where: { id },
       data: dto,
       include: this.orderInclude,
     });
-    await this.createAuditLog(id, 'cutting_order', 'updated', updatedBy, old.data, order);
+    await this.recordOrderEvent({ actorId: updatedBy, companyId, action: AUDIT_ACTIONS.UPDATE, order, before: old.data, after: order });
     return { data: order, message: 'Cutting order updated' };
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, deletedBy: string, companyId?: string) {
+    const before = await this.findOne(id);
     await this.prisma.cuttingOrder.delete({ where: { id } });
+    await this.recordOrderEvent({ actorId: deletedBy, companyId, action: AUDIT_ACTIONS.DELETE, order: before.data, before: before.data });
     return { message: 'Cutting order deleted' };
   }
 
-  async changeStatus(id: string, status: string, actorId: string) {
+  async changeStatus(id: string, status: string, actorId: string, companyId?: string) {
+    const before = await this.prisma.cuttingOrder.findUnique({ where: { id } });
     const order = await this.prisma.cuttingOrder.update({
       where: { id },
       data: { status },
       include: this.orderInclude,
     });
-    await this.createAuditLog(id, 'cutting_order', `status:${status}`, actorId, null, { status });
+    await this.recordOrderEvent({ actorId, companyId, action: `status:${status}`, order, before, after: order });
     await this.messaging.publish(CuttingEvent.ORDER_STATUS_CHANGED, { orderId: id, status, actorId });
     return { data: order, message: `Status changed to ${status}` };
   }
 
-  async submitApproval(id: string, actorId: string) {
+  async submitApproval(id: string, actorId: string, companyId?: string) {
+    const before = await this.prisma.cuttingOrder.findUnique({ where: { id } });
     const order = await this.prisma.cuttingOrder.update({
       where: { id },
       data: { approvalStatus: 'pending', status: 'pending_approval' },
@@ -163,13 +168,15 @@ export class CuttingService {
     await this.prisma.approvalHistory.create({
       data: { cuttingOrderId: id, action: 'submitted', actionBy: actorId },
     });
+    await this.recordOrderEvent({ actorId, companyId, action: 'submit', order, before, after: order });
     await this.messaging.publish(CuttingEvent.ORDER_SUBMITTED, { orderId: id, actorId });
     await this.messaging.publish(NotificationEvent.APPROVAL_NEEDED, { orderId: id, orderNumber: order.orderNumber });
     await this.moveBpmTaskToStage(id, 'Pending Approval', actorId, 'Submitted for approval');
     return { data: order, message: 'Submitted for approval' };
   }
 
-  async approve(id: string, actorId: string) {
+  async approve(id: string, actorId: string, companyId?: string) {
+    const before = await this.prisma.cuttingOrder.findUnique({ where: { id } });
     const order = await this.prisma.cuttingOrder.update({
       where: { id },
       data: { approvalStatus: 'approved', approvedBy: actorId, approvedAt: new Date(), status: 'approved' },
@@ -178,13 +185,15 @@ export class CuttingService {
     await this.prisma.approvalHistory.create({
       data: { cuttingOrderId: id, action: 'approved', actionBy: actorId },
     });
+    await this.recordOrderEvent({ actorId, companyId, action: 'approved', order, before, after: order });
     await this.messaging.publish(CuttingEvent.ORDER_APPROVED, { orderId: id, actorId });
     await this.messaging.publish(NotificationEvent.ORDER_APPROVED, { orderId: id, orderNumber: order.orderNumber });
     await this.moveBpmTaskToStage(id, 'Approved', actorId);
     return { data: order, message: 'Order approved' };
   }
 
-  async reject(id: string, actorId: string, reason: string) {
+  async reject(id: string, actorId: string, reason: string, companyId?: string) {
+    const before = await this.prisma.cuttingOrder.findUnique({ where: { id } });
     const order = await this.prisma.cuttingOrder.update({
       where: { id },
       data: { approvalStatus: 'rejected', rejectionReason: reason, status: 'rejected' },
@@ -193,13 +202,14 @@ export class CuttingService {
     await this.prisma.approvalHistory.create({
       data: { cuttingOrderId: id, action: 'rejected', actionBy: actorId, reason },
     });
+    await this.recordOrderEvent({ actorId, companyId, action: 'rejected', order, before, after: order });
     await this.messaging.publish(CuttingEvent.ORDER_REJECTED, { orderId: id, actorId, reason });
     await this.messaging.publish(NotificationEvent.ORDER_REJECTED, { orderId: id, reason });
     return { data: order, message: 'Order rejected' };
   }
 
-  async complete(id: string, actorId: string) {
-    return this.changeStatus(id, 'completed', actorId);
+  async complete(id: string, actorId: string, companyId?: string) {
+    return this.changeStatus(id, 'completed', actorId, companyId);
   }
 
   async getQr(id: string) {
@@ -213,7 +223,13 @@ export class CuttingService {
 
   async getAuditTrail(id: string) {
     const logs = await this.prisma.auditLog.findMany({
-      where: { entityId: id, entityType: 'cutting_order' },
+      where: {
+        OR: [
+          // 'cutting_order' = rows written by the old direct-write path (kept readable, never rewritten)
+          { entityId: id, entityType: { in: ['CuttingOrder', 'cutting_order'] } },
+          { parentEntityType: 'CuttingOrder', parentEntityId: id },
+        ],
+      },
       include: { user: { select: { id: true, name: true } } },
       orderBy: { createdAt: 'desc' },
     });
@@ -222,12 +238,13 @@ export class CuttingService {
 
   // ── Rolls ────────────────────────────────────────────────────────────────────
 
-  async addRoll(orderId: string, dto: AddRollDto) {
+  async addRoll(orderId: string, dto: AddRollDto, actorId?: string, companyId?: string) {
     await this.findOne(orderId);
     const roll = await this.prisma.cuttingOrderRoll.create({
       data: { cuttingOrderId: orderId, ...dto },
       include: { fabricRoll: { include: { fabricType: true } } },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingOrderRoll', entityId: roll.id, action: AUDIT_ACTIONS.CREATE, actorId, companyId, section: 'Roll (CuttingOrderRoll)', after: roll });
     return { data: roll, message: 'Roll added' };
   }
 
@@ -239,18 +256,21 @@ export class CuttingService {
     return { data: rolls };
   }
 
-  async removeRoll(orderId: string, rollId: string) {
+  async removeRoll(orderId: string, rollId: string, actorId?: string, companyId?: string) {
+    const before = await this.prisma.cuttingOrderRoll.findUnique({ where: { id: rollId }, include: { fabricRoll: true } });
     await this.prisma.cuttingOrderRoll.delete({ where: { id: rollId } });
+    if (before) await this.recordChild({ orderId, entityType: 'CuttingOrderRoll', entityId: rollId, action: AUDIT_ACTIONS.DELETE, actorId, companyId, section: 'Roll (CuttingOrderRoll)', before });
     return { message: 'Roll removed' };
   }
 
   // ── Lines ────────────────────────────────────────────────────────────────────
 
-  async addLine(orderId: string, dto: AddLineDto) {
+  async addLine(orderId: string, dto: AddLineDto, actorId?: string, companyId?: string) {
     await this.findOne(orderId);
     const line = await this.prisma.cuttingOrderLine.create({
       data: { cuttingOrderId: orderId, ...dto },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingOrderLine', entityId: line.id, action: AUDIT_ACTIONS.CREATE, actorId, companyId, section: 'Line (CuttingOrderLine)', after: line });
     return { data: line, message: 'Line added' };
   }
 
@@ -262,19 +282,22 @@ export class CuttingService {
     return { data: lines };
   }
 
-  async removeLine(orderId: string, lineId: string) {
+  async removeLine(orderId: string, lineId: string, actorId?: string, companyId?: string) {
+    const before = await this.prisma.cuttingOrderLine.findUnique({ where: { id: lineId } });
     await this.prisma.cuttingOrderLine.delete({ where: { id: lineId } });
+    if (before) await this.recordChild({ orderId, entityType: 'CuttingOrderLine', entityId: lineId, action: AUDIT_ACTIONS.DELETE, actorId, companyId, section: 'Line (CuttingOrderLine)', before });
     return { message: 'Line removed' };
   }
 
   // ── Batches ──────────────────────────────────────────────────────────────────
 
-  async createBatch(orderId: string, dto: CreateBatchDto) {
+  async createBatch(orderId: string, dto: CreateBatchDto, actorId?: string, companyId?: string) {
     await this.findOne(orderId);
     const batch = await this.prisma.cuttingBatch.create({
       data: { cuttingOrderId: orderId, ...dto },
       include: { cutter: { select: { id: true, name: true } } },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingBatch', entityId: batch.id, action: AUDIT_ACTIONS.CREATE, actorId, companyId, section: 'Batch (CuttingBatch)', after: batch });
     return { data: batch, message: 'Batch created' };
   }
 
@@ -286,11 +309,13 @@ export class CuttingService {
     return { data: batches };
   }
 
-  async startBatch(orderId: string, batchId: string) {
+  async startBatch(orderId: string, batchId: string, actorId?: string, companyId?: string) {
+    const before = await this.prisma.cuttingBatch.findUnique({ where: { id: batchId } });
     const batch = await this.prisma.cuttingBatch.update({
       where: { id: batchId },
       data: { status: 'in_progress', startTime: new Date() },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingBatch', entityId: batchId, action: 'started', actorId, companyId, section: 'Batch (CuttingBatch)', before, after: batch });
     await this.messaging.publish(CuttingEvent.BATCH_STARTED, { orderId, batchId });
     await this.moveBpmTaskToStage(orderId, 'In Progress', batch.cutterId, 'Batch started');
     return { data: batch, message: 'Batch started' };
@@ -302,11 +327,15 @@ export class CuttingService {
     actualPieces: number,
     defectPieces: number,
     notes?: string,
+    actorId?: string,
+    companyId?: string,
   ) {
+    const before = await this.prisma.cuttingBatch.findUnique({ where: { id: batchId } });
     const batch = await this.prisma.cuttingBatch.update({
       where: { id: batchId },
       data: { status: 'completed', endTime: new Date(), actualPieces, defectPieces, notes },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingBatch', entityId: batchId, action: 'completed', actorId, companyId, section: 'Batch (CuttingBatch)', before, after: batch });
 
     if (defectPieces > 0) {
       const pct = (defectPieces / actualPieces) * 100;
@@ -326,12 +355,14 @@ export class CuttingService {
     return { data: plan };
   }
 
-  async upsertMarkerPlan(orderId: string, dto: UpdateMarkerPlanDto, createdBy?: string) {
+  async upsertMarkerPlan(orderId: string, dto: UpdateMarkerPlanDto, createdBy?: string, companyId?: string) {
+    const before = await this.prisma.markerPlan.findUnique({ where: { cuttingOrderId: orderId } });
     const plan = await this.prisma.markerPlan.upsert({
       where: { cuttingOrderId: orderId },
       create: { cuttingOrderId: orderId, ...dto, createdBy },
       update: dto,
     });
+    await this.recordChild({ orderId, entityType: 'MarkerPlan', entityId: plan.id, action: before ? AUDIT_ACTIONS.UPDATE : AUDIT_ACTIONS.CREATE, actorId: createdBy, companyId, section: 'Marker Plan (MarkerPlan)', before, after: plan });
     return { data: plan, message: 'Marker plan saved' };
   }
 
@@ -342,7 +373,7 @@ export class CuttingService {
     return { data: cost };
   }
 
-  async upsertCost(orderId: string, dto: UpdateCostDto) {
+  async upsertCost(orderId: string, dto: UpdateCostDto, actorId?: string, companyId?: string) {
     const { fabricCost = 0, laborCost = 0, machineCost = 0, wastageCost = 0, overheadPct = 0 } = dto;
     const subtotal = fabricCost + laborCost + machineCost + wastageCost;
     const totalCost = subtotal * (1 + overheadPct / 100);
@@ -353,11 +384,13 @@ export class CuttingService {
     });
     const pieceCount = order?._count?.pieces || 1;
 
+    const beforeCost = await this.prisma.cuttingOrderCost.findUnique({ where: { cuttingOrderId: orderId } });
     const cost = await this.prisma.cuttingOrderCost.upsert({
       where: { cuttingOrderId: orderId },
       create: { cuttingOrderId: orderId, ...dto, totalCost, costPerPiece: totalCost / pieceCount },
       update: { ...dto, totalCost, costPerPiece: totalCost / pieceCount },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingOrderCost', entityId: cost.id, action: beforeCost ? AUDIT_ACTIONS.UPDATE : AUDIT_ACTIONS.CREATE, actorId, companyId, section: 'Cost (CuttingOrderCost)', before: beforeCost, after: cost });
     return { data: cost, message: 'Cost updated' };
   }
 
@@ -371,15 +404,18 @@ export class CuttingService {
     return { data: docs };
   }
 
-  async addDocument(orderId: string, doc: { fileName: string; fileType: string; fileUrl: string; fileSize?: number; description?: string }, uploadedBy?: string) {
+  async addDocument(orderId: string, doc: { fileName: string; fileType: string; fileUrl: string; fileSize?: number; description?: string }, uploadedBy?: string, companyId?: string) {
     const document = await this.prisma.cuttingDocument.create({
       data: { cuttingOrderId: orderId, ...doc, uploadedBy },
     });
+    await this.recordChild({ orderId, entityType: 'CuttingDocument', entityId: document.id, action: AUDIT_ACTIONS.CREATE, actorId: uploadedBy, companyId, section: 'Document (CuttingDocument)', after: document });
     return { data: document, message: 'Document added' };
   }
 
-  async removeDocument(orderId: string, docId: string) {
+  async removeDocument(orderId: string, docId: string, actorId?: string, companyId?: string) {
+    const before = await this.prisma.cuttingDocument.findUnique({ where: { id: docId } });
     await this.prisma.cuttingDocument.delete({ where: { id: docId } });
+    if (before) await this.recordChild({ orderId, entityType: 'CuttingDocument', entityId: docId, action: AUDIT_ACTIONS.DELETE, actorId, companyId, section: 'Document (CuttingDocument)', before });
     return { message: 'Document removed' };
   }
 
@@ -434,20 +470,77 @@ export class CuttingService {
     }
   }
 
-  private async createAuditLog(
-    entityId: string,
-    entityType: string,
-    action: string,
-    changedBy: string,
-    oldValues: any,
-    newValues: any,
-  ) {
-    try {
-      await this.prisma.auditLog.create({
-        data: { entityId, entityType, action, changedBy, oldValues, newValues },
-      });
-    } catch (e) {
-      this.logger.warn(`Audit log failed: ${(e as Error).message}`);
+  // ── Audit (central AuditService) ─────────────────────────────────────────────────────────────
+  // Every event goes through AuditService.recordSafe (the old direct prisma.auditLog.create()
+  // bypass is gone): company-scoped, Date/Decimal-safe, Module/Menu resolved from the real
+  // MenuItem tree. No MenuItem exists for a Cutting Order screen (confirmed live), so screenKey is
+  // left undefined and Module/Menu stay empty rather than being fabricated (metadata limitation).
+  // Snapshots are the persisted scalar row (relations stripped); FK ids that have a real display
+  // (Branch, User, Fabric Roll) carry { id, code, name } captured at write time. ApprovalHistory /
+  // BpmTaskHistory are separate, purpose-built tables feeding Cutting's own approval/Kanban UI and
+  // are intentionally left as they are — the approval action is ALSO recorded here.
+  private displayResolvers(): Record<string, FkResolver> {
+    const user: FkResolver = async (id) => {
+      const u = await this.prisma.user.findUnique({ where: { id: String(id) }, select: { name: true, email: true } });
+      return u ? { code: u.email ?? null, name: u.name ?? null } : null;
+    };
+    return {
+      branchId: async (id) => {
+        const b = await this.prisma.branch.findUnique({ where: { id: String(id) }, select: { name: true } });
+        return b ? { code: null, name: b.name } : null;
+      },
+      approvedBy: user,
+      cutBy: user,
+      cutterId: user,
+      fabricRollId: async (id) => {
+        const r = await this.prisma.fabricRoll.findUnique({ where: { id: String(id) }, select: { rollNumber: true, color: true } });
+        return r ? { code: r.rollNumber, name: r.color ?? null } : null;
+      },
+    };
+  }
+
+  // Scalar columns only (drops nested relation objects/arrays such as rolls/lines/branch/_count).
+  private scalars(row: any): Record<string, any> | null {
+    if (!row) return null;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(row)) {
+      const isDecimal = v && typeof v === 'object' && typeof (v as any).toNumber === 'function';
+      if (v === null || typeof v !== 'object' || v instanceof Date || isDecimal) out[k] = v;
     }
+    return out;
+  }
+
+  private async snapshot(row: any) {
+    const s = this.scalars(row);
+    return s ? enrichDisplayRefs(s, this.displayResolvers()) : null;
+  }
+
+  private async recordOrderEvent(p: { actorId?: string; companyId?: string; action: string; order: any; before?: any; after?: any }) {
+    if (!p.actorId || !p.companyId || !p.order?.id) return;
+    const [before, after] = await Promise.all([this.snapshot(p.before), this.snapshot(p.after)]);
+    // A pure update/workflow event with nothing actually changed is not an event.
+    if (before && after && !hasRealChanges(before, after, ['updatedAt'])) return;
+    const section = 'Cutting Order (CuttingOrder)';
+    await this.audit.recordSafe({
+      userId: p.actorId, companyId: p.companyId,
+      entityType: 'CuttingOrder', entityId: p.order.id, action: p.action, documentNo: p.order.orderNumber,
+      ...(before ? { before: { [section]: before } } : {}), ...(after ? { after: { [section]: after } } : {}),
+    });
+  }
+
+  private async recordChild(p: {
+    orderId: string; entityType: string; entityId: string; action: string; actorId?: string; companyId?: string;
+    section: string; before?: any; after?: any;
+  }) {
+    if (!p.actorId || !p.companyId) return;
+    const [before, after] = await Promise.all([this.snapshot(p.before), this.snapshot(p.after)]);
+    if (before && after && !hasRealChanges(before, after, ['updatedAt'])) return;
+    const order = await this.prisma.cuttingOrder.findUnique({ where: { id: p.orderId }, select: { orderNumber: true } });
+    await this.audit.recordSafe({
+      userId: p.actorId, companyId: p.companyId,
+      entityType: p.entityType, entityId: p.entityId, action: p.action, documentNo: order?.orderNumber,
+      parentEntityType: 'CuttingOrder', parentEntityId: p.orderId, parentDocumentNo: order?.orderNumber,
+      ...(before ? { before: { [p.section]: before } } : {}), ...(after ? { after: { [p.section]: after } } : {}),
+    });
   }
 }

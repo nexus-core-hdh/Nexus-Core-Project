@@ -126,23 +126,26 @@ export class PurchaseOrderController {
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.createItemVariantLine(itemId, dto, Number(userId) || 1);
+    return this.svc.createItemVariantLine(itemId, dto, Number(userId) || 1, undefined, userId, companyId);
   }
 
   @Put(':id/items/:itemId/variants/:variantLineId') updateItemVariantLine(
     @Param('variantLineId', ParseIntPipe) variantLineId: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.updateItemVariantLine(variantLineId, dto, Number(userId) || 1);
+    return this.svc.updateItemVariantLine(variantLineId, dto, Number(userId) || 1, userId, companyId);
   }
 
   @Delete(':id/items/:itemId/variants/:variantLineId') removeItemVariantLine(
     @Param('variantLineId', ParseIntPipe) variantLineId: number,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.removeItemVariantLine(variantLineId, Number(userId) || 1);
+    return this.svc.removeItemVariantLine(variantLineId, Number(userId) || 1, userId, companyId);
   }
 
   // Explanation tab

@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { DeleteDependencyService } from './delete-dependency.service';
+import { LegacyMasterLookupService } from './legacy-master-lookup.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 
 // Trim Card — the third IM_Item-based inventory card, alongside Fabric Card and Yarn Card,
 // scoped to rows where AccessCode = 'TRIM'. Not to be confused with "Customer Define Trims"
@@ -53,7 +55,26 @@ export class TrimInventoryCardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly deleteGuard: DeleteDependencyService,
+    private readonly masterLookup: LegacyMasterLookupService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Only fields with an already-registered LegacyMasterLookupService key are enriched —
+  // Variant1-5TypeId have no existing key and are left as raw ids rather than inventing one.
+  private displayResolvers(): Record<string, FkResolver> {
+    const byKey = (key: string): FkResolver => (id) => this.masterLookup.getById(key, Number(id), { includeInactive: true });
+    return {
+      groupId: byKey('group'),
+      processId: byKey('process'),
+      currentAccountId: byKey('current-account'),
+      vatId: byKey('tax'),
+      retailVatId: byKey('tax'),
+      wholeSaleVatId: byKey('tax'),
+      retailReturnVatId: byKey('tax'),
+      wholeSaleReturnVatId: byKey('tax'),
+      taxId: byKey('tax'),
+    };
+  }
 
   private async toDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, TABLE));
@@ -113,7 +134,7 @@ export class TrimInventoryCardService {
 
   private static readonly MAX_CODE_RETRIES = 5;
 
-  async create(dto: Record<string, any>, userId: number, insertedByUserId?: string) {
+  async create(dto: Record<string, any>, userId: number, insertedByUserId?: string, currentUserId?: string, companyId?: string) {
     const toDb = await this.toDb();
     for (let attempt = 1; attempt <= TrimInventoryCardService.MAX_CODE_RETRIES; attempt++) {
       const inventoryCode = await this.nextInventoryCode();
@@ -131,7 +152,16 @@ export class TrimInventoryCardService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return sanitizeRawRow(rows[0]);
+        const created = sanitizeRawRow(rows[0]);
+        if (currentUserId && companyId) {
+          const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+          this.audit.recordSafe({
+            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/trim-inventory-cards-list',
+            entityType: 'TrimInventoryCard', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+            documentNo: created.inventoryCode, after: { 'Trim Card (IM_Item)': enriched },
+          });
+        }
+        return created;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         const isCodeCollision = msg.includes('23505') && msg.includes('InventoryCode');
@@ -142,8 +172,8 @@ export class TrimInventoryCardService {
     throw new ConflictException('Could not generate a unique Code — please try again.');
   }
 
-  async update(id: number, dto: Record<string, any>, userId: number) {
-    await this.get(id);
+  async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
+    const current = await this.get(id);
     const toDb = await this.toDb();
     // InventoryCode is immutable after creation — never editable via update, regardless of
     // what the client sends. Matches yarn-card.service.ts's own update() guard.
@@ -155,17 +185,36 @@ export class TrimInventoryCardService {
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const updated = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId && hasRealChanges(current, updated)) {
+      const resolvers = this.displayResolvers();
+      const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/trim-inventory-cards-list',
+        entityType: 'TrimInventoryCard', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
+        documentNo: updated.inventoryCode,
+        before: { 'Trim Card (IM_Item)': enrichedBefore }, after: { 'Trim Card (IM_Item)': enrichedAfter },
+      });
+    }
+    return updated;
   }
 
-  async remove(id: number, userId: number) {
-    await this.get(id);
+  async remove(id: number, userId: number, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id);
     await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_Item', id, tx);
       await tx.$executeRaw`
         UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
       `;
     });
+    if (currentUserId && companyId) {
+      const enriched = await enrichDisplayRefs(before, this.displayResolvers());
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/trim-inventory-cards-list',
+        entityType: 'TrimInventoryCard', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
+        documentNo: before.inventoryCode, before: { 'Trim Card (IM_Item)': enriched },
+      });
+    }
     return { message: 'Deleted' };
   }
 }

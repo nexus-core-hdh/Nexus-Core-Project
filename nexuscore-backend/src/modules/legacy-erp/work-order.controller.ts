@@ -50,8 +50,8 @@ export class WorkOrderController {
     return this.svc.listItems(id);
   }
 
-  @Put(':id/items') upsertItems(@Param('id', ParseIntPipe) id: number, @Body() lines: any[], @CurrentUser('id') userId: string) {
-    return this.svc.upsertItems(id, lines, Number(userId) || 1);
+  @Put(':id/items') upsertItems(@Param('id', ParseIntPipe) id: number, @Body() lines: any[], @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.upsertItems(id, lines, Number(userId) || 1, userId, companyId);
   }
 
   // Manufacturing Quantities (Color/Size breakdown) for one Style Info line
@@ -63,8 +63,9 @@ export class WorkOrderController {
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() lines: any[],
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.upsertItemVariants(itemId, lines, Number(userId) || 1);
+    return this.svc.upsertItemVariants(itemId, lines, Number(userId) || 1, userId, companyId);
   }
 
   // BOM (Fabric/Trim/Ornament/Process) — MA_Recipe/MA_RecipeItem
@@ -77,8 +78,9 @@ export class WorkOrderController {
     @Param('lineType') lineType: BomLineType,
     @Body() lines: any[],
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.upsertBom(id, lineType, lines, Number(userId) || 1);
+    return this.svc.upsertBom(id, lineType, lines, Number(userId) || 1, userId, companyId);
   }
 
   @Post(':id/bom/transfer-from-style-card') transferBomFromStyleCard(

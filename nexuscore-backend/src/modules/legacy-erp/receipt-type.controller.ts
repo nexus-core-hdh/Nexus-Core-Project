@@ -168,10 +168,11 @@ export class ReceiptTypeController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
     await this.svc.get(id, cfg.receiptType);
-    return this.svc.createItem(id, dto, Number(userId) || 1, cfg.receiptType);
+    return this.svc.createItem(id, dto, Number(userId) || 1, cfg.receiptType, userId, companyId);
   }
 
   @Put(':id/items/:itemId') async updateItem(
@@ -180,10 +181,11 @@ export class ReceiptTypeController {
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
     await this.svc.get(id, cfg.receiptType);
-    return this.svc.updateItem(itemId, dto, Number(userId) || 1, id, cfg.receiptType);
+    return this.svc.updateItem(itemId, dto, Number(userId) || 1, id, cfg.receiptType, userId, companyId);
   }
 
   @Delete(':id/items/:itemId') async removeItem(
@@ -191,10 +193,11 @@ export class ReceiptTypeController {
     @Param('id', ParseIntPipe) id: number,
     @Param('itemId', ParseIntPipe) itemId: number,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
     await this.svc.get(id, cfg.receiptType);
-    return this.svc.removeItem(itemId, Number(userId) || 1, id);
+    return this.svc.removeItem(itemId, Number(userId) || 1, id, userId, companyId);
   }
 
   // Variant breakdown lines — same route/method shape as order-type.controller.ts's own 4
@@ -210,24 +213,27 @@ export class ReceiptTypeController {
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.createItemVariantLine(itemId, dto, Number(userId) || 1, cfg.receiptType);
+    return this.svc.createItemVariantLine(itemId, dto, Number(userId) || 1, cfg.receiptType, userId, companyId);
   }
 
   @Put(':id/items/:itemId/variants/:variantLineId') updateItemVariantLine(
     @Param('variantLineId', ParseIntPipe) variantLineId: number,
     @Body() dto: Record<string, any>,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.updateItemVariantLine(variantLineId, dto, Number(userId) || 1);
+    return this.svc.updateItemVariantLine(variantLineId, dto, Number(userId) || 1, userId, companyId);
   }
 
   @Delete(':id/items/:itemId/variants/:variantLineId') removeItemVariantLine(
     @Param('variantLineId', ParseIntPipe) variantLineId: number,
     @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
   ) {
-    return this.svc.removeItemVariantLine(variantLineId, Number(userId) || 1);
+    return this.svc.removeItemVariantLine(variantLineId, Number(userId) || 1, userId, companyId);
   }
 
   // Attachments — already generic (keyed by header RecId only, no ReceiptType filter), so the

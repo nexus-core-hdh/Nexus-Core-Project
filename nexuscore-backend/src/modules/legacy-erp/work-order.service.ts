@@ -4,7 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { assertAllNonNegative } from './numeric-guards.util';
-import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
+import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 
 // Real MenuItem.href for the Work Order List screen (confirmed live: MenuItem row {title:"Work
 // Order", group:"Legacy ERP", href:"/dashboard/legacy-erp/work-orders-list"}) — same screenKey
@@ -141,7 +142,36 @@ export class WorkOrderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly masterLookupSvc: LegacyMasterLookupService,
   ) {}
+
+  // Display resolvers for this header's own real FK columns — same generic
+  // enrichDisplayRefs()/FkResolver mechanism purchase-order.service.ts/inventory-receipt.
+  // service.ts already use, every entry reusing an already-existing LegacyMasterLookupService
+  // key — none invented (confirmed present: current-account, forex, warehouse, country,
+  // employee, certification, initial-cost, project). Factory/Broker both FK into FI_Account —
+  // same 'current-account' resolver Customer already uses (see DETAIL_COLUMNS' own comment).
+  // styleCardId is a Prisma-native FK (not a legacy master-lookup table), so it gets a direct
+  // Prisma lookup instead, same ad-hoc pattern PO/IR already use for colorCardId.
+  private displayResolvers(): Record<string, FkResolver> {
+    const byKey = (key: string): FkResolver => (id) => this.masterLookupSvc.getById(key, Number(id), { includeInactive: true });
+    return {
+      currentAccountId: byKey('current-account'),
+      cmtForexId: byKey('forex'),
+      warehouseId: byKey('warehouse'),
+      factoryId: byKey('current-account'),
+      countryId: byKey('country'),
+      employeeId: byKey('employee'),
+      certificationId: byKey('certification'),
+      initialCostId: byKey('initial-cost'),
+      projectId: byKey('project'),
+      brokerId: byKey('current-account'),
+      styleCardId: async (id) => {
+        const sc = await this.prisma.styleCard.findUnique({ where: { id: String(id) }, select: { styleNumber: true, title: true } }).catch(() => null);
+        return sc ? { code: sc.styleNumber, name: sc.title } : null;
+      },
+    };
+  }
 
   private async headerToDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, HEADER_TABLE));
@@ -232,10 +262,11 @@ export class WorkOrderService {
       // currentUserId/companyId are only absent for a caller that hasn't been updated to pass them
       // yet (none currently); a missing companyId is skipped rather than guessed.
       if (currentUserId && companyId) {
+        const enriched = await enrichDisplayRefs(created, this.displayResolvers());
         await this.audit.recordSafe({
           userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
           entityType: 'MA_WorkOrder', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
-          documentNo: created.workOrderNo, after: { 'Work Order': created },
+          documentNo: created.workOrderNo, after: { 'Work Order': enriched },
         });
       }
       return created;
@@ -272,11 +303,13 @@ export class WorkOrderService {
     // see hasRealChanges' own comment for why this exists (a no-op Save must never fabricate an
     // Updated history entry).
     if (currentUserId && companyId && hasRealChanges(before, updated)) {
+      const resolvers = this.displayResolvers();
+      const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(before, resolvers), enrichDisplayRefs(updated, resolvers)]);
       await this.audit.recordSafe({
         userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
         entityType: 'MA_WorkOrder', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
         documentNo: updated?.workOrderNo ?? before.workOrderNo,
-        before: { 'Work Order': before }, after: { 'Work Order': updated },
+        before: { 'Work Order': enrichedBefore }, after: { 'Work Order': enrichedAfter },
       });
     }
     return updated;
@@ -288,10 +321,11 @@ export class WorkOrderService {
       UPDATE "MA_WorkOrder" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
     `;
     if (currentUserId && companyId) {
+      const enriched = await enrichDisplayRefs(before, this.displayResolvers());
       await this.audit.recordSafe({
         userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
         entityType: 'MA_WorkOrder', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
-        documentNo: before.workOrderNo, before: { 'Work Order': before },
+        documentNo: before.workOrderNo, before: { 'Work Order': enriched },
       });
     }
     return { message: 'Deleted' };
@@ -306,8 +340,12 @@ export class WorkOrderService {
     return sanitizeRawRow(rows);
   }
 
-  async upsertItems(workOrderId: number, lines: any[], userId: number) {
-    await this.get(workOrderId);
+  // Bulk "replace the whole line set" save — audited as ONE UPDATE event per call (not per row),
+  // since that's what the operation actually is; gated by hasRealChanges on the two full arrays
+  // so resubmitting an unchanged set writes nothing (matches every other update()'s no-op guard).
+  async upsertItems(workOrderId: number, lines: any[], userId: number, currentUserId?: string, companyId?: string) {
+    const header = await this.get(workOrderId);
+    const before = currentUserId && companyId ? await this.listItems(workOrderId) : null;
     const toDb = await this.itemToDb();
     await this.prisma.$executeRaw`UPDATE "MA_WorkOrderItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0`;
     for (const [i, line] of (lines || []).entries()) {
@@ -321,7 +359,16 @@ export class WorkOrderService {
         INSERT INTO "MA_WorkOrderItem" (${colList}) VALUES (${workOrderId}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       `);
     }
-    return this.listItems(workOrderId);
+    const after = await this.listItems(workOrderId);
+    if (currentUserId && companyId && hasRealChanges({ lines: before }, { lines: after })) {
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'MA_WorkOrderItem', entityId: String(workOrderId), action: AUDIT_ACTIONS.UPDATE,
+        parentEntityType: 'MA_WorkOrder', parentEntityId: String(workOrderId), parentDocumentNo: header.workOrderNo,
+        before: { 'Work Order Items (MA_WorkOrderItem)': before }, after: { 'Work Order Items (MA_WorkOrderItem)': after },
+      });
+    }
+    return after;
   }
 
   // Manufacturing Quantities (MA_WorkOrderItemVariant) — child of the primary Style Info line
@@ -333,7 +380,21 @@ export class WorkOrderService {
     return sanitizeRawRow(rows);
   }
 
-  async upsertItemVariants(workOrderItemId: number, lines: any[], userId: number) {
+  // Resolves the owning Work Order (and its number) from a Style Info line id — the item table
+  // has no denormalized document number of its own, same reason PO/IR's own variantAuditCtx()
+  // needs a small lookup query before it can call the header-level audit context.
+  private async workOrderCtxForItem(workOrderItemId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "WorkOrderId" as "workOrderId" FROM "MA_WorkOrderItem" WHERE "RecId" = ${workOrderItemId}
+    `);
+    if (!rows.length) return null;
+    const workOrderId = Number(rows[0].workOrderId);
+    const header = await this.get(workOrderId).catch(() => null);
+    return { workOrderId, documentNo: header?.workOrderNo ?? null };
+  }
+
+  async upsertItemVariants(workOrderItemId: number, lines: any[], userId: number, currentUserId?: string, companyId?: string) {
+    const before = currentUserId && companyId ? await this.listItemVariants(workOrderItemId) : null;
     const toDb = await this.itemVariantToDb();
     await this.prisma.$executeRaw`UPDATE "MA_WorkOrderItemVariant" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "WorkOrderItemId" = ${workOrderItemId} AND "IsDeleted" = 0`;
     for (const [i, line] of (lines || []).entries()) {
@@ -350,7 +411,19 @@ export class WorkOrderService {
         INSERT INTO "MA_WorkOrderItemVariant" (${colList}) VALUES (${workOrderItemId}, ${effective.subNo}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       `);
     }
-    return this.listItemVariants(workOrderItemId);
+    const after = await this.listItemVariants(workOrderItemId);
+    if (currentUserId && companyId && hasRealChanges({ lines: before }, { lines: after })) {
+      const ctx = await this.workOrderCtxForItem(workOrderItemId);
+      if (ctx) {
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+          entityType: 'MA_WorkOrderItemVariant', entityId: String(workOrderItemId), action: AUDIT_ACTIONS.UPDATE,
+          parentEntityType: 'MA_WorkOrderItem', parentEntityId: String(workOrderItemId), parentDocumentNo: ctx.documentNo,
+          before: { 'Work Order Item Variants (MA_WorkOrderItemVariant)': before }, after: { 'Work Order Item Variants (MA_WorkOrderItemVariant)': after },
+        });
+      }
+    }
+    return after;
   }
 
   // ── BOM (Fabric/Trim/Ornament/Process) — MA_Recipe + MA_RecipeItem ──────────────────────────
@@ -391,8 +464,9 @@ export class WorkOrderService {
     return sanitizeRawRow(rows);
   }
 
-  async upsertBom(workOrderId: number, lineType: BomLineType, lines: any[], userId: number) {
-    await this.get(workOrderId);
+  async upsertBom(workOrderId: number, lineType: BomLineType, lines: any[], userId: number, currentUserId?: string, companyId?: string) {
+    const header = await this.get(workOrderId);
+    const before = currentUserId && companyId ? await this.listBom(workOrderId, lineType) : null;
     const recipeId = await this.getOrCreateRecipeHeader(workOrderId, lineType, userId);
     const toDb = await this.recipeItemToDb();
     await this.prisma.$executeRaw`UPDATE "MA_RecipeItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecipeId" = ${recipeId} AND "IsDeleted" = 0`;
@@ -413,7 +487,16 @@ export class WorkOrderService {
         INSERT INTO "MA_RecipeItem" (${colList}) VALUES (${recipeId}, ${recipeType}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       `);
     }
-    return this.listBom(workOrderId, lineType);
+    const after = await this.listBom(workOrderId, lineType);
+    if (currentUserId && companyId && hasRealChanges({ lines: before }, { lines: after })) {
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
+        entityType: 'MA_RecipeItem', entityId: String(recipeId), action: AUDIT_ACTIONS.UPDATE,
+        parentEntityType: 'MA_WorkOrder', parentEntityId: String(workOrderId), parentDocumentNo: header.workOrderNo,
+        before: { [`Work Order BOM ${lineType} (MA_RecipeItem)`]: before }, after: { [`Work Order BOM ${lineType} (MA_RecipeItem)`]: after },
+      });
+    }
+    return after;
   }
 
   // "Transfer from Style Card" — reads the EXISTING StyleBomLine rows for the selected Style

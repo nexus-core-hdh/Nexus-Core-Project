@@ -35,6 +35,12 @@ function formatValue(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (isDisplayRef(v)) return v.name || v.code || `#${v.id}`;
+  // A Date-like value (a real Date instance, or anything else exposing toISOString) must never
+  // fall through to the generic JSON.stringify below — generic, not tied to any specific field.
+  if (typeof (v as any)?.toISOString === "function") {
+    const d = new Date((v as any).toISOString());
+    if (!isNaN(d.getTime())) return d.toLocaleString();
+  }
   if (typeof v === "object") return JSON.stringify(v);
   const s = String(v);
   // ISO-date-looking strings render as local date/time, same convention as every list screen.

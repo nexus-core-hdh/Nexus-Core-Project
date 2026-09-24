@@ -6,6 +6,7 @@ import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { YarnCardService } from './yarn-card.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 
 // Fabric Card, like Yarn Card, is NOT a new master entity — it's the same already-migrated
 // IM_Item table, scoped to rows where AccessCode = 'FABRIC'. Confirmed via pg_catalog that
@@ -87,7 +88,28 @@ export class FabricCardService {
     private readonly deleteGuard: DeleteDependencyService,
     private readonly masterLookup: LegacyMasterLookupService,
     private readonly yarnCardsSvc: YarnCardService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Display resolvers for this header's own real FK columns — only fields with an
+  // already-registered LegacyMasterLookupService key (confirmed: group, process, fabric,
+  // current-account, tax) are enriched; Variant1-5TypeId have no existing key and are left as
+  // raw ids rather than inventing one.
+  private displayResolvers(): Record<string, FkResolver> {
+    const byKey = (key: string): FkResolver => (id) => this.masterLookup.getById(key, Number(id), { includeInactive: true });
+    return {
+      groupId: byKey('group'),
+      processId: byKey('process'),
+      fabricTypeId: byKey('fabric'),
+      currentAccountId: byKey('current-account'),
+      vatId: byKey('tax'),
+      retailVatId: byKey('tax'),
+      wholeSaleVatId: byKey('tax'),
+      retailReturnVatId: byKey('tax'),
+      wholeSaleReturnVatId: byKey('tax'),
+      taxId: byKey('tax'),
+    };
+  }
 
   private async toDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, TABLE));
@@ -241,7 +263,7 @@ export class FabricCardService {
 
   private static readonly MAX_CODE_RETRIES = 5;
 
-  async create(dto: Record<string, any>, userId: number, insertedByUserId?: string) {
+  async create(dto: Record<string, any>, userId: number, insertedByUserId?: string, currentUserId?: string, companyId?: string) {
     // Requirement #1/#4 — validate all 8 identity fields before anything else, then block on
     // an exact existing 8-Master-ID combination before ever generating a Code.
     const { ids, names } = await this.resolveIdentity(dto);
@@ -286,7 +308,16 @@ export class FabricCardService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return sanitizeRawRow(rows[0]);
+        const created = sanitizeRawRow(rows[0]);
+        if (currentUserId && companyId) {
+          const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+          this.audit.recordSafe({
+            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/fabric-cards-list',
+            entityType: 'FabricCard', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+            documentNo: created.inventoryCode, after: { 'Fabric Card (IM_Item)': enriched },
+          });
+        }
+        return created;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         const isCodeCollision = msg.includes('23505') && msg.includes('InventoryCode');
@@ -297,7 +328,7 @@ export class FabricCardService {
     throw new ConflictException('Could not generate a unique Code — please try again.');
   }
 
-  async update(id: number, dto: Record<string, any>, userId: number) {
+  async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     const current = await this.get(id);
     // Requirement #1/#5 — the 8 identity fields stay mandatory on every Save, not just Create
     // (the page always resubmits the full form on update, same as every other IM_Item card
@@ -341,17 +372,36 @@ export class FabricCardService {
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const updated = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId && hasRealChanges(current, updated)) {
+      const resolvers = this.displayResolvers();
+      const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/fabric-cards-list',
+        entityType: 'FabricCard', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
+        documentNo: updated.inventoryCode,
+        before: { 'Fabric Card (IM_Item)': enrichedBefore }, after: { 'Fabric Card (IM_Item)': enrichedAfter },
+      });
+    }
+    return updated;
   }
 
-  async remove(id: number, userId: number) {
-    await this.get(id);
+  async remove(id: number, userId: number, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id);
     await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_Item', id, tx);
       await tx.$executeRaw`
         UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
       `;
     });
+    if (currentUserId && companyId) {
+      const enriched = await enrichDisplayRefs(before, this.displayResolvers());
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/fabric-cards-list',
+        entityType: 'FabricCard', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
+        documentNo: before.inventoryCode, before: { 'Fabric Card (IM_Item)': enriched },
+      });
+    }
     return { message: 'Deleted' };
   }
 }

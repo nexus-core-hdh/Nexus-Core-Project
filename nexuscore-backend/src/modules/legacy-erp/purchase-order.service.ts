@@ -792,7 +792,20 @@ export class PurchaseOrderService {
     return sanitizeRawRow(rows);
   }
 
-  async createItemVariantLine(orderReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE) {
+  // Same lineAuditCtx() the item-level events already use, but keyed off the parent ITEM
+  // (orderReceiptItemId) rather than the header — a variant's immediate parent is the item line,
+  // not the order header itself, so parentEntityType/Id nest one level deeper.
+  private async variantAuditCtx(orderReceiptItemId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "OrderReceiptId" as "orderReceiptId", "ReceiptType" as "receiptType" FROM "IM_OrderReceiptItem" WHERE "RecId" = ${orderReceiptItemId}
+    `);
+    if (!rows.length) return null;
+    const { orderReceiptId, receiptType } = sanitizeRawRow(rows[0]);
+    const { label, screenKey, parentDocumentNo } = await this.lineAuditCtx(orderReceiptId, receiptType);
+    return { label, screenKey, parentDocumentNo };
+  }
+
+  async createItemVariantLine(orderReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
     if (!dto.inventoryVariantId) throw new BadRequestException('A variant is required');
     const toDb = await this.itemVariantToDb();
     assertAllNonNegative({ Quantity: dto.quantity, 'Net Unit Price': dto.netUnitPrice, 'Received Quantity': dto.receivedQuantity });
@@ -805,33 +818,77 @@ export class PurchaseOrderService {
       VALUES (${orderReceiptItemId}, ${receiptType}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       RETURNING ${ITEM_VARIANT_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const created = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId) {
+      const ctx = await this.variantAuditCtx(orderReceiptItemId);
+      if (ctx) {
+        const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}ItemVariant`, entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+          parentEntityType: `${ctx.label}Item`, parentEntityId: String(orderReceiptItemId), parentDocumentNo: ctx.parentDocumentNo,
+          after: { [`${ctx.label} Line Variant (IM_OrderReceiptItemVariant)`]: enriched },
+        });
+      }
+    }
+    return created;
   }
 
-  async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number) {
+  async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     const toDb = await this.itemVariantToDb();
     assertAllNonNegative({ Quantity: dto.quantity, 'Net Unit Price': dto.netUnitPrice, 'Received Quantity': dto.receivedQuantity });
+    const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant" WHERE "RecId" = ${variantLineId}`);
+    if (!beforeRows.length) throw new NotFoundException('Variant line not found');
+    const before = sanitizeRawRow(beforeRows[0]);
     const cols = ITEM_VARIANT_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
-    if (!cols.length) {
-      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant" WHERE "RecId" = ${variantLineId}`);
+    let updated = before;
+    if (cols.length) {
+      const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
+      const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        UPDATE "IM_OrderReceiptItemVariant" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
+        WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
+        RETURNING ${ITEM_VARIANT_SELECT}
+      `);
       if (!rows.length) throw new NotFoundException('Variant line not found');
-      return sanitizeRawRow(rows[0]);
+      updated = sanitizeRawRow(rows[0]);
     }
-    const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      UPDATE "IM_OrderReceiptItemVariant" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
-      WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
-      RETURNING ${ITEM_VARIANT_SELECT}
-    `);
-    if (!rows.length) throw new NotFoundException('Variant line not found');
-    return sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId && hasRealChanges(before, updated)) {
+      const ctx = await this.variantAuditCtx(updated.orderReceiptItemId);
+      if (ctx) {
+        const resolvers = this.displayResolvers();
+        const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(before, resolvers), enrichDisplayRefs(updated, resolvers)]);
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}ItemVariant`, entityId: String(variantLineId), action: AUDIT_ACTIONS.UPDATE,
+          parentEntityType: `${ctx.label}Item`, parentEntityId: String(updated.orderReceiptItemId), parentDocumentNo: ctx.parentDocumentNo,
+          before: { [`${ctx.label} Line Variant (IM_OrderReceiptItemVariant)`]: enrichedBefore }, after: { [`${ctx.label} Line Variant (IM_OrderReceiptItemVariant)`]: enrichedAfter },
+        });
+      }
+    }
+    return updated;
   }
 
-  async removeItemVariantLine(variantLineId: number, userId: number) {
+  async removeItemVariantLine(variantLineId: number, userId: number, currentUserId?: string, companyId?: string) {
+    const beforeRows = currentUserId && companyId
+      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant" WHERE "RecId" = ${variantLineId}`)
+      : [];
     const result = await this.prisma.$executeRaw`
       UPDATE "IM_OrderReceiptItemVariant" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${variantLineId}
     `;
     if (!result) throw new NotFoundException('Variant line not found');
+    if (currentUserId && companyId && beforeRows.length) {
+      const before = sanitizeRawRow(beforeRows[0]);
+      const ctx = await this.variantAuditCtx(before.orderReceiptItemId);
+      if (ctx) {
+        const enriched = await enrichDisplayRefs(before, this.displayResolvers());
+        this.audit.recordSafe({
+          userId: currentUserId, companyId, screenKey: ctx.screenKey,
+          entityType: `${ctx.label}ItemVariant`, entityId: String(variantLineId), action: AUDIT_ACTIONS.DELETE,
+          parentEntityType: `${ctx.label}Item`, parentEntityId: String(before.orderReceiptItemId), parentDocumentNo: ctx.parentDocumentNo,
+          before: { [`${ctx.label} Line Variant (IM_OrderReceiptItemVariant)`]: enriched },
+        });
+      }
+    }
     return { message: 'Deleted' };
   }
 

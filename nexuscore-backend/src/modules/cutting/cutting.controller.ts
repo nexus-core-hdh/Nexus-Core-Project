@@ -18,8 +18,8 @@ export class CuttingController {
 
   @Post()
   @ApiOperation({ summary: 'Create cutting order' })
-  create(@Body() dto: CreateCuttingOrderDto, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.create(dto, actorId);
+  create(@Body() dto: CreateCuttingOrderDto, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.create(dto, actorId, companyId);
   }
 
   @Get()
@@ -41,44 +41,44 @@ export class CuttingController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update cutting order' })
-  update(@Param('id') id: string, @Body() dto: Partial<CreateCuttingOrderDto>, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.update(id, dto, actorId);
+  update(@Param('id') id: string, @Body() dto: Partial<CreateCuttingOrderDto>, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.update(id, dto, actorId, companyId);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete cutting order' })
-  remove(@Param('id') id: string) {
-    return this.cuttingService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.remove(id, userId, companyId);
   }
 
   @Patch(':id/status')
   @ApiOperation({ summary: 'Change order status' })
-  changeStatus(@Param('id') id: string, @Body('status') status: string, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.changeStatus(id, status, actorId);
+  changeStatus(@Param('id') id: string, @Body('status') status: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.changeStatus(id, status, actorId, companyId);
   }
 
   @Post(':id/submit-approval')
   @ApiOperation({ summary: 'Submit order for approval' })
-  submitApproval(@Param('id') id: string, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.submitApproval(id, actorId);
+  submitApproval(@Param('id') id: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.submitApproval(id, actorId, companyId);
   }
 
   @Post(':id/approve')
   @ApiOperation({ summary: 'Approve cutting order' })
-  approve(@Param('id') id: string, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.approve(id, actorId);
+  approve(@Param('id') id: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.approve(id, actorId, companyId);
   }
 
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject cutting order' })
-  reject(@Param('id') id: string, @CurrentUser('id') actorId: string, @Body('reason') reason: string) {
-    return this.cuttingService.reject(id, actorId, reason);
+  reject(@Param('id') id: string, @CurrentUser('id') actorId: string, @Body('reason') reason: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.reject(id, actorId, reason, companyId);
   }
 
   @Post(':id/complete')
   @ApiOperation({ summary: 'Complete cutting order' })
-  complete(@Param('id') id: string, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.complete(id, actorId);
+  complete(@Param('id') id: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.complete(id, actorId, companyId);
   }
 
   @Get(':id/qr')
@@ -95,8 +95,8 @@ export class CuttingController {
 
   // ── Rolls
   @Post(':id/rolls')
-  addRoll(@Param('id') id: string, @Body() dto: AddRollDto) {
-    return this.cuttingService.addRoll(id, dto);
+  addRoll(@Param('id') id: string, @Body() dto: AddRollDto, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.addRoll(id, dto, actorId, companyId);
   }
 
   @Get(':id/rolls')
@@ -105,14 +105,14 @@ export class CuttingController {
   }
 
   @Delete(':id/rolls/:rollId')
-  removeRoll(@Param('id') id: string, @Param('rollId') rollId: string) {
-    return this.cuttingService.removeRoll(id, rollId);
+  removeRoll(@Param('id') id: string, @Param('rollId') rollId: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.removeRoll(id, rollId, actorId, companyId);
   }
 
   // ── Lines
   @Post(':id/lines')
-  addLine(@Param('id') id: string, @Body() dto: AddLineDto) {
-    return this.cuttingService.addLine(id, dto);
+  addLine(@Param('id') id: string, @Body() dto: AddLineDto, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.addLine(id, dto, actorId, companyId);
   }
 
   @Get(':id/lines')
@@ -121,14 +121,14 @@ export class CuttingController {
   }
 
   @Delete(':id/lines/:lineId')
-  removeLine(@Param('id') id: string, @Param('lineId') lineId: string) {
-    return this.cuttingService.removeLine(id, lineId);
+  removeLine(@Param('id') id: string, @Param('lineId') lineId: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.removeLine(id, lineId, actorId, companyId);
   }
 
   // ── Batches
   @Post(':id/batches')
-  createBatch(@Param('id') id: string, @Body() dto: CreateBatchDto) {
-    return this.cuttingService.createBatch(id, dto);
+  createBatch(@Param('id') id: string, @Body() dto: CreateBatchDto, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.createBatch(id, dto, actorId, companyId);
   }
 
   @Get(':id/batches')
@@ -137,8 +137,8 @@ export class CuttingController {
   }
 
   @Patch(':id/batches/:bId/start')
-  startBatch(@Param('id') id: string, @Param('bId') bId: string) {
-    return this.cuttingService.startBatch(id, bId);
+  startBatch(@Param('id') id: string, @Param('bId') bId: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.startBatch(id, bId, actorId, companyId);
   }
 
   @Patch(':id/batches/:bId/complete')
@@ -147,9 +147,11 @@ export class CuttingController {
     @Param('bId') bId: string,
     @Body('actualPieces') actualPieces: number,
     @Body('defectPieces') defectPieces: number,
+    @CurrentUser('id') actorId: string,
+    @CurrentUser('companyId') companyId: string,
     @Body('notes') notes?: string,
   ) {
-    return this.cuttingService.completeBatch(id, bId, actualPieces, defectPieces, notes);
+    return this.cuttingService.completeBatch(id, bId, actualPieces, defectPieces, notes, actorId, companyId);
   }
 
   // ── Marker Plan
@@ -159,8 +161,8 @@ export class CuttingController {
   }
 
   @Put(':id/marker-plan')
-  upsertMarkerPlan(@Param('id') id: string, @Body() dto: UpdateMarkerPlanDto, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.upsertMarkerPlan(id, dto, actorId);
+  upsertMarkerPlan(@Param('id') id: string, @Body() dto: UpdateMarkerPlanDto, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.upsertMarkerPlan(id, dto, actorId, companyId);
   }
 
   // ── Cost
@@ -170,8 +172,8 @@ export class CuttingController {
   }
 
   @Put(':id/cost')
-  upsertCost(@Param('id') id: string, @Body() dto: UpdateCostDto) {
-    return this.cuttingService.upsertCost(id, dto);
+  upsertCost(@Param('id') id: string, @Body() dto: UpdateCostDto, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.upsertCost(id, dto, actorId, companyId);
   }
 
   // ── Documents
@@ -181,13 +183,13 @@ export class CuttingController {
   }
 
   @Post(':id/documents')
-  addDocument(@Param('id') id: string, @Body() body: any, @CurrentUser('id') actorId: string) {
-    return this.cuttingService.addDocument(id, body, actorId);
+  addDocument(@Param('id') id: string, @Body() body: any, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.addDocument(id, body, actorId, companyId);
   }
 
   @Delete(':id/documents/:docId')
-  removeDocument(@Param('id') id: string, @Param('docId') docId: string) {
-    return this.cuttingService.removeDocument(id, docId);
+  removeDocument(@Param('id') id: string, @Param('docId') docId: string, @CurrentUser('id') actorId: string, @CurrentUser('companyId') companyId: string) {
+    return this.cuttingService.removeDocument(id, docId, actorId, companyId);
   }
 
   // ── Approval History

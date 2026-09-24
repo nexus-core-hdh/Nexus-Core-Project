@@ -629,6 +629,8 @@ async function main() {
             { title: 'PLM Analyse Cubes', href: '/dashboard/plm/reports/analyse-cubes' },
           ]},
           { title: 'Document Management', href: '/dashboard/plm/documents', icon: 'FolderDot' },
+          { title: 'Manufacture Sent Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=140', icon: 'Truck' },
+          { title: 'Service Purchase Return Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=139', icon: 'Truck' },
         ],
       },
       {

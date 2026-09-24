@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { DeleteDependencyService } from './delete-dependency.service';
+import { LegacyMasterLookupService } from './legacy-master-lookup.service';
+import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
 
 // Yarn Card is NOT a new master entity — it's the existing, already-migrated IM_Item
 // table (the legacy Item/Product master used by every "card" screen in this ERP family:
@@ -52,7 +54,30 @@ export class YarnCardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly deleteGuard: DeleteDependencyService,
+    private readonly masterLookup: LegacyMasterLookupService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Only fields with an already-registered LegacyMasterLookupService key are enriched
+  // (group, category, mark, model, unit, current-account, tax) — YarnTypeId/Variant1-5TypeId
+  // have no existing key and are left as raw ids rather than inventing one.
+  private displayResolvers(): Record<string, FkResolver> {
+    const byKey = (key: string): FkResolver => (id) => this.masterLookup.getById(key, Number(id), { includeInactive: true });
+    return {
+      groupId: byKey('group'),
+      categoryId: byKey('category'),
+      markId: byKey('mark'),
+      modelId: byKey('model'),
+      unitId: byKey('unit'),
+      currentAccountId: byKey('current-account'),
+      vatId: byKey('tax'),
+      retailVatId: byKey('tax'),
+      wholeSaleVatId: byKey('tax'),
+      retailReturnVatId: byKey('tax'),
+      wholeSaleReturnVatId: byKey('tax'),
+      taxId: byKey('tax'),
+    };
+  }
 
   private async toDb() {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, TABLE));
@@ -135,7 +160,7 @@ export class YarnCardService {
 
   private static readonly MAX_CODE_RETRIES = 5;
 
-  async create(dto: Record<string, any>, userId: number, insertedByUserId?: string) {
+  async create(dto: Record<string, any>, userId: number, insertedByUserId?: string, currentUserId?: string, companyId?: string) {
     const name = String(dto.inventoryName ?? '').trim();
     if (!name) throw new BadRequestException('Name is required');
     const toDb = await this.toDb();
@@ -165,7 +190,16 @@ export class YarnCardService {
           VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        return sanitizeRawRow(rows[0]);
+        const created = sanitizeRawRow(rows[0]);
+        if (currentUserId && companyId) {
+          const enriched = await enrichDisplayRefs(created, this.displayResolvers());
+          this.audit.recordSafe({
+            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/yarn-cards-list',
+            entityType: 'YarnCard', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
+            documentNo: created.inventoryCode, after: { 'Yarn Card (IM_Item)': enriched },
+          });
+        }
+        return created;
       } catch (err: any) {
         const msg = String(err?.message ?? '');
         const isCodeCollision = msg.includes('23505') && msg.includes('InventoryCode');
@@ -176,7 +210,7 @@ export class YarnCardService {
     throw new ConflictException('Could not generate a unique Code — please try again.');
   }
 
-  async update(id: number, dto: Record<string, any>, userId: number) {
+  async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     const current = await this.get(id);
     if (dto.inventoryName !== undefined) {
       const name = String(dto.inventoryName ?? '').trim();
@@ -194,17 +228,36 @@ export class YarnCardService {
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    return sanitizeRawRow(rows[0]);
+    const updated = sanitizeRawRow(rows[0]);
+    if (currentUserId && companyId && hasRealChanges(current, updated)) {
+      const resolvers = this.displayResolvers();
+      const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/yarn-cards-list',
+        entityType: 'YarnCard', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
+        documentNo: updated.inventoryCode,
+        before: { 'Yarn Card (IM_Item)': enrichedBefore }, after: { 'Yarn Card (IM_Item)': enrichedAfter },
+      });
+    }
+    return updated;
   }
 
-  async remove(id: number, userId: number) {
-    await this.get(id);
+  async remove(id: number, userId: number, currentUserId?: string, companyId?: string) {
+    const before = await this.get(id);
     await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_Item', id, tx);
       await tx.$executeRaw`
         UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
       `;
     });
+    if (currentUserId && companyId) {
+      const enriched = await enrichDisplayRefs(before, this.displayResolvers());
+      this.audit.recordSafe({
+        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/yarn-cards-list',
+        entityType: 'YarnCard', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
+        documentNo: before.inventoryCode, before: { 'Yarn Card (IM_Item)': enriched },
+      });
+    }
     return { message: 'Deleted' };
   }
 }

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessagingService } from '../../messaging/messaging.service';
 import { DeleteDependencyService } from '../legacy-erp/delete-dependency.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 
 @Injectable()
 export class PlmCardsService {
@@ -9,6 +10,7 @@ export class PlmCardsService {
     private readonly prisma: PrismaService,
     private readonly messaging: MessagingService,
     private readonly deleteGuard: DeleteDependencyService,
+    private readonly audit: AuditService,
   ) {}
 
   private async nextNumber(prefix: string, model: any, field: string): Promise<string> {
@@ -166,13 +168,23 @@ export class PlmCardsService {
     return { message: 'Deleted' };
   }
 
-  async updateStyleCardStatus(id: string, status: string, changedBy: string) {
-    await this.getStyleCard(id);
+  async updateStyleCardStatus(id: string, status: string, changedBy: string, companyId?: string) {
+    const before = await this.getStyleCard(id);
     const updated = await this.prisma.styleCard.update({ where: { id }, data: { status } });
     await this.messaging.publish('nexuscore.plm.style_card.status_changed', { styleCardId: id, status, changedBy });
-    await this.prisma.auditLog.create({
-      data: { entityType: 'style_card', entityId: id, action: 'status_changed', changedBy, newValues: { status } },
-    });
+    if (companyId) {
+      await this.audit.recordSafe({
+        userId: changedBy,
+        companyId,
+        screenKey: '/dashboard/plm/style-cards',
+        entityType: 'StyleCard',
+        entityId: id,
+        action: AUDIT_ACTIONS.UPDATE,
+        documentNo: (before as any)?.styleNumber,
+        before: { status: (before as any)?.status },
+        after: { status },
+      });
+    }
     return updated;
   }
 
@@ -303,16 +315,28 @@ export class PlmCardsService {
     return { message: 'Deleted' };
   }
 
-  async updateSampleCardStatus(id: string, status: string, notes: string, changedBy: string) {
+  async updateSampleCardStatus(id: string, status: string, notes: string, changedBy: string, companyId?: string) {
     const sc = await this.getSampleCard(id);
     const updated = await this.prisma.sampleCard.update({ where: { id }, data: { status } });
+    // SampleCardHistory stays — it's the Sample Card timeline UI's own source (see
+    // getSampleCardHistory below), a deliberately separate table, not being migrated here.
     await this.prisma.sampleCardHistory.create({
       data: { sampleCardId: id, action: 'status_changed', fromStatus: sc.status, toStatus: status, changedBy, notes },
     });
     await this.messaging.publish('nexuscore.plm.sample.status_changed', { sampleCardId: id, status, changedBy });
-    await this.prisma.auditLog.create({
-      data: { entityType: 'sample_card', entityId: id, action: 'status_changed', changedBy, newValues: { status } },
-    });
+    if (companyId) {
+      await this.audit.recordSafe({
+        userId: changedBy,
+        companyId,
+        screenKey: '/dashboard/plm/sample-cards',
+        entityType: 'SampleCard',
+        entityId: id,
+        action: AUDIT_ACTIONS.UPDATE,
+        documentNo: (sc as any)?.sampleNumber,
+        before: { status: (sc as any)?.status },
+        after: { status, notes },
+      });
+    }
     return updated;
   }
 

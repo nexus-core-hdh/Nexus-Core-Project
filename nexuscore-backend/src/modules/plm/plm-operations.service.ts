@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessagingService } from '../../messaging/messaging.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 
 @Injectable()
 export class PlmOperationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly messaging: MessagingService,
+    private readonly audit: AuditService,
   ) {}
 
   private async nextNumber(prefix: string, model: string, field: string): Promise<string> {
@@ -83,20 +85,23 @@ export class PlmOperationsService {
     return { message: 'Deleted' };
   }
 
-  async updateOrderStatus(id: string, status: string, notes: string, changedBy: string) {
+  async updateOrderStatus(id: string, status: string, notes: string, changedBy: string, companyId?: string) {
     const order = await this.getOrder(id);
     const updated = await this.prisma.plmOrder.update({ where: { id }, data: { status } });
     await this.messaging.publish('nexuscore.plm.order.status_changed', { orderId: id, status, changedBy });
-    await this.prisma.auditLog.create({
-      data: {
-        entityType: 'plm_order',
+    if (companyId) {
+      await this.audit.recordSafe({
+        userId: changedBy,
+        companyId,
+        screenKey: '/dashboard/plm/orders',
+        entityType: 'PlmOrder',
         entityId: id,
-        action: 'status_changed',
-        changedBy,
-        oldValues: { status: order.status },
-        newValues: { status, notes },
-      },
-    });
+        action: AUDIT_ACTIONS.UPDATE,
+        documentNo: order.orderNumber,
+        before: { status: order.status },
+        after: { status, notes },
+      });
+    }
     await this.messaging.publish('nexuscore.notifications', {
       type: 'order_updated',
       title: 'Order Status Changed',
