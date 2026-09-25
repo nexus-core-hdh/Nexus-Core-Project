@@ -3309,35 +3309,41 @@ export const orderApi = {
     if (params?.type) searchParams.append('type', params.type);
     if (params?.limit) searchParams.append('limit', params.limit.toString());
     const query = searchParams.toString();
-    return apiRequest(`/orders${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/orders${query ? `?${query}` : ''}`, {
       headers: getAuthHeaders(),
     });
   },
 
-  // Get recent orders
-  getRecentOrders: (limit?: number) => {
-    const searchParams = new URLSearchParams();
-    if (limit) searchParams.append('limit', limit.toString());
-    const query = searchParams.toString();
-    return apiRequest(`/orders/recent${query ? `?${query}` : ''}`, {
+  // Get recent orders (finance module has no dedicated "recent" route; slice client-side)
+  getRecentOrders: async (limit?: number) => {
+    const orders = await apiRequest(`/finance/orders`, {
       headers: getAuthHeaders(),
     });
+    return limit ? orders.slice(0, limit) : orders;
   },
 
   // Get order by ID
-  getOrderById: (id: number) => apiRequest(`/orders/${id}`, {
+  getOrderById: (id: number) => apiRequest(`/finance/orders/${id}`, {
     headers: getAuthHeaders(),
   }),
 
-  // Get order statistics
-  getOrderStats: (params?: { startDate?: string; endDate?: string }) => {
-    const searchParams = new URLSearchParams();
-    if (params?.startDate) searchParams.append('startDate', params.startDate);
-    if (params?.endDate) searchParams.append('endDate', params.endDate);
-    const query = searchParams.toString();
-    return apiRequest(`/orders/stats${query ? `?${query}` : ''}`, {
+  // Get order statistics (finance module has no dedicated stats route; derive client-side)
+  getOrderStats: async (params?: { startDate?: string; endDate?: string }) => {
+    const orders = await apiRequest(`/finance/orders`, {
       headers: getAuthHeaders(),
     });
+    const start = params?.startDate ? new Date(params.startDate) : null;
+    const end = params?.endDate ? new Date(params.endDate) : null;
+    const filtered = orders.filter((o: any) => {
+      const created = new Date(o.createdAt);
+      if (start && created < start) return false;
+      if (end && created > end) return false;
+      return true;
+    });
+    return {
+      totalOrders: filtered.length,
+      totalRevenue: filtered.reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0),
+    };
   },
 
   // Create order
@@ -3371,7 +3377,7 @@ export const orderApi = {
     if (order.branchId) searchParams.append('branchId', order.branchId.toString());
     const query = searchParams.toString();
     const { companyId, branchId, ...orderData } = order;
-    return apiRequest(`/orders${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/orders${query ? `?${query}` : ''}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(orderData),
@@ -3393,14 +3399,14 @@ export const orderApi = {
     notes?: string;
     shippedDate?: string | Date;
     deliveredDate?: string | Date;
-  }) => apiRequest(`/orders/${id}`, {
-    method: 'PUT',
+  }) => apiRequest(`/finance/orders/${id}`, {
+    method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(order),
   }),
 
   // Delete order
-  deleteOrder: (id: number) => apiRequest(`/orders/${id}`, {
+  deleteOrder: (id: number) => apiRequest(`/finance/orders/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
   }),
@@ -3418,10 +3424,10 @@ export const orderApi = {
     }>;
     refundMethod?: string;
     notes?: string;
-  }) => apiRequest(`/orders/${orderId}/return`, {
+  }) => apiRequest(`/finance/order-returns`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify(returnData),
+    body: JSON.stringify({ orderId, ...returnData }),
   }),
 
   // Process order return (approve/reject)
@@ -3430,11 +3436,15 @@ export const orderApi = {
     reject?: boolean;
     refundStatus?: string;
     refundReference?: string;
-  }) => apiRequest(`/orders/returns/${returnId}/process`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(data),
-  }),
+  }) => {
+    const { approve, reject, ...rest } = data;
+    const status = approve ? 'APPROVED' : reject ? 'REJECTED' : undefined;
+    return apiRequest(`/finance/order-returns/${returnId}`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ ...rest, ...(status ? { status } : {}) }),
+    });
+  },
 
   // Get all order returns
   getOrderReturns: (params?: { status?: string; orderId?: number }) => {
@@ -3442,15 +3452,18 @@ export const orderApi = {
     if (params?.status) searchParams.append('status', params.status);
     if (params?.orderId) searchParams.append('orderId', params.orderId.toString());
     const query = searchParams.toString();
-    return apiRequest(`/orders/returns${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/order-returns${query ? `?${query}` : ''}`, {
       headers: getAuthHeaders(),
     });
   },
 
-  // Get order return by ID
-  getOrderReturnById: (id: number) => apiRequest(`/orders/returns/${id}`, {
-    headers: getAuthHeaders(),
-  }),
+  // Get order return by ID (finance module has no single-return GET route; filter from the list)
+  getOrderReturnById: async (id: number) => {
+    const returns = await apiRequest(`/finance/order-returns`, {
+      headers: getAuthHeaders(),
+    });
+    return returns.find((r: any) => r.id === id || r.id === String(id));
+  },
 
   // Update order return
   updateOrderReturn: (id: number, data: {
@@ -3458,8 +3471,8 @@ export const orderApi = {
     refundStatus?: string;
     refundReference?: string;
     notes?: string;
-  }) => apiRequest(`/orders/returns/${id}`, {
-    method: 'PUT',
+  }) => apiRequest(`/finance/order-returns/${id}`, {
+    method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
   }),
@@ -3661,15 +3674,18 @@ export const customerPaymentApi = {
     if (params?.startDate) searchParams.append('startDate', params.startDate);
     if (params?.endDate) searchParams.append('endDate', params.endDate);
     const query = searchParams.toString();
-    return apiRequest(`/customer-payments${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/payments${query ? `?${query}` : ''}`, {
       headers: getAuthHeaders(),
     });
   },
 
-  // Get customer payment by ID
-  getCustomerPaymentById: (id: number) => apiRequest(`/customer-payments/${id}`, {
-    headers: getAuthHeaders(),
-  }),
+  // Get customer payment by ID (finance module has no single-payment GET route; filter from the list)
+  getCustomerPaymentById: async (id: number) => {
+    const payments = await apiRequest(`/finance/payments`, {
+      headers: getAuthHeaders(),
+    });
+    return payments.find((p: any) => p.id === id || p.id === String(id));
+  },
 
   // Create customer payment
   createCustomerPayment: (payment: {
@@ -3686,7 +3702,7 @@ export const customerPaymentApi = {
     if (params?.companyId) searchParams.append('companyId', params.companyId.toString());
     if (params?.branchId) searchParams.append('branchId', params.branchId.toString());
     const query = searchParams.toString();
-    return apiRequest(`/customer-payments${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/payments${query ? `?${query}` : ''}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(payment),
@@ -3701,14 +3717,14 @@ export const customerPaymentApi = {
     paymentDate?: string;
     reference?: string;
     notes?: string;
-  }) => apiRequest(`/customer-payments/${id}`, {
-    method: 'PUT',
+  }) => apiRequest(`/finance/payments/${id}`, {
+    method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(payment),
   }),
 
   // Delete customer payment
-  deleteCustomerPayment: (id: number) => apiRequest(`/customer-payments/${id}`, {
+  deleteCustomerPayment: (id: number) => apiRequest(`/finance/payments/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
   }),
@@ -3733,15 +3749,18 @@ export const supplierPaymentApi = {
     if (params?.startDate) searchParams.append('startDate', params.startDate);
     if (params?.endDate) searchParams.append('endDate', params.endDate);
     const query = searchParams.toString();
-    return apiRequest(`/supplier-payments${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/supplier-payments${query ? `?${query}` : ''}`, {
       headers: getAuthHeaders(),
     });
   },
 
-  // Get supplier payment by ID
-  getSupplierPaymentById: (id: number) => apiRequest(`/supplier-payments/${id}`, {
-    headers: getAuthHeaders(),
-  }),
+  // Get supplier payment by ID (finance module has no single-payment GET route; filter from the list)
+  getSupplierPaymentById: async (id: number) => {
+    const payments = await apiRequest(`/finance/supplier-payments`, {
+      headers: getAuthHeaders(),
+    });
+    return payments.find((p: any) => p.id === id || p.id === String(id));
+  },
 
   // Create supplier payment
   createSupplierPayment: (payment: {
@@ -3757,7 +3776,7 @@ export const supplierPaymentApi = {
     if (params?.companyId) searchParams.append('companyId', params.companyId.toString());
     if (params?.branchId) searchParams.append('branchId', params.branchId.toString());
     const query = searchParams.toString();
-    return apiRequest(`/supplier-payments${query ? `?${query}` : ''}`, {
+    return apiRequest(`/finance/supplier-payments${query ? `?${query}` : ''}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(payment),
@@ -3772,14 +3791,14 @@ export const supplierPaymentApi = {
     paymentDate?: string;
     reference?: string;
     notes?: string;
-  }) => apiRequest(`/supplier-payments/${id}`, {
-    method: 'PUT',
+  }) => apiRequest(`/finance/supplier-payments/${id}`, {
+    method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(payment),
   }),
 
   // Delete supplier payment
-  deleteSupplierPayment: (id: number) => apiRequest(`/supplier-payments/${id}`, {
+  deleteSupplierPayment: (id: number) => apiRequest(`/finance/supplier-payments/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
   }),
@@ -4029,19 +4048,23 @@ export const projectApi = {
 
 // Reminder API functions
 export const reminderApi = {
-  getReminders: () => apiRequest('/reminders', {
+  getReminders: () => apiRequest('/crm/reminders', {
     headers: getAuthHeaders(),
   }),
-  getReminder: (id: number) => apiRequest(`/reminders/${id}`, {
-    headers: getAuthHeaders(),
-  }),
+  // CRM module has no single-reminder GET route; filter from the list
+  getReminder: async (id: number) => {
+    const reminders = await apiRequest('/crm/reminders', {
+      headers: getAuthHeaders(),
+    });
+    return reminders.find((r: any) => r.id === id || r.id === String(id));
+  },
   createReminder: (reminder: {
     note: string;
     priority?: 'LOW' | 'MEDIUM' | 'HIGH';
     category?: string;
     dueDate?: string;
     isCompleted?: boolean;
-  }) => apiRequest('/reminders', {
+  }) => apiRequest('/crm/reminders', {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(reminder),
@@ -4052,12 +4075,12 @@ export const reminderApi = {
     category?: string;
     dueDate?: string;
     isCompleted?: boolean;
-  }) => apiRequest(`/reminders/${id}`, {
-    method: 'PUT',
+  }) => apiRequest(`/crm/reminders/${id}`, {
+    method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(reminder),
   }),
-  deleteReminder: (id: number) => apiRequest(`/reminders/${id}`, {
+  deleteReminder: (id: number) => apiRequest(`/crm/reminders/${id}`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
   }),

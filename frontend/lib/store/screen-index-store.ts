@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { menuItemsApi, permissionSettingsApi } from "@/lib/api";
 import { getCurrentUser } from "@/lib/auth";
 import { transformMenuItem, mergeAdministrationExtras, type NavGroup, type NavItem } from "@/components/layout/sidebar/nav-main";
+import { mergeFinanceErpModule } from "@/lib/finance-erp/nav";
 import { flattenMenuTree, type ScreenEntry } from "@/lib/search/screen-index";
 
 // Matches the normalization `usePermissionCheck`/`usePermission` apply before
@@ -140,10 +141,13 @@ export const useScreenIndexStore = create<ScreenIndexState>((set, get) => ({
       const transformedMenus: NavGroup[] = Array.isArray(menuData)
         ? menuData.map((group: any) => ({ title: group.title, items: group.items.map(transformMenuItem) }))
         : [];
-      // Same merge NavMain applies to its own sidebar state — without this, the sidebar's
-      // "Administration" button (client-only extras included) and this store's Module
-      // Launcher/Global Screen Search data (extras excluded) silently disagreed.
-      const groups = mergeAdministrationExtras(transformedMenus);
+      // Same merges NavMain applies to its own sidebar state — without these, the sidebar's
+      // "Administration" button / "Finance" module (client-only extras included) and this
+      // store's Module Launcher/Global Screen Search data (extras excluded) silently disagreed.
+      // Finance ERP in particular has no backend menu-items rows of its own yet (frontend-only
+      // phase), so without this merge the Module Launcher's "Finance" section only ever showed
+      // whatever the backend happens to seed under that title (currently just one legacy item).
+      const groups = mergeFinanceErpModule(mergeAdministrationExtras(transformedMenus));
 
       set({ rawEntries: flattenMenuTree(groups), rawGroups: groups, rawLoaded: true });
     } catch (error) {

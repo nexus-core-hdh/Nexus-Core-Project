@@ -101,6 +101,7 @@ import { customEntityPageApi } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { ModuleLauncher } from "./module-launcher";
+import { mergeFinanceErpModule } from "@/lib/finance-erp/nav";
 
 export type NavItem = {
   title: string;
@@ -830,8 +831,11 @@ export function NavMain() {
   }, []);
 
   const handleLinkClick = async (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
-    // Skip permission check for hash links or external links
-    if (href === "#" || href.startsWith("http") || href.startsWith("mailto:")) {
+    // Skip permission check for hash links, external links, and the Finance module — that
+    // module is frontend-only mock data for now (spec: no backend changes in this phase), so the
+    // backend's real permission API has no rows for it yet and would otherwise deny everyone but
+    // admins. Finance ships its own local mock permission layer under Settings > Users & Roles.
+    if (href === "#" || href.startsWith("http") || href.startsWith("mailto:") || href.startsWith("/dashboard/finance-erp")) {
       return;
     }
 
@@ -878,7 +882,11 @@ export function NavMain() {
       return nav;
     });
     const filtered = filterNavGroups(withCustomPages);
-    return filterNavByUserSelection(filtered, selectedSidebarItems);
+    // Finance ERP has no backend menu-items rows of its own yet (frontend-only phase) — merged
+    // in after filtering so its items are never subject to HIDDEN_ITEM_HREFS/TITLES (that list
+    // predates this module and targets unrelated template screens, not Finance's own routes).
+    const withFinanceErp = mergeFinanceErpModule(filtered);
+    return filterNavByUserSelection(withFinanceErp, selectedSidebarItems);
   }, [navItems, customEntityPages, selectedSidebarItems]);
 
   // Whether `pathname` falls anywhere inside a group's item tree — used only to give the

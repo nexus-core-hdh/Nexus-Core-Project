@@ -493,7 +493,6 @@ export default function ItemStatementPage() {
               </div>
             )}
           </div>
-
           <div className="overflow-hidden rounded-xl border shadow-sm">
             <div ref={gridRootRef} className="flex items-center justify-between border-b px-4 py-3">
               <div className="text-sm font-semibold">Transaction Details</div>
