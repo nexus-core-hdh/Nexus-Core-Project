@@ -32,6 +32,7 @@ import { usePlanningRowSelection } from "../fabric-yarn-requirements/_components
 import { useSubcontractTypes } from "../fabric-yarn-requirements/_components/receipt-menu";
 import { buildSubcontractPlanningColumns, type SubcontractTxnMap } from "../fabric-yarn-requirements/_components/subcontract-planning-columns";
 import { openTransactionReceipt, buildTransactionRowActions } from "../fabric-yarn-requirements/_components/transaction-row-actions";
+import { ItemAllocationDialog, type AllocationDialogContext } from "@/components/legacy-erp/item-allocation-dialog";
 
 interface PlanningRow {
   id: string | number;
@@ -70,6 +71,10 @@ interface PlanningRow {
   // comment. Replaces the old static processSent/processReceived columns.
   subcontractTransactions: SubcontractTxnMap;
   manufacturingSend: number;
+  // Received Allocation — real, reservation-only total from IM_ItemAllocation for THIS (Work
+  // Order, Inventory) scope (see item-allocation.service.ts's own aggregateAllocations). Never
+  // affects Balance — informational only, per this feature's own CRITICAL STOCK RULE.
+  allocated: number;
   balance: number;
 }
 
@@ -108,12 +113,26 @@ export default function TrimPlanningPage() {
   const [rows, setRows] = useState<PlanningRow[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Received Allocation dialog — see fabric-planning/page.tsx's own comment on this same pattern.
+  const [allocationOpen, setAllocationOpen] = useState(false);
+  const [allocationContext, setAllocationContext] = useState<AllocationDialogContext | null>(null);
+  const openAllocation = (row: PlanningRow) => {
+    if (row.inventoryId == null) return;
+    setAllocationContext({
+      workOrderId: row.workOrderId, workOrderNo: row.workOrderNo,
+      inventoryId: row.inventoryId, inventoryCode: row.inventoryCode, inventoryName: row.inventoryName,
+      colorCardId: row.colorCardId, colorCode: row.colorCode, colorName: row.colorName,
+    });
+    setAllocationOpen(true);
+  };
+
   // Shared row-selection + Transaction Details + right-click receipt-menu logic (also used by
   // Fabric/Yarn Planning) — see use-planning-row-selection.ts's own top comment.
   const {
     selectedRow, transactionRows, loadingTransactions, showTransactions, selectedIds,
     selectRow, handleRowContextMenu, getRowActions, clearSelection, closeTransactions,
-  } = usePlanningRowSelection(rows, { path: "/dashboard/legacy-erp/trim-planning", label: "Trim Planning", sourceType: "trim" });
+    toggleRow, toggleAllRows, allSelected, someSelected,
+  } = usePlanningRowSelection(rows, { path: "/dashboard/legacy-erp/trim-planning", label: "Trim Planning", sourceType: "trim" }, openAllocation);
 
   // Real, active MD_SubcontractType rows — same cached hook receipt-menu.ts's own "Subcontractor
   // Transactions" menu already uses. Drives the dynamic Send/Receive columns below.
@@ -146,28 +165,32 @@ export default function TrimPlanningPage() {
   const clear = () => { setFilters(emptyFilters); setAppliedFilters(emptyFilters); load(emptyFilters); clearSelection(); };
 
   const columns: ReportColumn<PlanningRow>[] = [
-    { key: "workOrderNo", label: "Order No", defaultWidth: 120, render: (r) => r.workOrderNo || "—" },
-    { key: "styleCode", label: "Style Code", defaultWidth: 110, render: (r) => r.styleCode || "—" },
-    { key: "styleName", label: "Style Name", defaultWidth: 220, render: (r) => r.styleName || "—" },
-    { key: "workOrderDate", label: "Order Date", defaultWidth: 100, render: (r) => fmtDate(r.workOrderDate) },
-    { key: "customerOrderNo", label: "Customer Order", defaultWidth: 130, render: (r) => r.customerOrderNo || "—" },
-    { key: "deliveryDate", label: "Delivery Date", defaultWidth: 100, render: (r) => fmtDate(r.deliveryDate) },
-    { key: "orderQuantity", label: "Quantity", defaultWidth: 100, align: "right", render: (r) => (r.orderQuantity != null ? round(r.orderQuantity, "quantity").toLocaleString() : "—") },
+    // filterable — same shared header-filter implementation as Fabric/Yarn Planning, picked
+    // per-column by actual data shape (see fabric-planning/page.tsx's own comment).
+    { key: "workOrderNo", label: "Order No", defaultWidth: 120, render: (r) => r.workOrderNo || "—", filterable: true, filterValue: (r) => r.workOrderNo },
+    { key: "styleCode", label: "Style Code", defaultWidth: 110, render: (r) => r.styleCode || "—", filterable: true, filterValue: (r) => r.styleCode },
+    { key: "styleName", label: "Style Name", defaultWidth: 220, render: (r) => r.styleName || "—", filterable: true, filterValue: (r) => r.styleName },
+    { key: "workOrderDate", label: "Order Date", defaultWidth: 100, render: (r) => fmtDate(r.workOrderDate), filterable: true, filterType: "date", filterValue: (r) => r.workOrderDate },
+    { key: "customerOrderNo", label: "Customer Order", defaultWidth: 130, render: (r) => r.customerOrderNo || "—", filterable: true, filterValue: (r) => r.customerOrderNo },
+    { key: "deliveryDate", label: "Delivery Date", defaultWidth: 100, render: (r) => fmtDate(r.deliveryDate), filterable: true, filterType: "date", filterValue: (r) => r.deliveryDate },
+    { key: "orderQuantity", label: "Quantity", defaultWidth: 100, align: "right", render: (r) => (r.orderQuantity != null ? round(r.orderQuantity, "quantity").toLocaleString() : "—"), filterable: true, filterType: "number", filterValue: (r) => r.orderQuantity },
     {
       key: "customer", label: "Customer", defaultWidth: 180,
       render: (r) => (r.customerCode || r.customerName ? <span>{r.customerCode}{r.customerCode && r.customerName ? " — " : ""}{r.customerName}</span> : <span className="text-muted-foreground">—</span>),
+      filterable: true, filterValue: (r) => [r.customerCode, r.customerName].filter(Boolean).join(" — "),
     },
-    { key: "inventoryCode", label: "Inventory Code", defaultWidth: 140, render: (r) => r.inventoryCode || "—" },
-    { key: "inventoryName", label: "Inventory Name", defaultWidth: 260, render: (r) => r.inventoryName || "—" },
-    { key: "process", label: "Process", defaultWidth: 120, render: (r) => r.process || "—" },
-    { key: "variant1", label: "Trim Type (Variant-1)", defaultWidth: 130, render: (r) => r.variant1 || "—" },
+    { key: "inventoryCode", label: "Inventory Code", defaultWidth: 140, render: (r) => r.inventoryCode || "—", filterable: true, filterValue: (r) => r.inventoryCode },
+    { key: "inventoryName", label: "Inventory Name", defaultWidth: 260, render: (r) => r.inventoryName || "—", filterable: true, filterValue: (r) => r.inventoryName },
+    { key: "process", label: "Process", defaultWidth: 120, render: (r) => r.process || "—", filterable: true, filterValue: (r) => r.process },
+    { key: "variant1", label: "Trim Type (Variant-1)", defaultWidth: 130, render: (r) => r.variant1 || "—", filterable: true, filterValue: (r) => r.variant1 },
     // Never populated anywhere in the Requirements engine today (always null there too, same as
-    // Fabric/Yarn Planning) — shown honestly as "—" rather than fabricated.
+    // Fabric/Yarn Planning) — shown honestly as "—" rather than fabricated, so not filterable.
     { key: "variant1Explanation", label: "Variant-1 Explanation", defaultWidth: 150, render: (r) => r.variant1Explanation || "—" },
-    { key: "variant2", label: "Variant-2 (Production Color)", defaultWidth: 170, render: (r) => r.variant2 || <span className="text-muted-foreground">All Colors</span> },
+    { key: "variant2", label: "Variant-2 (Production Color)", defaultWidth: 170, render: (r) => r.variant2 || <span className="text-muted-foreground">All Colors</span>, filterable: true, filterValue: (r) => r.variant2 },
     {
       key: "materialColor", label: "Material Color", defaultWidth: 140,
       render: (r) => (r.colorCode || r.colorName ? <span>{r.colorCode || r.colorName}</span> : <span className="text-muted-foreground">—</span>),
+      filterable: true, filterValue: (r) => r.colorCode || r.colorName,
     },
     { key: "consumption", label: "Consumption", defaultWidth: 100, align: "right", render: (r) => round(r.consumption, "quantity").toLocaleString() },
     { key: "applicableQuantity", label: "Applicable Qty", defaultWidth: 120, align: "right", render: (r) => round(r.applicableQuantity, "quantity").toLocaleString() },
@@ -193,6 +216,7 @@ export default function TrimPlanningPage() {
     // Manufacturing Send — a genuinely separate transaction concept, never confused with a
     // subcontractor Send above.
     { key: "manufacturingSend", label: "Manufacturing Send", defaultWidth: 140, align: "right", render: (r) => round(r.manufacturingSend, "quantity").toLocaleString() },
+    { key: "allocated", label: "Allocated", defaultWidth: 100, align: "right", render: (r) => round(r.allocated, "quantity").toLocaleString() },
     {
       key: "balance", label: "Balance", defaultWidth: 100, align: "right",
       render: (r) => <span className={r.balance > 0 ? "text-amber-700 dark:text-amber-400" : r.balance < 0 ? "text-emerald-700 dark:text-emerald-400" : undefined}>{round(r.balance, "quantity").toLocaleString()}</span>,
@@ -276,6 +300,11 @@ export default function TrimPlanningPage() {
             selectedIds={selectedIds}
             onRowContextMenu={handleRowContextMenu}
             getRowActions={getRowActions}
+            selectable
+            onToggleRow={toggleRow}
+            onToggleAll={toggleAllRows}
+            allSelected={allSelected}
+            someSelected={someSelected}
             fixedColumns={["workOrderNo", "styleCode", "inventoryCode"]}
             // Bounds this grid's own height, same fix/value as Fabric/Yarn Planning's own main grid
             // (see ReportGrid's own comment on maxHeight).
@@ -306,6 +335,13 @@ export default function TrimPlanningPage() {
           />
         </div>
       )}
+
+      <ItemAllocationDialog
+        open={allocationOpen}
+        onOpenChange={setAllocationOpen}
+        context={allocationContext}
+        onChanged={() => load(appliedFilters)}
+      />
     </div>
   );
 }

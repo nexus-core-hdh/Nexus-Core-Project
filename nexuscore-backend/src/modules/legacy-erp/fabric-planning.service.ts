@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { WorkOrderService } from './work-order.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
+import { ItemAllocationService } from './item-allocation.service';
 
 // ── Fabric Planning — NOT a second calculation engine. This is a cross-Work-Order planning/
 // reporting VIEW over data that already exists and is already correctly computed elsewhere:
@@ -37,6 +38,7 @@ export class FabricPlanningService {
     private readonly prisma: PrismaService,
     private readonly workOrderSvc: WorkOrderService,
     private readonly requirementsSvc: FabricYarnRequirementsService,
+    private readonly allocationSvc: ItemAllocationService,
   ) {}
 
   // Candidate Work Orders — real, non-deleted, and resolvable to a real Fabric BOM source (its own
@@ -275,16 +277,25 @@ export class FabricPlanningService {
     if (!flat.length) return [];
 
     const inventoryIds = Array.from(new Set(flat.map((r) => r.inventoryId).filter((id): id is number => id != null)));
-    const [purchaseByKey, receiptsByKey, subcontractByKey] = await Promise.all([
+    const [purchaseByKey, receiptsByKey, subcontractByKey, allocatedByKey] = await Promise.all([
       this.aggregatePurchase(workOrderIds, inventoryIds),
       this.aggregateReceipts(workOrderIds, inventoryIds),
       this.aggregateSubcontractReceipts(workOrderIds, inventoryIds),
+      this.allocationSvc.aggregateAllocations(workOrderIds, inventoryIds),
     ]);
 
     return flat.map((r) => {
       const key = r.inventoryId != null ? `${r.workOrderId}:${r.inventoryId}` : null;
       const receipts = key ? receiptsByKey.get(key) : undefined;
       const purchase = key ? purchaseByKey.get(key) ?? 0 : 0;
+      // Received Allocation — a reservation against an already-received receipt line, never a
+      // stock transaction (see item-allocation.service.ts's own header comment). Shown as its own
+      // column, deliberately NOT folded into Balance below: Balance's own formula (Required minus
+      // Received) is unchanged by this feature, per this task's own "do not change Purchase/
+      // Received/.../Balance calculations unless the allocation model explicitly requires it" rule
+      // — it doesn't here, since allocation is a downstream reservation of stock that has already
+      // counted as Received, not a second, competing source of Received.
+      const allocated = key ? allocatedByKey.get(key) ?? 0 : 0;
       const required = Number(r.quantity) || 0;
       const received = receipts?.received ?? 0;
       // Plain object, not a Map — this crosses an HTTP/JSON boundary to the frontend (a Map
@@ -328,6 +339,7 @@ export class FabricPlanningService {
         // alongside them); the frontend's dynamic column builder reads this instead.
         subcontractTransactions,
         manufacturingSend: receipts?.manufacturingSend ?? 0,
+        allocated,
         // Derived, not a separate source — Required minus Received, both already real. UNCHANGED
         // by the dynamic subcontract breakdown above: Balance never included processSent/
         // processReceived/subcontractTransactions either before or after this change — see this

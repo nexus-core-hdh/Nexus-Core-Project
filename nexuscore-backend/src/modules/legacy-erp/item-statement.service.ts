@@ -2,10 +2,9 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
-import { screenKeyFor } from './inventory-receipt.service';
-import { getReceiptTypeConfig } from './receipt-types.config';
-import { InventoryCardService } from './inventory-card.service';
-import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
+import { getReceiptTypeConfig, directionClassOf } from './receipt-types.config';
+import { InventoryCardService, stockApprovalGateSql } from './inventory-card.service';
+import { baseQuantitySql, baseQuantityJoinSql, unitConversionIssueSql } from './unit-conversion.util';
 
 // Item Statement / Stock Control Ledger — still a read-only view over the exact same IM_Item /
 // IM_Receipt / IM_ReceiptItem rows every *-card.service.ts and inventory-receipt.service.ts
@@ -18,43 +17,12 @@ import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
 // confirmed business mapping (see DIRECTION_CLASS below) that supersedes the narrower one this
 // file previously shipped with.
 //
-// DIRECTION_CLASS — the ONE centralized, authoritative business mapping for every screen/report
-// that needs a Receipt Type's stock impact. Every consumer (running balance, warehouse balances,
-// Detailed View dimension buckets, filtered summaries) derives from this single map via
-// directionClassOf() below — never re-declare or infer a parallel mapping elsewhere.
-//   IN  (stock increase): 2 (Purchase Receipt), 11 (Outside Process Receive), 133 (Outside
-//        Process Sent Return).
-//   OUT (stock decrease): 122 (Purchase Return), 12 (Outside Process Return), 134 (Outside
-//        Process Sent), 140 (Manufacture Send).
-//   TRANSFER: 17 (Warehouse Transfer) — decreases IM_ReceiptItem.OutWarehouseId, increases
-//        IM_ReceiptItem.InWarehouseId (both columns exist at the LINE level, confirmed live
-//        against the actual table — not assumed), net zero company-wide.
-// CORRECTION (audit pass): 134 was previously mapped IN — corrected to OUT per the authoritative
-// mapping (Type 134 = Outside Process Sent Receipt = stock decrease, goods leaving for outside
-// processing). This was the one conflict found in this file; no other file declares a competing
-// mapping for these types (confirmed by a repo-wide search before this fix) and Inventory Card's
-// own stock formula (inventory-card.service.ts's stockSumSql, scoped to 2/122 only) is untouched.
-// Every other configured ReceiptType (16, 101, 10, 40, 132, 18, 22, 139, 120, 3 — see
-// receipt-types.config.ts) has no confirmed direction and stays UNKNOWN/excluded — nothing beyond
-// these 6 confirmed types + the pre-existing 2/122 is guessed at.
-type DirectionClass = 'IN' | 'OUT' | 'TRANSFER' | 'UNKNOWN';
-const DIRECTION_CLASS: Record<number, DirectionClass> = {
-  2: 'IN', // Purchase Receipt
-  122: 'OUT', // Purchase Return
-  11: 'IN', // Outside Process Receive Receipt
-  133: 'IN', // Outside Process Sent Return Receipt
-  134: 'OUT', // Outside Process Sent Receipt
-  12: 'OUT', // Outside Process Return Receipt
-  140: 'OUT', // Manufacture Send Receipt
-  17: 'TRANSFER', // Warehouse Transfer Receipt
-};
-const directionClassOf = (receiptType: number): DirectionClass => DIRECTION_CLASS[receiptType] ?? 'UNKNOWN';
+// DIRECTION_CLASS / directionClassOf — the ONE receipt-type stock-direction mapping — now lives in
+// receipt-types.config.ts (moved there unchanged) so inventory-card.service.ts's Stock on Hand
+// reads the same map as this ledger.
 
-// Only Purchase Receipt/Return (2/122) ever had a real approval workflow wired to them anywhere
-// in this codebase (see the original audit this file carried, and repo-wide grep for
-// ApprovalConfiguration/ApprovalRequest usage keyed by these ReceiptTypes) — the newly-confirmed
-// 6 types are not gated the same way below, matching "don't invent an approval rule for types
-// that were never wired to one."
+// Approval gating (Purchase Receipt/Return only) is inventory-card.service.ts's
+// stockApprovalGateSql — the same filter getStockOnHand() applies.
 
 const ACCESS_CODE_LABEL: Record<string, string> = {
   YARN: 'Yarn',
@@ -86,6 +54,28 @@ export interface ItemStatementFilters {
   itemName?: string;
 }
 
+/** Why a line's quantity could not be normalized into its item's Base Unit (the statement's
+ *  reporting unit). Such a line is still listed (original Unit/Quantity untouched) but excluded
+ *  from every balance/total — baseQuantitySql's own COALESCE(..., 1) fallback would otherwise add
+ *  its raw number 1:1 into Base-Unit totals, i.e. silently sum e.g. KG into BAG. */
+export type UnitConversionIssue = 'NO_BASE_UNIT' | 'MISSING_CONVERSION' | 'MIXED_UNCONFIGURED_UNITS';
+const CONVERSION_ISSUE_MESSAGE: Record<UnitConversionIssue, string> = {
+  NO_BASE_UNIT: 'Item has configured units but none is flagged as Base Unit (IsMainUnit) — cannot normalize.',
+  MISSING_CONVERSION: 'No valid UnitFactor/UnitDivisor configured for this unit on this item (IM_ItemUnitItemSize) — cannot normalize.',
+  MIXED_UNCONFIGURED_UNITS: 'Item has no configured units (IM_ItemUnitItemSize) but its lines use more than one unit — cannot normalize.',
+};
+
+// Quantity/UnitFactor/UnitDivisor are all numeric(28,8) — rounding every derived figure to that
+// same scale removes binary-float noise (e.g. 100 / 45.36 = 2.204585537918871…) without dropping
+// any precision the data itself actually carries.
+const round8 = (n: number) => Math.round(n * 1e8) / 1e8;
+
+/** One item's balances within a statement, in that item's own Base Unit (unit). */
+export interface ItemBalance {
+  itemId: number; itemCode: string; itemName: string; unit: string | null;
+  openingBalance: number; totalIn: number; totalOut: number; closingBalance: number; transactionCount: number;
+}
+
 interface RawMovementRow {
   itemId: number;
   itemCode: string;
@@ -102,6 +92,9 @@ interface RawMovementRow {
   quantity: number;
   baseQuantity: number;
   unit: string;
+  /** The item's Base Unit name (IsMainUnit=1) — every baseQuantity/balance is in this unit. */
+  baseUnit: string | null;
+  conversionIssue: UnitConversionIssue | null;
   colorCardId: string | null;
   colorCode: string | null;
   colorName: string | null;
@@ -130,6 +123,7 @@ interface WarehouseContribution {
 }
 
 function contributionsFor(row: RawMovementRow): WarehouseContribution[] {
+  if (row.conversionIssue) return []; // unconvertible — never summed into Base-Unit balances
   const cls = directionClassOf(row.receiptType);
   if (cls === 'TRANSFER') {
     const out: WarehouseContribution[] = [];
@@ -149,6 +143,11 @@ function contributionsFor(row: RawMovementRow): WarehouseContribution[] {
  *  there is exactly one place this rule is expressed. */
 function netForWarehouse(row: RawMovementRow, warehouseId: number | null): { baseQtyIn: number; baseQtyOut: number } {
   const contributions = contributionsFor(row);
+  // Company-wide, a transfer always nets to zero — even one with a missing warehouse leg — the
+  // same way getStockOnHand() (which never counts TRANSFER) sees it.
+  if (warehouseId == null && contributions.length && directionClassOf(row.receiptType) === 'TRANSFER') {
+    return { baseQtyIn: row.baseQuantity, baseQtyOut: row.baseQuantity };
+  }
   if (warehouseId == null) {
     return contributions.reduce((acc, c) => ({ baseQtyIn: acc.baseQtyIn + c.baseQtyIn, baseQtyOut: acc.baseQtyOut + c.baseQtyOut }), { baseQtyIn: 0, baseQtyOut: 0 });
   }
@@ -175,13 +174,15 @@ export class ItemStatementService {
     if (!ACCESS_CODE_LABEL[item.accessCode]) throw new NotFoundException('Inventory item not found');
 
     const u = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT usi."UnitName" as "unitName"
+      SELECT usi."UnitName" as "unitName", iuis."IsMainUnit" as "isMainUnit"
       FROM "IM_ItemUnitItemSize" iuis
       JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
       WHERE iuis."InventoryId" = ${itemId} AND iuis."IsDeleted" = 0
       ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC LIMIT 1
     `);
-    const unit = u[0]?.unitName ?? '';
+    // The statement's reporting unit IS the Base Unit (every balance is in Base-Unit terms), so a
+    // non-base unit is never shown as its label — that would mislabel Base-Unit figures.
+    const unit = u.length && Number(u[0].isMainUnit) !== 1 ? '' : (u[0]?.unitName ?? '');
 
     return { ...item, unit, inventoryType: ACCESS_CODE_LABEL[item.accessCode] };
   }
@@ -196,8 +197,6 @@ export class ItemStatementService {
   // balance is computed from.
   private async fetchMovementRows(itemId: number | null, filters: ItemStatementFilters): Promise<RawMovementRow[]> {
     const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
-    const purchaseReceiptKey = screenKeyFor(2);
-    const purchaseReturnKey = screenKeyFor(122);
 
     const itemSql = itemId != null ? Prisma.sql`AND ri."InventoryId" = ${itemId}` : Prisma.sql``;
     const itemCodeSql = itemId == null && filters.itemCode ? Prisma.sql`AND i."InventoryCode" ILIKE ${`%${filters.itemCode}%`}` : Prisma.sql``;
@@ -217,7 +216,8 @@ export class ItemStatementService {
         r."CurrentAccountId" as "currentAccountId",
         acc."CurrentAccountCode" as "currentAccountCode", acc."CurrentAccountName" as "currentAccountName",
         ri."RecId" as "lineId", ri."Quantity" as "quantity", ${baseQty} as "baseQuantity",
-        COALESCE(usi."UnitName", '') as "unit",
+        COALESCE(usi."UnitName", '') as "unit", bu."UnitName" as "baseUnit",
+        ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} as "conversionIssue",
         ri."ColorCardId" as "colorCardId", cc."code" as "colorCode", cc."name" as "colorName",
         ri."PartyNo" as "lotBatch",
         ri."Explanation" as "remarks",
@@ -232,23 +232,26 @@ export class ItemStatementService {
       LEFT JOIN "IM_Warehouse" outwh ON outwh."RecId" = ri."OutWarehouseId" AND outwh."IsDeleted" = 0
       LEFT JOIN "FI_Account" acc ON acc."RecId" = r."CurrentAccountId" AND acc."IsDeleted" = 0
       ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
+      LEFT JOIN LATERAL (
+        SELECT busi."UnitName" FROM "IM_ItemUnitItemSize" b
+        JOIN "MD_UnitSetItem" busi ON busi."RecId" = b."UnitItemId"
+        WHERE b."InventoryId" = ri."InventoryId" AND b."IsDeleted" = 0 AND b."IsMainUnit" = 1
+        ORDER BY b."RecId" ASC LIMIT 1
+      ) bu ON true
       WHERE ri."IsDeleted" = 0
         ${itemSql} ${itemCodeSql} ${itemNameSql}
-        AND (
-          r."ReceiptType" NOT IN (2, 122)
-          OR (r."ReceiptType" = 2 AND NOT EXISTS (
-            SELECT 1 FROM "ApprovalRequest" ar
-            WHERE ar."screenKey" = ${purchaseReceiptKey} AND ar."transactionId" = r."RecId"::text AND ar."status" <> 'approved'
-          ))
-          OR (r."ReceiptType" = 122 AND NOT EXISTS (
-            SELECT 1 FROM "ApprovalRequest" ar
-            WHERE ar."screenKey" = ${purchaseReturnKey} AND ar."transactionId" = r."RecId"::text AND ar."status" <> 'approved'
-          ))
-        )
+        AND ${stockApprovalGateSql('r')}
         ${dateToSql} ${colorSql} ${lotSql} ${warehouseSql}
       ORDER BY r."ReceiptDate" ASC NULLS LAST, r."RecId" ASC, ri."RecId" ASC
     `);
-    return sanitizeRawRow(rows).map((r: any) => ({ ...r, quantity: Number(r.quantity) || 0, baseQuantity: Number(r.baseQuantity) || 0 }));
+    // conversionIssue comes from unitConversionIssueSql — the same predicate getStockOnHand() uses
+    // to exclude a line, so both figures skip exactly the same lines.
+    return sanitizeRawRow(rows).map((r: any) => ({
+      ...r,
+      quantity: Number(r.quantity) || 0,
+      baseQuantity: round8(Number(r.baseQuantity) || 0),
+      conversionIssue: r.conversionIssue ?? null,
+    }));
   }
 
   async getStatement(itemId: number | null, filters: ItemStatementFilters = {}) {
@@ -270,14 +273,29 @@ export class ItemStatementService {
       return true;
     });
 
+    // Balances are kept PER ITEM (each in its own Base Unit) — in the no-item ledger, rows of
+    // different items interleave by date, and one shared running balance would add e.g. BAG of
+    // one item to MTR of another. For a single-item statement there is exactly one bucket.
+    const byItem = new Map<number, ItemBalance>();
+    const bucketFor = (r: RawMovementRow): ItemBalance => {
+      let b = byItem.get(r.itemId);
+      if (!b) {
+        b = { itemId: r.itemId, itemCode: r.itemCode, itemName: r.itemName, unit: r.baseUnit, openingBalance: 0, totalIn: 0, totalOut: 0, closingBalance: 0, transactionCount: 0 };
+        byItem.set(r.itemId, b);
+      }
+      return b;
+    };
+
     // Opening Balance: every historical row before From Date, in the SAME dimension scope
     // (item/color/lot/warehouse — already applied by fetchMovementRows), regardless of
     // transaction-type/document/current-account filters (an opening balance is a fact about the
     // item's history, not about which rows the user currently wants to LOOK at).
-    const openingBalance = beforeRange.reduce((sum, r) => {
+    for (const r of beforeRange) {
+      const b = bucketFor(r);
       const { baseQtyIn, baseQtyOut } = netForWarehouse(r, warehouseView);
-      return sum + baseQtyIn - baseQtyOut;
-    }, 0);
+      b.openingBalance = round8(b.openingBalance + baseQtyIn - baseQtyOut);
+    }
+    for (const b of byItem.values()) b.closingBalance = b.openingBalance;
 
     // Transaction-detail filters — narrow which of the in-range rows are actually displayed/
     // summed for THIS view, same as the receiptType/receiptNo filters this endpoint already had.
@@ -289,14 +307,21 @@ export class ItemStatementService {
       return true;
     });
 
-    let runningBalance = openingBalance;
-    let totalIn = 0;
-    let totalOut = 0;
     const transactions = displayed.map((row) => {
+      const b = bucketFor(row);
+      b.transactionCount += 1;
       const movementCategory = directionClassOf(row.receiptType);
       const { baseQtyIn, baseQtyOut } = netForWarehouse(row, warehouseView);
-      const included = movementCategory !== 'UNKNOWN';
-      if (included) { runningBalance += baseQtyIn - baseQtyOut; totalIn += baseQtyIn; totalOut += baseQtyOut; }
+      const included = movementCategory !== 'UNKNOWN' && !row.conversionIssue;
+      if (included) {
+        b.closingBalance = round8(b.closingBalance + baseQtyIn - baseQtyOut);
+        b.totalIn = round8(b.totalIn + baseQtyIn);
+        b.totalOut = round8(b.totalOut + baseQtyOut);
+      }
+      const runningBalance = b.closingBalance;
+      // Display side only: an unconvertible line still shows its ORIGINAL quantity in the column
+      // its direction implies — it just never reaches the Base-Unit balances above.
+      const shown = row.conversionIssue ? netForWarehouse({ ...row, conversionIssue: null }, warehouseView) : { baseQtyIn, baseQtyOut };
       const config = getReceiptTypeConfig(row.receiptType);
       const isTransfer = movementCategory === 'TRANSFER';
       return {
@@ -322,18 +347,71 @@ export class ItemStatementService {
         sourceWarehouseName: isTransfer ? row.outWarehouseName : null,
         destinationWarehouseCode: isTransfer ? row.inWarehouseCode : null,
         destinationWarehouseName: isTransfer ? row.inWarehouseName : null,
+        // Original, as persisted — Unit/Quantity/Quantity In/Out are never converted.
         unit: row.unit,
         quantity: row.quantity,
-        quantityIn: baseQtyIn > 0 ? row.quantity : 0,
-        quantityOut: baseQtyOut > 0 ? row.quantity : 0,
+        quantityIn: shown.baseQtyIn > 0 ? row.quantity : 0,
+        quantityOut: shown.baseQtyOut > 0 ? row.quantity : 0,
+        // The same line normalized into the reporting (Base) unit — the figure runningBalance and
+        // the totals actually used. Null when it could not be normalized.
+        baseQuantity: row.conversionIssue ? null : row.baseQuantity,
+        conversionIssue: row.conversionIssue ? CONVERSION_ISSUE_MESSAGE[row.conversionIssue] : null,
         direction: movementCategory === 'IN' || movementCategory === 'OUT' ? movementCategory : null,
         movementCategory,
         includedInStockCalculation: included,
+        // This row's ITEM's running balance, in that item's Base Unit (reportingUnit).
         runningBalance,
+        reportingUnit: row.baseUnit,
       };
     });
 
-    const closingBalance = runningBalance;
+    // Every unconvertible line in scope — including ones before From Date that the opening balance
+    // had to skip — so a gap in the opening figure is never hidden just because it isn't displayed.
+    const conversionIssues = [...beforeRange, ...displayed]
+      .filter((r) => r.conversionIssue && directionClassOf(r.receiptType) !== 'UNKNOWN')
+      .map((r) => ({
+        lineId: r.lineId, receiptNo: r.receiptNo, receiptDate: r.receiptDate, itemCode: r.itemCode,
+        unit: r.unit, quantity: r.quantity, reason: CONVERSION_ISSUE_MESSAGE[r.conversionIssue!],
+      }));
+
+    const totalsByItem = Array.from(byItem.values()).sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+
+    // One combined Stock In/Out/Balance only when every item in scope shares the same, known Base
+    // Unit (always true for a single-item statement). Otherwise `totals` is null and only
+    // totalsByItem is meaningful — never a sum of BAG + KG + PCS + MTR.
+    const distinctUnits = new Set(totalsByItem.map((t) => t.unit ?? ''));
+    const combinable = itemId != null || totalsByItem.length <= 1 || (distinctUnits.size === 1 && !distinctUnits.has(''));
+    const reportingUnit = itemId != null ? (item?.unit || null) : combinable ? (totalsByItem[0]?.unit ?? null) : null;
+    const sum = (k: 'openingBalance' | 'totalIn' | 'totalOut' | 'closingBalance') => round8(totalsByItem.reduce((s, t) => s + t[k], 0));
+    const closingBalance = sum('closingBalance');
+    const totals = combinable ? {
+      openingBalance: sum('openingBalance'),
+      totalIn: sum('totalIn'),
+      totalOut: sum('totalOut'),
+      closingBalance,
+      // Kept for backward compatibility with the pre-existing field name this endpoint already
+      // shipped with.
+      closingBalanceFromTransactions: closingBalance,
+      transactionCount: transactions.length,
+    } : null;
+
+    // Current Stock vs ledger closing: getStockOnHand() is always the item's WHOLE history,
+    // company-wide. The ledger's closing covers that same scope — whatever the From Date, since
+    // closing = opening + movements — unless a filter narrows it (To Date cuts off later
+    // movements; color/lot/warehouse/type/document/account filters drop lines). Only then is the
+    // comparison apples-to-apples; otherwise it's reported as not comparable, with the reason,
+    // instead of a false "Differs".
+    const scopeNarrowedBy = [
+      filters.dateTo && 'To Date',
+      filters.colorCardId && 'Color',
+      filters.lotBatch && 'Lot/Batch',
+      filters.warehouseId != null && 'Warehouse',
+      filters.receiptType != null && 'Transaction Type',
+      filters.documentOrReceiptNo?.trim() && 'Document/Receipt No',
+      filters.currentAccountId != null && 'Current Account',
+    ].filter(Boolean) as string[];
+    const stockComparable = itemId != null && scopeNarrowedBy.length === 0;
+    const soh = currentStockOnHand != null ? round8(currentStockOnHand) : null;
 
     return {
       item: item ? {
@@ -344,25 +422,20 @@ export class ItemStatementService {
         unit: item.unit,
       } : null,
       // Always the module's one Stock on Hand engine, always company-wide, always independent of
-      // every filter above — "true overall item stock" per spec. Null in multi-item mode (no
-      // single item to report one figure for).
-      currentStockOnHand,
+      // every filter above. Null in multi-item mode (no single item to report one figure for).
+      currentStockOnHand: soh,
       transactions,
-      totals: {
-        openingBalance,
-        totalIn,
-        totalOut,
-        closingBalance,
-        // Kept for backward compatibility with the pre-existing field name this endpoint already
-        // shipped with.
-        closingBalanceFromTransactions: closingBalance,
-        transactionCount: transactions.length,
-      },
-      // Same reconciliation fields as before — only meaningful for a single item with no
-      // dimension/date filters narrowing the scope away from the item's full history, since
-      // currentStockOnHand only ever covers ReceiptType 2/122 company-wide.
-      stockReconciled: itemId != null ? currentStockOnHand === closingBalance : null,
-      stockDifference: itemId != null ? (currentStockOnHand as number) - closingBalance : null,
+      conversionIssues,
+      reportingUnit,
+      // Stock In/Out are MOVEMENT totals within the displayed range only (never include the
+      // opening balance); closingBalance = openingBalance + totalIn - totalOut, in reportingUnit.
+      totals,
+      totalsByItem,
+      // Numeric equality at the data's own numeric(28,8) scale (both sides already round8'd).
+      stockComparable,
+      stockComparisonScope: stockComparable ? null : itemId != null ? `Ledger filtered by ${scopeNarrowedBy.join(', ')} — Current Stock is the item's full company-wide history.` : null,
+      stockReconciled: stockComparable ? soh === closingBalance : null,
+      stockDifference: stockComparable ? round8((soh as number) - closingBalance) : null,
     };
   }
 
@@ -443,7 +516,7 @@ export class ItemStatementService {
     }
 
     return Array.from(buckets.values())
-      .map((b) => ({ ...b, closing: b.opening + b.in - b.out }))
+      .map((b) => ({ ...b, opening: round8(b.opening), in: round8(b.in), out: round8(b.out), closing: round8(b.opening + b.in - b.out) }))
       .sort((a, b) => a.itemCode.localeCompare(b.itemCode) || (a.warehouseCode ?? '').localeCompare(b.warehouseCode ?? ''));
   }
 }

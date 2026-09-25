@@ -26,6 +26,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 
 // "Receipt & Master Data" — a single read-only, dropdown-driven grid over 3 retained unified-
 // grid sources (Purchase Receipt/Inventory Receipt/Current Account — see unified-grid.service.ts)
@@ -62,6 +63,11 @@ export default function ReceiptMasterDataPage() {
   // JSON blob (same mechanism as Workspace/My Menu/PO line-grid column prefs), namespaced under
   // its own key so it can't collide with those. No dedicated worklist table/schema.
   const wl = useWorklist({ storageKey: "receiptMasterDataWorklists" });
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — row identity here is
+  // `RecId` (same field this screen's own `getRowKey` already uses below), not `.id`, so this
+  // screen supplies its own `getId` — see that hook's own comment on why this is supported.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(rows, { getId: (row) => String(row.RecId) });
 
   const actions = TABLE_ACTIONS[selectedTable];
 
@@ -276,6 +282,9 @@ export default function ReceiptMasterDataPage() {
           getRowKey={(row) => String(row.RecId)}
           loading={loading}
           onRowDoubleClick={(row) => actions.onView({ row, router, reload, openDetails: setDetailsRow })}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => <RowActionsMenu actions={getRowActions(row)} />}
           wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
           emptyState={

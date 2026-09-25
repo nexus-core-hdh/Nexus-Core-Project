@@ -24,8 +24,11 @@ import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useColumnFilters, type ColumnFilterType } from "@/hooks/use-column-filters";
+import { ColumnFilterPopover } from "@/components/legacy-erp/column-filter-popover";
 
 export interface WorklistTableColumn<T = any> {
   key: string;
@@ -36,6 +39,12 @@ export interface WorklistTableColumn<T = any> {
   render: (row: T) => React.ReactNode;
   defaultWidth?: number;
   minWidth?: number;
+  // Opt-in Excel-style column filter (funnel icon) — same shared implementation ReportGrid uses
+  // (hooks/use-column-filters.ts / column-filter-popover.tsx). `filterValue` must return the real
+  // underlying value (a code, a raw ISO date, a raw number), never a formatted display string.
+  filterable?: boolean;
+  filterType?: ColumnFilterType;
+  filterValue?: (row: T) => string | number | null | undefined;
 }
 
 export interface WorklistTableProps<T = any> {
@@ -57,12 +66,34 @@ export interface WorklistTableProps<T = any> {
    *  to know about that concern. */
   wrapRow?: (row: T, rowElement: React.ReactNode) => React.ReactNode;
   /** Escape hatch for screens needing more than the built-in onDoubleClick per row (keyboard
-   *  navigation, focus/ref tracking, a selected-row highlight, etc — e.g. a lookup-picker mode).
-   *  Merged onto the row's own props; an `onDoubleClick`/`className` returned here wins over the
-   *  defaults. */
+   *  navigation, focus/ref tracking, etc — e.g. a lookup-picker mode). Merged onto the row's own
+   *  props; an `onDoubleClick`/`className` returned here wins over the defaults (including the
+   *  selected-row highlight below, so a screen with unusual needs can still fully override it). */
   getRowProps?: (row: T, index: number) => Partial<React.ComponentProps<typeof TableRow>>;
   /** Width of the trailing `renderRowActions` cell — default 56px. */
   actionsColumnWidth?: number;
+
+  // ── Project-wide grid selection standard — same prop names/semantics as ReportGrid
+  // (report-grid.tsx), so a screen migrating between the two grid families never has to relearn
+  // the API. All optional/additive: a caller passing none of these renders byte-for-byte as
+  // before (no onClick/onContextMenu attached, default "group cursor-pointer hover:bg-muted/40"
+  // row class unchanged). See hooks/use-row-selection.ts for the shared plain/ctrl/shift-click +
+  // right-click preserve/collapse implementation every caller of these props is expected to use.
+  /** Rows whose id is in this Set render the shared `bg-selected` highlight. */
+  selectedIds?: Set<string | number>;
+  /** `event` lets the caller read ctrlKey/metaKey/shiftKey for multi-select — same contract as
+   *  ReportGrid's own `onRowClick`. */
+  onRowClick?: (row: T, event: React.MouseEvent) => void;
+  onRowContextMenu?: (row: T, event: React.MouseEvent) => void;
+  /** Opt-in leading checkbox column — only meaningful once a screen has a real multi-record
+   *  action to feed `selectedIds` into; omitted, no checkbox column renders at all. */
+  selectable?: boolean;
+  onToggleRow?: (row: T) => void;
+  onToggleAll?: () => void;
+  allSelected?: boolean;
+  someSelected?: boolean;
+  /** Width of the leading checkbox column — default 36px. */
+  selectColumnWidth?: number;
 }
 
 const HEADER_H = "h-10";
@@ -83,7 +114,16 @@ export function WorklistTable<T = any>({
   onSort,
   wrapRow,
   getRowProps,
-  actionsColumnWidth = 56
+  actionsColumnWidth = 56,
+  selectedIds,
+  onRowClick,
+  onRowContextMenu,
+  selectable = false,
+  onToggleRow,
+  onToggleAll,
+  allSelected = false,
+  someSelected = false,
+  selectColumnWidth = 36,
 }: WorklistTableProps<T>) {
   const gridColumnDefs = useMemo(
     () => columns.map((c) => ({
@@ -95,6 +135,11 @@ export function WorklistTable<T = any>({
     [columns]
   );
   const gridColumns = useGridColumns<string>({ storageKey, columns: gridColumnDefs });
+
+  // Column filters (funnel-icon dropdowns) — shared state/matching logic, see
+  // hooks/use-column-filters.ts's own top comment. Client-side only; a caller with no `filterable`
+  // columns gets `visibleRows === rows` and renders exactly as before.
+  const { visibleRows, selectOptionsByColumn, getColumnFilter, setColumnFilter } = useColumnFilters(rows, columns);
 
   // No Save button exists on this screen family — auto-persist widths instead: instantly to
   // sessionStorage (cheap, every change), debounced to the backend (avoids a request per pixel
@@ -119,8 +164,9 @@ export function WorklistTable<T = any>({
   // — so `gridColumns.totalWidth()` could sum over stale keys no longer in `columnByKey`,
   // producing `undefined` entries that throw on `.key` access. Summing over the always-current
   // `columns` prop directly (with the same safe, fallback-having `getWidth`) sidesteps that.
-  const totalTableWidth = columns.reduce((sum, c) => sum + gridColumns.getWidth(c.key), 0) + (renderRowActions ? actionsColumnWidth : 0);
-  const colCount = columns.length + (renderRowActions ? 1 : 0);
+  const totalTableWidth = columns.reduce((sum, c) => sum + gridColumns.getWidth(c.key), 0)
+    + (renderRowActions ? actionsColumnWidth : 0) + (selectable ? selectColumnWidth : 0);
+  const colCount = columns.length + (renderRowActions ? 1 : 0) + (selectable ? 1 : 0);
 
   // No wrapping overflow-x-auto div here — the shared <Table> primitive already renders its own
   // `[data-slot="table-container"]` div with `overflow-x-auto` built in. Nesting a second
@@ -133,11 +179,23 @@ export function WorklistTable<T = any>({
     <div ref={gridRootRef}>
       <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
         <colgroup>
+          {selectable && <col style={{ width: selectColumnWidth }} />}
           {columns.map((c) => <col key={c.key} style={{ width: gridColumns.getWidth(c.key) }} />)}
           {renderRowActions && <col style={{ width: actionsColumnWidth }} />}
         </colgroup>
         <TableHeader>
           <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+            {selectable && (
+              <TableHead className={cn("p-0 text-center", CELL_BORDER)} style={{ width: selectColumnWidth }}>
+                <div className={cn(HEADER_H, "flex items-center justify-center")}>
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={() => onToggleAll?.()}
+                    aria-label="Select all rows"
+                  />
+                </div>
+              </TableHead>
+            )}
             {columns.map((c) => {
               const active = sortable(c) && sortKey === c.key;
               return (
@@ -158,13 +216,22 @@ export function WorklistTable<T = any>({
                       sortable(c) && "cursor-pointer select-none hover:text-foreground",
                     )}
                   >
-                    {c.label}
+                    <span className="truncate">{c.label}</span>
                     {sortable(c) && (
                       active ? (
                         sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
                       ) : (
                         <ChevronsUpDown className="h-3 w-3 opacity-40" />
                       )
+                    )}
+                    {c.filterable && c.filterValue && (
+                      <ColumnFilterPopover
+                        label={typeof c.label === "string" ? c.label : c.key}
+                        type={c.filterType}
+                        options={selectOptionsByColumn[c.key] ?? []}
+                        value={getColumnFilter(c.key)}
+                        onChange={(next) => setColumnFilter(c.key, next)}
+                      />
                     )}
                   </span>
                   <div
@@ -193,16 +260,40 @@ export function WorklistTable<T = any>({
             <TableRow className="hover:bg-transparent">
               <TableCell colSpan={colCount} className="py-12">{emptyState}</TableCell>
             </TableRow>
+          ) : visibleRows.length === 0 ? (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={colCount} className="py-12 text-center text-sm text-muted-foreground">
+                No rows match the current column filters.
+              </TableCell>
+            </TableRow>
           ) : (
-            rows.map((row, index) => {
+            visibleRows.map((row, index) => {
               const { className: rowClassNameOverride, onDoubleClick: onDoubleClickOverride, ...restRowProps } = getRowProps?.(row, index) ?? {};
+              const isSelected = !!selectedIds?.has(getRowKey(row));
               const rowEl = (
                 <TableRow
                   key={getRowKey(row)}
-                  className={rowClassNameOverride ?? "group cursor-pointer hover:bg-muted/40"}
+                  className={rowClassNameOverride ?? cn(
+                    "group cursor-pointer",
+                    // Same dedicated selection tokens ReportGrid uses (globals.css) — never a
+                    // low-opacity --primary blend. Unselected/interactive rows keep the existing
+                    // hover-only cue, byte-for-byte the same as before this prop existed.
+                    isSelected ? "bg-selected hover:bg-selected-hover" : "hover:bg-muted/40",
+                  )}
                   onDoubleClick={onDoubleClickOverride ?? (onRowDoubleClick ? () => onRowDoubleClick(row) : undefined)}
+                  onClick={onRowClick ? (e) => onRowClick(row, e) : undefined}
+                  onContextMenu={onRowContextMenu ? (e) => onRowContextMenu(row, e) : undefined}
                   {...restRowProps}
                 >
+                  {selectable && (
+                    <TableCell className="py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => onToggleRow?.(row)}
+                        aria-label="Select row"
+                      />
+                    </TableCell>
+                  )}
                   {columns.map((c) => (
                     <TableCell
                       key={c.key}

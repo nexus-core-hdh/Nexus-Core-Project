@@ -26,6 +26,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 type SortKey = "receiptNo" | "documentNo" | "receiptDate";
@@ -98,26 +99,34 @@ export default function InventoryReceiptListPage() {
         render: (row: any) => formatCell(row[c]),
       }));
     }
+    // filterable — shared header-filter implementation (hooks/use-column-filters.ts); the
+    // customize-worklist branch above stays non-filterable (arbitrary/unknown-typed user-picked
+    // fields), same reasoning as purchase-orders-list's own comment.
     return [
       {
         key: "receiptNo", label: "Receipt No", sortable: true,
         render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>,
+        filterable: true, filterValue: (row) => row.receiptNo,
       },
       {
         key: "receiptDate", label: "Receipt Date", sortable: true,
         render: (row: any) => (row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"),
+        filterable: true, filterType: "date", filterValue: (row) => row.receiptDate,
       },
       {
         key: "documentNo", label: "Document", sortable: true,
         render: (row: any) => row.documentNo || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.documentNo,
       },
       {
         key: "plateNumber", label: "Vehicle No",
         render: (row: any) => row.plateNumber || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.plateNumber,
       },
       {
         key: "driverName", label: "Driver Name",
         render: (row: any) => row.driverName || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.driverName,
       },
     ] as WorklistTableColumn<any>[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -162,6 +171,10 @@ export default function InventoryReceiptListPage() {
     });
     return copy;
   }, [rows, sortKey, sortDir]);
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
@@ -218,6 +231,9 @@ export default function InventoryReceiptListPage() {
           sortDir={sortDir}
           onSort={(key) => toggleSort(key as SortKey)}
           onRowDoubleClick={(row) => view(row.id)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}

@@ -24,6 +24,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 
 // Customer Define Trim listing — MA_YarnTrimCard, a customer/style-scoped trim BOM header,
 // NOT the generic Trim Card item master (that's trim-inventory-cards-list/page.tsx). Same
@@ -152,6 +153,10 @@ export default function CustomerDefineTrimListPage() {
     return copy;
   }, [rows, sortKey, sortDir]);
 
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
+
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -213,6 +218,9 @@ export default function CustomerDefineTrimListPage() {
           sortKey={sortKey}
           sortDir={sortDir}
           onSort={(key) => toggleSort(key as SortKey)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}

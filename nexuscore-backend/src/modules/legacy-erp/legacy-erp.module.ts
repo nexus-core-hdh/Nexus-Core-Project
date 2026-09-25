@@ -64,10 +64,16 @@ import { TrimPlanningController } from './trim-planning.controller';
 import { TrimPlanningService } from './trim-planning.service';
 import { CuttingCardController } from './cutting-card.controller';
 import { CuttingCardService } from './cutting-card.service';
+import { OrderManufacturingController } from './order-manufacturing.controller';
+import { OrderManufacturingService } from './order-manufacturing.service';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { RecipeUsageController } from './recipe-usage.controller';
 import { RecipeUsageService } from './recipe-usage.service';
+import { ItemAllocationController } from './item-allocation.controller';
+import { ItemAllocationService } from './item-allocation.service';
+import { SerialCardController, SerialCardListController } from './serial-card.controller';
+import { SerialCardService } from './serial-card.service';
 import { ApprovalModule } from '../approval/approval.module';
 import { AuditModule } from '../audit/audit.module';
 
@@ -119,11 +125,15 @@ import { AuditModule } from '../audit/audit.module';
     FabricYarnRequirementsController,
     // Same reasoning — '/:id/cutting-card' would otherwise be swallowed by the same catch-all.
     CuttingCardController,
+    OrderManufacturingController,
     WorkOrderController,
     FabricPlanningController,
     YarnPlanningController,
     TrimPlanningController,
     RecipeUsageController,
+    ItemAllocationController,
+    SerialCardController,
+    SerialCardListController,
   ],
   providers: [
     WarehouseService,
@@ -158,12 +168,15 @@ import { AuditModule } from '../audit/audit.module';
     WorkOrderService,
     FabricYarnRequirementsService,
     CuttingCardService,
+    OrderManufacturingService,
     DeleteDependencyService,
     ReceiptTraceabilityService,
     FabricPlanningService,
     YarnPlanningService,
     TrimPlanningService,
     RecipeUsageService,
+    ItemAllocationService,
+    SerialCardService,
   ],
   // LegacyMasterLookupService.listItemUnits is the same per-item configured-Unit source Purchase
   // Order/Purchase Receipt already resolve Unit through (unit-conversion.util.ts's

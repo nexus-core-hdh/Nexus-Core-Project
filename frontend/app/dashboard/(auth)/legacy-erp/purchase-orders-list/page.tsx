@@ -25,6 +25,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 
 type SortKey = "receiptNo" | "documentNo" | "receiptDate";
 type ApprovalFilter = "all" | "approved" | "unapproved" | "rejected";
@@ -116,26 +117,37 @@ export default function PurchaseOrderListPage() {
         render: (row: any) => formatCell(row[c]),
       }));
     }
+    // filterable — shared header-filter implementation (hooks/use-column-filters.ts), only on this
+    // fixed "Standard" column set (a customize-worklist preset's columns are arbitrary/user-picked
+    // fields of unknown type — see this file's own `activeColumns` branch above — so they're left
+    // non-filterable rather than guessing a filter type for an unknown field).
     const cols: WorklistTableColumn<any>[] = [
       {
         key: "receiptNo", label: "Receipt No", sortable: true,
         render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>,
+        filterable: true, filterValue: (row) => row.receiptNo,
       },
       {
         key: "receiptDate", label: "Order Date", sortable: true,
         render: (row: any) => (row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"),
+        filterable: true, filterType: "date", filterValue: (row) => row.receiptDate,
       },
       {
         key: "documentNo", label: "Document No", sortable: true,
         render: (row: any) => row.documentNo || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.documentNo,
       },
       {
         key: "grandTotal", label: "Grand Total",
         render: (row: any) => (row.grandTotal != null ? Number(row.grandTotal).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"),
+        filterable: true, filterType: "number", filterValue: (row) => row.grandTotal,
       },
     ];
     if (approvalRequired) {
-      cols.push({ key: "approvalStatus", label: "Approval Status", render: (row: any) => <ApprovalStatusBadge status={row.approvalStatus} /> });
+      cols.push({
+        key: "approvalStatus", label: "Approval Status", render: (row: any) => <ApprovalStatusBadge status={row.approvalStatus} />,
+        filterable: true, filterValue: (row) => row.approvalStatus,
+      });
     }
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -176,6 +188,10 @@ export default function PurchaseOrderListPage() {
     });
     return copy;
   }, [rows, sortKey, sortDir]);
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
@@ -251,6 +267,9 @@ export default function PurchaseOrderListPage() {
           sortDir={sortDir}
           onSort={(key) => toggleSort(key as SortKey)}
           onRowDoubleClick={(row) => view(row.id)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}

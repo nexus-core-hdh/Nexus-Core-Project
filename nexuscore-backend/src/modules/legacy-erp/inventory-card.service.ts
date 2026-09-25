@@ -4,7 +4,29 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap } from './legacy-db-types.util';
 import { screenKeyFor } from './inventory-receipt.service';
-import { baseQuantitySql, baseQuantityJoinSql } from './unit-conversion.util';
+import { baseQuantitySql, baseQuantityJoinSql, unitConversionIssueSql } from './unit-conversion.util';
+import { STOCK_IN_RECEIPT_TYPES, STOCK_OUT_RECEIPT_TYPES } from './receipt-types.config';
+
+// Approval gate for every stock figure (Stock on Hand here, Item Statement's ledger) — moved here
+// unchanged from item-statement.service.ts's own inline filter. Only Purchase Receipt/Return
+// (2/122) have an approval workflow wired to stock; a receipt of either type sitting at
+// pending_approval/rejected (an ApprovalRequest row with status <> 'approved') doesn't move stock
+// yet. A receipt with no ApprovalRequest row at all always counts (see stockSumSql's APPROVAL
+// GATE comment). Every other type passes through ungated.
+export function stockApprovalGateSql(recAlias: string): Prisma.Sql {
+  const rec = Prisma.raw(`"${recAlias}"`);
+  return Prisma.sql`(
+    ${rec}."ReceiptType" NOT IN (2, 122)
+    OR (${rec}."ReceiptType" = 2 AND NOT EXISTS (
+      SELECT 1 FROM "ApprovalRequest" ar
+      WHERE ar."screenKey" = ${screenKeyFor(2)} AND ar."transactionId" = ${rec}."RecId"::text AND ar."status" <> 'approved'
+    ))
+    OR (${rec}."ReceiptType" = 122 AND NOT EXISTS (
+      SELECT 1 FROM "ApprovalRequest" ar
+      WHERE ar."screenKey" = ${screenKeyFor(122)} AND ar."transactionId" = ${rec}."RecId"::text AND ar."status" <> 'approved'
+    ))
+  )`;
+}
 
 // Read-only aggregation over the three existing IM_Item-based inventory cards (Fabric, Yarn,
 // Trim) for the "Inventory Card List" screen — a UNION ALL of the same three AccessCode-
@@ -169,14 +191,14 @@ export class InventoryCardService {
     `;
   }
 
-  // Stock on Hand — deliberately scoped to only the two unambiguous, purchase-side movement
-  // types on IM_ReceiptItem: Purchase Receipt (ReceiptType=2, +) and Purchase Return
-  // (ReceiptType=2, -). The other 16 "Receipt Screen Replication" types (Warehouse Transfer,
-  // Outside Process Send/Receive, Manufacture Send/Return, etc. — see receipt-types.config.ts)
-  // carry no explicit inbound/outbound flag anywhere in the schema; guessing a sign for each
-  // would risk a silently-wrong stock figure, which is worse than the narrower-but-correct
-  // "purchases minus returns" figure this computes instead. NOT a full perpetual-inventory
-  // balance — see the module's own final report for this documented scope limitation.
+  // Stock on Hand — signed by receipt-types.config.ts's DIRECTION_CLASS, the same map the Item
+  // Statement ledger replays (previously hardcoded to Purchase Receipt/Return 2/122 only, which
+  // left out e.g. Outside Process Receive/Sent and made Current Stock disagree with the ledger):
+  // 'IN' types add, 'OUT' types subtract, 'TRANSFER' nets zero company-wide and 'UNKNOWN' types
+  // (no confirmed direction) are never counted. Lines whose unit can't be normalized to the Base
+  // Unit (unitConversionIssueSql) are excluded, exactly as the ledger excludes them. Scope:
+  // company-wide (no warehouse; no CompanyId filter — no read in this module filters by it),
+  // non-deleted line AND header, approval-gated per stockApprovalGateSql.
   //
   // BUG FIX: also requires the owning IM_Receipt header to be non-deleted. removeItem's own
   // IsDeleted=0 filter only ever checked the LINE's own flag — but IM_Receipt.remove() (like
@@ -215,27 +237,24 @@ export class InventoryCardService {
   // formula in unit-conversion.util.ts (the same one purchase-order.service.ts's listPending and
   // inventory-receipt.service.ts's assertPendingQty use) rather than a second stock formula.
   private stockSumSql(itemRef: Prisma.Sql) {
-    const purchaseReceiptKey = screenKeyFor(2);
-    const purchaseReturnKey = screenKeyFor(122);
     const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
+    const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
+    const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
     return Prisma.sql`
       SELECT COALESCE(SUM(
         CASE
-          WHEN rec."ReceiptType" = 2 AND NOT EXISTS (
-            SELECT 1 FROM "ApprovalRequest" ar
-            WHERE ar."screenKey" = ${purchaseReceiptKey} AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
-          ) THEN ${baseQty}
-          WHEN rec."ReceiptType" = 122 AND NOT EXISTS (
-            SELECT 1 FROM "ApprovalRequest" ar
-            WHERE ar."screenKey" = ${purchaseReturnKey} AND ar."transactionId" = rec."RecId"::text AND ar."status" <> 'approved'
-          ) THEN -${baseQty}
+          WHEN rec."ReceiptType" IN (${inTypes}) THEN ${baseQty}
+          WHEN rec."ReceiptType" IN (${outTypes}) THEN -${baseQty}
           ELSE 0
         END
       ), 0) AS "qty"
       FROM "IM_ReceiptItem" ri
       JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
       ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
-      WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0 AND rec."ReceiptType" IN (2, 122)
+      WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
+        AND rec."ReceiptType" IN (${inTypes}, ${outTypes})
+        AND ${stockApprovalGateSql('rec')}
+        AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} IS NULL
     `;
   }
 

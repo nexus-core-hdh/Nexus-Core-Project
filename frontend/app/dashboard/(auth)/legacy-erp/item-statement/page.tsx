@@ -84,6 +84,15 @@ function FilterField({ label, children }: { label: string; children: React.React
   );
 }
 
+// Display-only rounding for Base-Unit figures (converted/accumulated values, e.g. 100 KG ÷ 45.36 =
+// 2.20458554 BAG). The unrounded value stays available on hover; the API already returns it at
+// the columns' own numeric(28,8) scale.
+function Qty({ value }: { value: number | null | undefined }) {
+  if (value == null) return <>—</>;
+  const n = Number(value);
+  return <span title={String(n)}>{n.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>;
+}
+
 function SummaryCard({ label, value, unit, colorClass }: { label: string; value: React.ReactNode; unit?: string; colorClass: string }) {
   return (
     <div className="rounded-lg border bg-muted/10 px-4 py-3">
@@ -191,6 +200,9 @@ export default function ItemStatementPage() {
   };
 
   const hasActiveFilters = Object.values(appliedFilters).some((v) => v !== undefined);
+  // Unit of the combined summary figures: the item's Base Unit, or — in the no-item ledger — the
+  // one Base Unit all items share (null when they don't, and then there are no combined totals).
+  const summaryUnit: string | undefined = data?.reportingUnit ?? data?.item?.unit ?? undefined;
 
   const breadcrumbTrail = useMemo(() => {
     const trail: { label: string; href?: string }[] = [{ label: "Legacy ERP" }];
@@ -225,7 +237,7 @@ export default function ItemStatementPage() {
       }
     };
     const rows = transactions.map((row: any) => keys.map((k) => cellText(row, k)));
-    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = [header, ...rows].map((r) => r.map((v: unknown) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -306,7 +318,7 @@ export default function ItemStatementPage() {
                 <div className="mt-1 text-xl font-bold text-primary">
                   {/* Always InventoryCardService.getStockOnHand() — the module's one stock engine,
                      company-wide, unaffected by any filter/dimension/view on this page. */}
-                  {loading ? <Skeleton className="h-5 w-16" /> : <>{data?.currentStockOnHand} {data?.item?.unit}</>}
+                  {loading ? <Skeleton className="h-5 w-16" /> : <><Qty value={data?.currentStockOnHand} /> {data?.item?.unit}</>}
                 </div>
               </div>
             </div>
@@ -424,21 +436,76 @@ export default function ItemStatementPage() {
               <div className="mb-3 text-sm font-semibold">
                 Stock Summary <span className="font-normal text-muted-foreground">(As per Selected Filters)</span>
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <SummaryCard label="Total Stock In" value={loading ? <Skeleton className="h-7 w-16" /> : (data?.totals?.totalIn ?? 0)} unit={data?.item?.unit} colorClass="text-emerald-600 dark:text-emerald-400" />
-                <SummaryCard label="Total Stock Out" value={loading ? <Skeleton className="h-7 w-16" /> : (data?.totals?.totalOut ?? 0)} unit={data?.item?.unit} colorClass="text-rose-600 dark:text-rose-400" />
-                <SummaryCard label="Closing Balance" value={loading ? <Skeleton className="h-7 w-16" /> : (data?.totals?.closingBalance ?? 0)} unit={data?.item?.unit} colorClass="text-primary" />
-              </div>
+              {/* A combined total exists only when every item in scope shares one Base Unit (the API
+                 returns totals: null otherwise) — never a sum of BAG + KG + MTR across items. */}
+              {loading || data?.totals ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <SummaryCard label="Total Stock In" value={loading ? <Skeleton className="h-7 w-16" /> : <Qty value={data?.totals?.totalIn ?? 0} />} unit={summaryUnit} colorClass="text-emerald-600 dark:text-emerald-400" />
+                  <SummaryCard label="Total Stock Out" value={loading ? <Skeleton className="h-7 w-16" /> : <Qty value={data?.totals?.totalOut ?? 0} />} unit={summaryUnit} colorClass="text-rose-600 dark:text-rose-400" />
+                  <SummaryCard label="Closing Balance" value={loading ? <Skeleton className="h-7 w-16" /> : <Qty value={data?.totals?.closingBalance ?? 0} />} unit={summaryUnit} colorClass="text-primary" />
+                </div>
+              ) : (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  The items in this ledger use different base units, so no combined Stock In / Out / Balance is shown. Totals per item are below.
+                </div>
+              )}
+              {!loading && itemId == null && (data?.totalsByItem?.length ?? 0) > 1 && (
+                <div className="mt-3 overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="h-8 text-[11px]">Item</TableHead>
+                        <TableHead className="h-8 text-[11px]">Base Unit</TableHead>
+                        <TableHead className="h-8 text-right text-[11px]">Opening</TableHead>
+                        <TableHead className="h-8 text-right text-[11px]">Stock In</TableHead>
+                        <TableHead className="h-8 text-right text-[11px]">Stock Out</TableHead>
+                        <TableHead className="h-8 text-right text-[11px]">Closing</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data.totalsByItem.map((t: any) => (
+                        <TableRow key={t.itemId} className="hover:bg-muted/30">
+                          <TableCell className="py-2 text-sm"><span className="font-mono text-xs">{t.itemCode}</span> {t.itemName}</TableCell>
+                          <TableCell className="py-2 text-sm">{t.unit || "—"}</TableCell>
+                          <TableCell className="py-2 text-right text-sm"><Qty value={t.openingBalance} /></TableCell>
+                          <TableCell className="py-2 text-right text-sm text-emerald-600 dark:text-emerald-400"><Qty value={t.totalIn} /></TableCell>
+                          <TableCell className="py-2 text-right text-sm text-rose-600 dark:text-rose-400"><Qty value={t.totalOut} /></TableCell>
+                          <TableCell className="py-2 text-right text-sm font-medium"><Qty value={t.closingBalance} /></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+              {!loading && data?.conversionIssues?.length > 0 && (
+                <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  <div className="font-semibold">
+                    {data.conversionIssues.length} line(s) could not be converted to {summaryUnit || "the Base Unit"} and are excluded from every balance and from Current Stock:
+                  </div>
+                  <ul className="mt-1 list-disc pl-5">
+                    {data.conversionIssues.map((c: any) => (
+                      <li key={c.lineId}>{c.receiptNo} · {c.itemCode} · {c.quantity} {c.unit || "(no unit)"} — {c.reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {!loading && data?.totals && (
                 <div className="mt-3 flex flex-wrap items-center gap-4 border-t pt-3 text-xs text-muted-foreground">
-                  <span>Opening Balance: <span className="font-medium text-foreground">{data.totals.openingBalance} {data?.item?.unit}</span></span>
-                  {itemId != null && !hasActiveFilters && (
+                  <span>Opening Balance: <span className="font-medium text-foreground"><Qty value={data.totals.openingBalance} /> {summaryUnit}</span></span>
+                  {/* stockComparable: the ledger covers the same scope as Current Stock (whole
+                     history, company-wide) — From Date alone doesn't change that. */}
+                  {itemId != null && data.stockComparable && (
                     <>
-                      <span>Difference from Overall Current Stock: <span className="font-medium text-foreground">{data.stockDifference} {data?.item?.unit}</span></span>
+                      {!data.stockReconciled && (
+                        <span>Difference from Overall Current Stock: <span className="font-medium text-foreground"><Qty value={data.stockDifference} /> {summaryUnit}</span></span>
+                      )}
                       <Badge variant={data.stockReconciled ? "default" : "destructive"} className="text-[11px] font-normal">
-                        {data.stockReconciled ? "Reconciled" : "Differs"}
+                        {data.stockReconciled ? "Matches Current Stock" : "Differs"}
                       </Badge>
                     </>
+                  )}
+                  {itemId != null && !data.stockComparable && data.stockComparisonScope && (
+                    <span className="italic">Not compared with Current Stock: {data.stockComparisonScope}</span>
                   )}
                 </div>
               )}
@@ -476,13 +543,13 @@ export default function ItemStatementPage() {
                               {dimColor && <TableCell className="py-2 text-sm">{row.colorCode || row.colorName || "—"}</TableCell>}
                               {dimLot && <TableCell className="py-2 text-sm">{row.lotBatch || "—"}</TableCell>}
                               {dimWarehouse && <TableCell className="py-2 text-sm">{row.warehouseCode || "—"}</TableCell>}
-                              <TableCell className="py-2 text-right text-sm font-medium">{row.closing}</TableCell>
+                              <TableCell className="py-2 text-right text-sm font-medium"><Qty value={row.closing} /></TableCell>
                             </TableRow>
                           ))}
                           <TableRow className="hover:bg-transparent font-semibold">
                             <TableCell colSpan={dimCount} className="py-2 text-sm">Total</TableCell>
                             <TableCell className="py-2 text-right text-sm text-primary">
-                              {detailedRows.reduce((s: number, r: any) => s + (Number(r.closing) || 0), 0)}
+                              <Qty value={Math.round(detailedRows.reduce((s: number, r: any) => s + (Number(r.closing) || 0), 0) * 1e8) / 1e8} />
                             </TableCell>
                           </TableRow>
                         </>
@@ -562,6 +629,14 @@ export default function ItemStatementPage() {
                       </TableCell>
                     </TableRow>
                   ) : pagedTransactions.map((row: any, i: number) => {
+                    const reportingUnit = row.reportingUnit ?? data?.item?.unit;
+                    // Original Unit/Quantity stay primary; a line in another unit also shows the
+                    // Base-Unit figure its Running Balance actually moved by (or why it didn't).
+                    const normalizedNote = row.conversionIssue ? (
+                      <div className="text-[10px] font-medium text-destructive" title={row.conversionIssue}>not converted · excluded</div>
+                    ) : reportingUnit && row.unit && row.unit !== reportingUnit && row.baseQuantity != null ? (
+                      <div className="text-[10px] text-muted-foreground">= <Qty value={row.baseQuantity} /> {reportingUnit}</div>
+                    ) : null;
                     const cells: Record<ColKey, React.ReactNode> = {
                       date: row.date ? format(new Date(row.date), "dd MMM yyyy") : "—",
                       documentReceiptNo: (
@@ -586,9 +661,9 @@ export default function ItemStatementPage() {
                       itemCode: <span className="rounded-md bg-muted/60 px-2 py-0.5 font-mono text-xs">{row.itemCode}</span>,
                       itemName: row.itemName || "—",
                       unit: row.unit || "—",
-                      quantityIn: row.quantityIn ? <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><ArrowDownToLine className="h-3 w-3" />{row.quantityIn}</span> : <span className="text-muted-foreground">—</span>,
-                      quantityOut: row.quantityOut ? <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400"><ArrowUpFromLine className="h-3 w-3" />{row.quantityOut}</span> : <span className="text-muted-foreground">—</span>,
-                      runningBalance: <span className="font-medium">{row.runningBalance}</span>,
+                      quantityIn: row.quantityIn ? <div><span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><ArrowDownToLine className="h-3 w-3" />{row.quantityIn}</span>{normalizedNote}</div> : <span className="text-muted-foreground">—</span>,
+                      quantityOut: row.quantityOut ? <div><span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400"><ArrowUpFromLine className="h-3 w-3" />{row.quantityOut}</span>{normalizedNote}</div> : <span className="text-muted-foreground">—</span>,
+                      runningBalance: <span className="font-medium"><Qty value={row.runningBalance} /></span>,
                       remarks: row.remarks || "—",
                     };
                     return (

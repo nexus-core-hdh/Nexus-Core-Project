@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { FabricPlanningService } from './fabric-planning.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
+import { ItemAllocationService } from './item-allocation.service';
 
 // ── Trim Planning — NOT a second calculation engine, and NOT a duplicate of Fabric/Yarn Planning.
 // This is the exact same cross-Work-Order planning/reporting pattern Fabric Planning established
@@ -45,6 +46,7 @@ export class TrimPlanningService {
   constructor(
     private readonly fabricPlanningSvc: FabricPlanningService,
     private readonly requirementsSvc: FabricYarnRequirementsService,
+    private readonly allocationSvc: ItemAllocationService,
   ) {}
 
   async listPlanningRows(filters: {
@@ -88,16 +90,18 @@ export class TrimPlanningService {
     if (!flat.length) return [];
 
     const inventoryIds = Array.from(new Set(flat.map((r) => r.inventoryId).filter((id): id is number => id != null)));
-    const [purchaseByKey, receiptsByKey, subcontractByKey] = await Promise.all([
+    const [purchaseByKey, receiptsByKey, subcontractByKey, allocatedByKey] = await Promise.all([
       this.fabricPlanningSvc.aggregatePurchase(workOrderIds, inventoryIds),
       this.fabricPlanningSvc.aggregateReceipts(workOrderIds, inventoryIds),
       this.fabricPlanningSvc.aggregateSubcontractReceipts(workOrderIds, inventoryIds),
+      this.allocationSvc.aggregateAllocations(workOrderIds, inventoryIds),
     ]);
 
     return flat.map((r) => {
       const key = r.inventoryId != null ? `${r.workOrderId}:${r.inventoryId}` : null;
       const receipts = key ? receiptsByKey.get(key) : undefined;
       const purchase = key ? purchaseByKey.get(key) ?? 0 : 0;
+      const allocated = key ? allocatedByKey.get(key) ?? 0 : 0;
       const required = Number(r.quantity) || 0;
       const received = receipts?.received ?? 0;
       // Same dynamic per-Subcontract-Type breakdown as Fabric Planning — see
@@ -141,8 +145,9 @@ export class TrimPlanningService {
         received,
         subcontractTransactions,
         manufacturingSend: receipts?.manufacturingSend ?? 0,
+        allocated,
         // Same Required-minus-Received formula as Fabric/Yarn Planning — no second balance
-        // concept. Unaffected by subcontractTransactions, same as Fabric Planning's own balance.
+        // concept. Unaffected by subcontractTransactions/allocated, same as Fabric Planning's own balance.
         balance: Math.round((required - received) * 10000) / 10000,
       };
     });

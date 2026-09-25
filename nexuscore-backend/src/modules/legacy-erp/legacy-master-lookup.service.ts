@@ -139,6 +139,13 @@ const TABLES: Record<string, TableLookupConfig> = {
   // matching `cash`/`cost-center` above rather than `city`/`state`/`country`, so adding them here
   // can't expand an unrelated admin screen's contents.
   employee: { table: 'HR_Employee', codeColumn: 'EmployeeCode', nameColumn: 'EmployeeName', searchColumns: ['EmployeeCode', 'EmployeeName'] },
+  // Quality Type / Resource — already-existing masters (MA_QualityType, MA_Resource; both
+  // confirmed via pg_catalog: real IM_SerialCard FK targets — QualityTypeId/ResourceId — 0 rows,
+  // first reader). Needed for the Generate Serial Cards dialog's Quality Type/Resource fields.
+  // No new table. MA_Resource has no separate Name column — same "use Explanation as the
+  // display name" convention `tax`/`cash` above already establish.
+  'quality-type': { table: 'MA_QualityType', codeColumn: 'QualityCode', nameColumn: 'QualityName', searchColumns: ['QualityCode', 'QualityName'] },
+  resource: { table: 'MA_Resource', codeColumn: 'ResourceCode', nameColumn: 'Explanation', searchColumns: ['ResourceCode', 'Explanation'] },
   certification: { table: 'MD_Certification', codeColumn: 'CertificationCode', nameColumn: 'CertificationName', searchColumns: ['CertificationCode', 'CertificationName'] },
   'initial-cost': { table: 'MA_InitialCost', codeColumn: 'Code', nameColumn: 'Name', searchColumns: ['Code', 'Name'] },
   project: { table: 'FI_Project', codeColumn: 'ProjectCode', nameColumn: 'ProjectName', searchColumns: ['ProjectCode', 'ProjectName'] },

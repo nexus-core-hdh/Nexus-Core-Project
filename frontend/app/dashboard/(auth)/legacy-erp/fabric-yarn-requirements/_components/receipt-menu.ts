@@ -292,6 +292,12 @@ function buildSubcontractorTransactionsAction(router: Router, types: Subcontract
 
 export function buildPlanningReceiptActions(
   rows: PlanningRowContext[], router: Router, source: PlanningMenuSource, subcontractTypes: SubcontractTypeOption[] | null,
+  // Opens the real Received Allocation dialog (item-allocation-dialog.tsx) for the single
+  // right-clicked row's own real (workOrderId, inventoryId, colorCardId) scope — a modal, not a
+  // navigation, so it takes a callback instead of a route like every other action here. Optional:
+  // omitted entirely leaves this one action rendered disabled, same as every other genuinely-absent
+  // feature in this menu (never a silent no-op).
+  onOpenAllocation?: (row: PlanningRowContext) => void,
 ): RowAction[] {
   const primary = rows[0];
   if (!primary) return [];
@@ -345,7 +351,13 @@ export function buildPlanningReceiptActions(
     // 7 legacy actions) — all disabled, never faked.
     unsupported("alloc-transfer", "Allocation Transfer Transactions", ArrowLeftRight, "No Allocation module exists in this application yet.", true),
     unsupported("alloc-po", "Purchase Order Allocation", ClipboardList, "No Allocation module exists in this application yet."),
-    unsupported("alloc-received", "Received Allocation", ClipboardList, "No Allocation module exists in this application yet."),
+    // Received Allocation — the ONE allocation category with a real, verified backend (see
+    // item-allocation.service.ts's own top comment: IM_ItemAllocation/IM_ItemAllocationHistory).
+    // Needs a real resolved Inventory Item on the row (same "hasItem" gate as Inventory Statement
+    // below) — a row with no resolved item has nothing to allocate.
+    hasItem && onOpenAllocation
+      ? { key: "alloc-received", label: "Received Allocation", icon: ClipboardList, onSelect: () => onOpenAllocation(primary) }
+      : unsupported("alloc-received", "Received Allocation", ClipboardList, hasItem ? "Received Allocation is unavailable here." : "This row has no resolved Inventory Item to allocate."),
     unsupported("alloc-inflow", "Inflow Allocations (Current Account Allocations)", ClipboardList, "No Allocation module exists in this application yet."),
     unsupported("alloc-wh", "Warehouse Transfer Allocation", ClipboardList, "No Allocation module exists in this application yet."),
     unsupported("alloc-batch", "Batch Allocations", ClipboardList, "No Allocation module exists in this application yet."),

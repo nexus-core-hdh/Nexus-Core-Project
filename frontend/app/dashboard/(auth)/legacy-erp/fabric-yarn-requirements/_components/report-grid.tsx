@@ -8,12 +8,15 @@
 
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGridColumns, type GridColumnDef } from "@/hooks/use-grid-columns";
+import { useColumnFilters, type ColumnFilterType } from "@/hooks/use-column-filters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { ColumnFilterPopover } from "@/components/legacy-erp/column-filter-popover";
 
 export interface ReportColumn<T> {
   key: string;
@@ -22,11 +25,21 @@ export interface ReportColumn<T> {
   minWidth?: number;
   align?: "left" | "right";
   render: (row: T) => React.ReactNode;
+  // Opt-in Excel-style column filter (funnel icon in the header) — shared implementation, see
+  // hooks/use-column-filters.ts's own top comment for the state/matching logic and
+  // components/legacy-erp/column-filter-popover.tsx for the UI. `filterValue` is required
+  // alongside `filterable: true` since `render` returns a ReactNode, not a value this grid could
+  // reliably derive filter options from on its own; it must return the REAL underlying value (a
+  // code, a raw ISO date, a raw number), never a formatted display string.
+  filterable?: boolean;
+  filterType?: ColumnFilterType;
+  filterValue?: (row: T) => string | number | null | undefined;
 }
 
 export function ReportGrid<T extends { id: string | number }>({
   storageKey, columns, rows, loading, emptyLabel,
   getRowActions, selectedId, onRowClick, onRowDoubleClick, selectedIds, onRowContextMenu, fixedColumns, maxHeight,
+  selectable, onToggleRow, onToggleAll, allSelected, someSelected, selectColumnWidth = 36,
 }: {
   storageKey: string;
   columns: ReportColumn<T>[];
@@ -88,6 +101,16 @@ export function ReportGrid<T extends { id: string | number }>({
   // caller (Fabric Planning, the Requirements grids, both screens' own Transaction Details grids)
   // passes nothing and is completely unaffected.
   maxHeight?: string;
+  // Opt-in leading checkbox column — same props/semantics as WorklistTable's own (worklist-
+  // table.tsx), so a caller migrating between the two grid families never has to relearn the API.
+  // Only meaningful once a screen has a real multi-record action to feed `selectedIds` into;
+  // omitted, no checkbox column renders at all (every existing caller is unaffected).
+  selectable?: boolean;
+  onToggleRow?: (row: T) => void;
+  onToggleAll?: () => void;
+  allSelected?: boolean;
+  someSelected?: boolean;
+  selectColumnWidth?: number;
 }) {
   const gridColumnDefs = useMemo<GridColumnDef<string>[]>(
     () => columns.map((c) => ({ key: c.key, label: c.label, defaultWidth: c.defaultWidth, minWidth: c.minWidth ?? 80 })),
@@ -96,11 +119,22 @@ export function ReportGrid<T extends { id: string | number }>({
   const gridColumns = useGridColumns<string>({ storageKey, columns: gridColumnDefs, fixedColumns });
   const displayColumnDefs = gridColumns.displayColumnDefs;
   const colByKey = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns]);
-  const totalTableWidth = gridColumns.totalWidth();
+  const totalTableWidth = gridColumns.totalWidth() + (selectable ? selectColumnWidth : 0);
+
+  // Column filters (funnel-icon dropdowns) — shared state/matching logic, see
+  // hooks/use-column-filters.ts's own top comment. Client-side only, derived from and applied to
+  // the CURRENTLY LOADED `rows` (never a re-fetch).
+  const { visibleRows, selectOptionsByColumn, filtersActive, getColumnFilter, setColumnFilter, clearAllFilters } =
+    useColumnFilters(rows, columns);
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
+        {filtersActive && (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[13px] text-muted-foreground" onClick={clearAllFilters}>
+            Clear filters
+          </Button>
+        )}
         <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
           <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
         </Button>
@@ -124,10 +158,22 @@ export function ReportGrid<T extends { id: string | number }>({
             changes nothing visually when there's nothing here to scroll vertically. */}
         <table className="w-full caption-bottom text-sm table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
           <colgroup>
+            {selectable && <col style={{ width: selectColumnWidth }} />}
             {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.colWidths[col.key] }} />)}
           </colgroup>
           <TableHeader>
             <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
+              {selectable && (
+                <TableHead className="p-0 text-center" style={{ width: selectColumnWidth }}>
+                  <div className="flex h-8 w-full items-center justify-center">
+                    <Checkbox
+                      checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                      onCheckedChange={() => onToggleAll?.()}
+                      aria-label="Select all rows"
+                    />
+                  </div>
+                </TableHead>
+              )}
               {displayColumnDefs.map((col) => {
                 const def = colByKey.get(col.key)!;
                 return (
@@ -143,11 +189,20 @@ export function ReportGrid<T extends { id: string | number }>({
                       onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
                       onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
                       className={cn(
-                        "flex h-8 w-full min-w-0 items-center truncate px-2 cursor-grab active:cursor-grabbing",
+                        "flex h-8 w-full min-w-0 items-center gap-1 truncate px-2 cursor-grab active:cursor-grabbing",
                         def.align === "right" ? "justify-end" : "justify-start",
                       )}
                     >
-                      {col.label}
+                      <span className="truncate">{col.label}</span>
+                      {def.filterable && def.filterValue && (
+                        <ColumnFilterPopover
+                          label={def.label}
+                          type={def.filterType}
+                          options={selectOptionsByColumn[def.key] ?? []}
+                          value={getColumnFilter(def.key)}
+                          onChange={(next) => setColumnFilter(def.key, next)}
+                        />
+                      )}
                     </span>
                     <div
                       className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
@@ -163,10 +218,12 @@ export function ReportGrid<T extends { id: string | number }>({
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow><TableCell colSpan={displayColumnDefs.length} className="text-center text-sm text-muted-foreground py-8">Loading...</TableCell></TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow><TableCell colSpan={displayColumnDefs.length} className="text-center text-sm text-muted-foreground py-8">{emptyLabel}</TableCell></TableRow>
-            ) : rows.map((row) => {
+              <TableRow><TableCell colSpan={displayColumnDefs.length + (selectable ? 1 : 0)} className="text-center text-sm text-muted-foreground py-8">Loading...</TableCell></TableRow>
+            ) : visibleRows.length === 0 ? (
+              <TableRow><TableCell colSpan={displayColumnDefs.length + (selectable ? 1 : 0)} className="text-center text-sm text-muted-foreground py-8">
+                {rows.length === 0 ? emptyLabel : "No rows match the current column filters."}
+              </TableCell></TableRow>
+            ) : visibleRows.map((row) => {
               const isSelected = (selectedId != null && String(selectedId) === String(row.id)) || !!selectedIds?.has(row.id);
               const tr = (
                 <TableRow
@@ -195,6 +252,11 @@ export function ReportGrid<T extends { id: string | number }>({
                       : (onRowClick || onRowDoubleClick || getRowActions) && "hover:bg-muted/40",
                   )}
                 >
+                  {selectable && (
+                    <TableCell className="px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox checked={!!selectedIds?.has(row.id)} onCheckedChange={() => onToggleRow?.(row)} aria-label="Select row" />
+                    </TableCell>
+                  )}
                   {displayColumnDefs.map((col) => {
                     const def = colByKey.get(col.key)!;
                     return (

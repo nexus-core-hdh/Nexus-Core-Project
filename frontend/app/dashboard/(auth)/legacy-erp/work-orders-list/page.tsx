@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight } from "lucide-react";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 
 // List screen for the new Work Order transaction screen — same List+Detail convention every
 // other Legacy ERP module already uses (fabric-cards-list.tsx, purchase-orders-list.tsx, ...),
@@ -53,17 +54,22 @@ export default function WorkOrderListPage() {
   const doSearch = () => load(search.trim() || undefined);
   const refresh = () => { setSearch(""); load(); };
 
+  // filterable — shared header-filter implementation (hooks/use-column-filters.ts), picked
+  // per-column by actual data shape: identifying/enum columns get the default checkbox "select"
+  // filter, the real date/numeric columns get a range filter instead.
   const columns: WorklistTableColumn<any>[] = [
     {
       key: "workOrderNo", label: "Order No", sortable: true,
       render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.workOrderNo}</span>,
+      filterable: true, filterValue: (row) => row.workOrderNo,
     },
     {
       key: "workOrderDate", label: "Date", sortable: true,
       render: (row: any) => (row.workOrderDate ? new Date(row.workOrderDate).toLocaleDateString() : "—"),
+      filterable: true, filterType: "date", filterValue: (row) => row.workOrderDate,
     },
-    { key: "uD_Brands", label: "Brand", render: (row: any) => row.uD_Brands || <span className="text-muted-foreground">—</span> },
-    { key: "quantity", label: "Quantity", render: (row: any) => (row.quantity != null ? Number(row.quantity).toLocaleString() : "—") },
+    { key: "uD_Brands", label: "Brand", render: (row: any) => row.uD_Brands || <span className="text-muted-foreground">—</span>, filterable: true, filterValue: (row) => row.uD_Brands },
+    { key: "quantity", label: "Quantity", render: (row: any) => (row.quantity != null ? Number(row.quantity).toLocaleString() : "—"), filterable: true, filterType: "number", filterValue: (row) => row.quantity },
     {
       key: "isClosed", label: "Status",
       render: (row: any) => (
@@ -71,6 +77,7 @@ export default function WorkOrderListPage() {
           {row.isClosed ? "Closed" : "Open"}
         </Badge>
       ),
+      filterable: true, filterValue: (row) => (row.isClosed ? "Closed" : "Open"),
     },
   ];
 
@@ -110,6 +117,13 @@ export default function WorkOrderListPage() {
     });
     return copy;
   }, [rows, sortKey, sortDir]);
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — plain/ctrl/shift-click +
+  // right-click preserve/collapse highlighting. Existing per-row `getRowActions`/`wrapRow`/
+  // `renderRowActions` below are untouched: they keep operating on the single right-clicked/
+  // double-clicked row exactly as before, since this screen has no bulk action yet to feed a
+  // multi-row selection into.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
@@ -180,6 +194,9 @@ export default function WorkOrderListPage() {
           sortDir={sortDir}
           onSort={toggleSort}
           onRowDoubleClick={(row) => view(row.id)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}

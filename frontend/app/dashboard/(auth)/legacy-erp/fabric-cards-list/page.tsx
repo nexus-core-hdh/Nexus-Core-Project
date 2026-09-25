@@ -26,6 +26,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 type SortKey = "inventoryCode" | "inventoryName" | "specialCode";
@@ -112,6 +113,10 @@ export default function FabricCardListPage() {
     return copy;
   }, [rows, sortKey, sortDir]);
 
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
+
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
       return activeColumns.map((c) => ({
@@ -120,13 +125,17 @@ export default function FabricCardListPage() {
         render: (row: any) => formatCell(row[c]),
       }));
     }
+    // filterable — shared header-filter implementation (hooks/use-column-filters.ts); the
+    // customize-worklist branch above stays non-filterable (arbitrary/unknown-typed user-picked
+    // fields), same reasoning as purchase-orders-list's own comment.
     return [
       {
         key: "inventoryCode", label: "Code", sortable: true,
         render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>,
+        filterable: true, filterValue: (row) => row.inventoryCode,
       },
-      { key: "inventoryName", label: "Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span> },
-      { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span> },
+      { key: "inventoryName", label: "Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span>, filterable: true, filterValue: (row) => row.inventoryName },
+      { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span>, filterable: true, filterValue: (row) => row.specialCode },
       {
         key: "status", label: "Status",
         render: (row: any) => (
@@ -137,6 +146,7 @@ export default function FabricCardListPage() {
             {row.inUse ? "Active" : "Inactive"}
           </Badge>
         ),
+        filterable: true, filterValue: (row) => (row.inUse ? "Active" : "Inactive"),
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,6 +217,9 @@ export default function FabricCardListPage() {
           sortKey={sortKey}
           sortDir={sortDir}
           onSort={(key) => toggleSort(key as SortKey)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}

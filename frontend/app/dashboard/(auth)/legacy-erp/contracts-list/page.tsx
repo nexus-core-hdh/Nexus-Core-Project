@@ -26,6 +26,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 
 type SortKey = "receiptNo" | "documentNo" | "receiptDate";
 
@@ -114,6 +115,10 @@ export default function ContractListPage() {
     });
     return copy;
   }, [rows, sortKey, sortDir]);
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
 
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
@@ -215,6 +220,9 @@ export default function ContractListPage() {
           sortDir={sortDir}
           onSort={(key) => toggleSort(key as SortKey)}
           onRowDoubleClick={(row) => view(row.id)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
             <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           )}

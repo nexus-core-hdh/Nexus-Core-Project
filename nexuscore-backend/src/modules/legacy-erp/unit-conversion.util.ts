@@ -129,6 +129,31 @@ export function baseQuantityJoinSql(invIdExpr: Prisma.Sql, unitIdExpr: Prisma.Sq
   `;
 }
 
+// Reusable SQL fragment: NULL when the line's quantity can be safely normalized into its item's
+// Base Unit, otherwise the reason it can't — so stock aggregations EXCLUDE the line instead of
+// letting baseQuantitySql's COALESCE(..., 1) fallback add e.g. raw KG into a BAG total. Requires
+// baseQuantityJoinSql(…, alias) in the same query (reads `${alias}_unit`). Rules:
+//   - item never enrolled in per-item units (0 IM_ItemUnitItemSize rows): raw quantity is its only
+//     unit (same legacy rule as above) — unless the item's active lines use more than one UnitId,
+//     in which case nothing can reconcile them → 'MIXED_UNCONFIGURED_UNITS';
+//   - item has units but none flagged IsMainUnit=1 → 'NO_BASE_UNIT' (same rule as assertHasBaseUnit);
+//   - line's unit has no row / an unusable UnitFactor or UnitDivisor → 'MISSING_CONVERSION'.
+// Shared by inventory-card.service.ts (Stock on Hand) and item-statement.service.ts so both
+// exclude exactly the same lines.
+export function unitConversionIssueSql(invIdExpr: Prisma.Sql, unitIdExpr: Prisma.Sql, alias: string): Prisma.Sql {
+  const matched = Prisma.raw(`${alias}_unit`);
+  return Prisma.sql`(CASE
+    WHEN NOT EXISTS (SELECT 1 FROM "IM_ItemUnitItemSize" c WHERE c."InventoryId" = ${invIdExpr} AND c."IsDeleted" = 0) THEN
+      CASE WHEN EXISTS (
+        SELECT 1 FROM "IM_ReceiptItem" o
+        JOIN "IM_Receipt" orec ON orec."RecId" = o."InventoryReceiptId" AND orec."IsDeleted" = 0
+        WHERE o."InventoryId" = ${invIdExpr} AND o."IsDeleted" = 0 AND o."UnitId" IS DISTINCT FROM ${unitIdExpr}
+      ) THEN 'MIXED_UNCONFIGURED_UNITS' END
+    WHEN NOT EXISTS (SELECT 1 FROM "IM_ItemUnitItemSize" c WHERE c."InventoryId" = ${invIdExpr} AND c."IsDeleted" = 0 AND c."IsMainUnit" = 1) THEN 'NO_BASE_UNIT'
+    WHEN COALESCE(${matched}."UnitFactor", 0) = 0 OR COALESCE(${matched}."UnitDivisor", 0) = 0 THEN 'MISSING_CONVERSION'
+  END)`;
+}
+
 // Pure, synchronous mirrors of the two formulas above, for a caller that has ALREADY resolved the
 // specific IM_ItemUnitItemSize row it needs (its own UnitFactor/UnitDivisor) — e.g.
 // fabric-yarn-requirements.service.ts's own batched unit resolution, which joins the relevant rows

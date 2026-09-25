@@ -4,24 +4,35 @@
 // screen (Fabric/Yarn/Trim Planning) — extracted from Fabric Planning's own original inline
 // implementation (the first screen this shipped on) rather than copy-pasted a second and third
 // time. Fabric Planning itself was refactored to call this hook too, so all Planning screens now
-// share exactly one implementation — its own behavior is unchanged (same state shape, same plain/
-// ctrl/shift-click rules, same right-click collapse-vs-preserve rule), only where the code lives
-// moved. Generic over the row type — this file has no knowledge of Fabric/Yarn/Trim.
+// share exactly one implementation. Generic over the row type — this file has no knowledge of
+// Fabric/Yarn/Trim.
+//
+// The generic plain/ctrl/shift-click + right-click preserve/collapse SELECTION mechanics now live
+// in the project-wide `useRowSelection` hook (hooks/use-row-selection.ts) — this file composes
+// that hook rather than hand-rolling the same logic a second time, so every grid in the app (this
+// one included) shares exactly one selection implementation. What stays here is what's genuinely
+// Planning-specific: loading Transaction Details on a plain click, and building the right-click
+// receipt menu from the resulting selected set.
 //
 // One hook call per Planning screen instance (each screen calls this once, passing its OWN
 // current `rows` + a `source` identity for Inventory Statement's own "back" link) — never shared/
 // global state, so Fabric/Yarn/Trim Planning's selections are always fully independent of each
 // other (each is a separate mounted component instance with its own hook call, same as any other
 // useState would be).
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useRowSelection } from "@/hooks/use-row-selection";
 import { buildPlanningReceiptActions, useSubcontractTypes, type PlanningMenuSource, type PlanningRowContext } from "./receipt-menu";
 
 export function usePlanningRowSelection<T extends PlanningRowContext & { id: string | number }>(
   rows: T[],
   source: PlanningMenuSource,
+  // Opens the Received Allocation dialog for a single row's real scope — see
+  // buildPlanningReceiptActions' own comment on why this is a callback, not a route. Optional so
+  // existing call sites (if any is ever added without allocation support) keep compiling unchanged.
+  onOpenAllocation?: (row: T) => void,
 ) {
   const router = useRouter();
   // Real Subcontract Types (MD_SubcontractType, Active-only) for the "Subcontractor Transactions"
@@ -34,14 +45,6 @@ export function usePlanningRowSelection<T extends PlanningRowContext & { id: str
   const [transactionRows, setTransactionRows] = useState<any[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
-
-  // Multi-row selection for the right-click receipt menu — independent of `selectedRow` above
-  // (which stays exactly what it always was: the single row driving Transaction Details). Plain
-  // click still does only what it always did (select + load Transaction Details); ctrl/shift-click
-  // build this Set without touching Transaction Details at all. `lastPlainClickId` is the anchor a
-  // Shift-click range-selects from — the last row a PLAIN (no-modifier) click landed on.
-  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
-  const lastPlainClickId = useRef<string | number | null>(null);
 
   const loadTransactionsFor = async (row: T) => {
     setSelectedRow(row);
@@ -61,43 +64,20 @@ export function usePlanningRowSelection<T extends PlanningRowContext & { id: str
     }
   };
 
-  // Plain click (no modifier): exactly the original, unchanged behavior — select this one row,
-  // load its Transaction Details. Ctrl/Cmd-click: toggle this row in/out of the multi-selection,
-  // Transaction Details untouched. Shift-click: range-select between the last plain-clicked row
-  // and this one (in the grid's current row order), Transaction Details untouched.
-  const selectRow = (row: T, e?: React.MouseEvent) => {
-    if (e?.shiftKey && lastPlainClickId.current != null) {
-      const ids = rows.map((r) => r.id);
-      const a = ids.indexOf(lastPlainClickId.current);
-      const b = ids.indexOf(row.id);
-      if (a !== -1 && b !== -1) {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        setSelectedIds(new Set(ids.slice(lo, hi + 1)));
-      }
-      return;
-    }
-    if (e?.ctrlKey || e?.metaKey) {
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(row.id)) next.delete(row.id); else next.add(row.id);
-        return next;
-      });
-      lastPlainClickId.current = row.id;
-      return;
-    }
-    lastPlainClickId.current = row.id;
-    setSelectedIds(new Set([row.id]));
-    void loadTransactionsFor(row);
-  };
+  // Selection mechanics (plain/ctrl/shift-click, right-click preserve/collapse, `selectedIds`) come
+  // from the shared hook — `onPlainSelect` is the one Planning-specific hook point: a plain click
+  // still does exactly what it always did (select this one row, load its Transaction Details).
+  // Ctrl/shift-click never touch Transaction Details, same as before.
+  const {
+    selectedIds, selectRow, toggleRow, handleRowContextMenu, getSelectedRows,
+    selectAll, allSelected, someSelected,
+    clearSelection: clearBaseSelection,
+  } = useRowSelection(rows, { onPlainSelect: (row) => void loadTransactionsFor(row) });
 
-  // Right-click an unselected row -> collapse selection to just that row (the "make it the active
-  // context row" rule). Right-click a row that's already part of the current multi-selection ->
-  // leave `selectedIds` untouched entirely, preserving the multi-selection — this handler simply
-  // never runs the "collapse" branch in that case. Functional update so this never reads a stale
-  // `selectedIds` closure between the fast series of native events a right-click dispatches.
-  const handleRowContextMenu = (row: T) => {
-    setSelectedIds((prev) => (prev.has(row.id) ? prev : new Set([row.id])));
-  };
+  // Header checkbox for the optional checkbox column — toggles between "select every currently
+  // loaded row" and "clear", without touching Transaction Details (unlike `clearSelection` below,
+  // which is the filter-bar "Clear" button's own full-screen reset).
+  const toggleAllRows = () => (allSelected ? clearBaseSelection() : selectAll());
 
   // Real IDs only (inventoryId/workOrderId/colorCardId from the row itself — see receipt-menu.ts's
   // own top comment on why no item is ever identified by display name alone). Falls back to just
@@ -105,16 +85,18 @@ export function usePlanningRowSelection<T extends PlanningRowContext & { id: str
   // above already guarantees it contains at least this row by the time this runs, since both fire
   // off the same native contextmenu event and React batches the state update ahead of paint).
   const getRowActions = (row: T) => {
-    const active = selectedIds.size ? rows.filter((r) => selectedIds.has(r.id)) : [row];
-    return buildPlanningReceiptActions(active, router, source, subcontractTypes);
+    const active = selectedIds.size ? getSelectedRows() : [row];
+    return buildPlanningReceiptActions(
+      active, router, source, subcontractTypes,
+      onOpenAllocation ? (r) => onOpenAllocation(r as T) : undefined,
+    );
   };
 
   const clearSelection = () => {
     setSelectedRow(null);
     setTransactionRows([]);
     setShowTransactions(false);
-    setSelectedIds(new Set());
-    lastPlainClickId.current = null;
+    clearBaseSelection();
   };
 
   const closeTransactions = () => {
@@ -126,5 +108,9 @@ export function usePlanningRowSelection<T extends PlanningRowContext & { id: str
   return {
     selectedRow, transactionRows, loadingTransactions, showTransactions, selectedIds,
     selectRow, handleRowContextMenu, getRowActions, clearSelection, closeTransactions,
+    // Checkbox-column plumbing (ReportGrid's own `selectable`/`onToggleRow`/`onToggleAll`/
+    // `allSelected`/`someSelected` props) — additive; a Planning page can opt into the checkbox
+    // column with zero extra selection logic of its own.
+    toggleRow, toggleAllRows, allSelected, someSelected,
   };
 }

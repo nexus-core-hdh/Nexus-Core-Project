@@ -298,6 +298,27 @@ export class CuttingCardService {
     return bySize;
   }
 
+  // Same aggregation as getColorCutTotals above, but for EVERY color of the Work Order in one query
+  // — used by Order Manufacturing Entry's read model (order-manufacturing.service.ts) so its
+  // "Cutting" column is the exact same Cut Qty definition the Cutting Card screens already show,
+  // never a second calculation. Keyed by lowercased/trimmed color, then size.
+  async getCutTotalsByColor(workOrderId: number): Promise<Map<string, Record<string, number>>> {
+    const cards = await this.prisma.cuttingCard.findMany({
+      where: { workOrderId },
+      include: { entries: { include: { sizes: true } } },
+    });
+    const out = new Map<string, Record<string, number>>();
+    for (const card of cards) {
+      const key = card.productionColor.trim().toLowerCase();
+      const bySize = out.get(key) ?? {};
+      for (const entry of card.entries) {
+        for (const s of entry.sizes) bySize[s.sizeCode] = (bySize[s.sizeCode] || 0) + Number(s.quantity);
+      }
+      out.set(key, bySize);
+    }
+    return out;
+  }
+
   // Get-or-create, idempotent on the (workOrderId, productionColor, materialKey) unique key —
   // opening the Cutting Entry screen for the same Work Order + Color + Fabric never creates a
   // second row, and a DIFFERENT Fabric under the same Work Order + Color always gets its own.

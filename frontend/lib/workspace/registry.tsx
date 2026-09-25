@@ -50,6 +50,8 @@ const MULTI_KEY_ROUTES: Record<string, string> = {
   // in this map — it behaves like the plain Work Orders List screen, one shared tab reused across
   // whichever Work Order is currently being searched.
   "/dashboard/legacy-erp/cutting-card/entry": "color",
+  // One open tab per (Order, Process, mode, Color) — `k` is built by Order Manufacturing Entry's buttons.
+  "/dashboard/legacy-erp/order-manufacturing-entry/entry": "k",
 };
 
 /** Computes a tab's key for a given module path + the href being opened. Returns `pathname`

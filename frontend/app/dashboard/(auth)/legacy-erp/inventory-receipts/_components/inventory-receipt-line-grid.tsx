@@ -1,7 +1,9 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
@@ -19,9 +21,11 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
-import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
+import { Search, Plus, Trash2, ListOrdered, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
+import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-serial-cards-dialog";
 
 // Inventory Receipt detail grid — same click-to-edit spreadsheet interaction model as
 // purchase-order-line-grid.tsx (flush editors, one active cell at a time, no inline "always
@@ -561,7 +565,20 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts, initialLines },
   ref,
 ) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
+  // Generate Serial Cards — opened from this grid's own right-click menu (see getLineRowActions
+  // below); a modal, not a navigation, so it's local dialog state rather than a route. The dialog
+  // now stays open after Produce and shows the generated rows inline (full ERP entry-screen
+  // pattern) — navigating to the dedicated, permanent Serial Cards SCREEN (real workspace tab at
+  // /dashboard/legacy-erp/serial-cards, scoped via `?receiptItemId=&receiptId=`) is the dialog's
+  // own "List" button now, not an automatic hand-off on Produce. "View Serial Cards" (a separate
+  // context action, below) still jumps straight to that screen without opening the dialog at all.
+  const [serialCardsItemId, setSerialCardsItemId] = useState<number | null>(null);
+  const openSerialCardsScreen = (itemId: number) => {
+    if (!inventoryReceiptId) return;
+    navigateOrOpenTab(router, `/dashboard/legacy-erp/serial-cards?receiptItemId=${itemId}&receiptId=${inventoryReceiptId}`);
+  };
   // `initialLines` (real Planning row context, see its own Props comment) seeds one real row per
   // entry instead of the usual single blank one; ignored once `inventoryReceiptId` is set (an
   // existing receipt's own load effect below replaces `rows` with its real persisted lines
@@ -719,6 +736,41 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   // Resolves a picked suggestion's id back to the full record (stockOnHand/lastPurchasePrice
   // etc.) — same purpose as purchase-order-line-grid.tsx's own inventoryById.
   const inventoryById = useMemo(() => new Map(inventoryOptions.map((o) => [String(o.id), o])), [inventoryOptions]);
+
+  // Right-click menu — "Generate Serial Card" (Fabric receipt lines only; see
+  // generate-serial-cards-dialog.tsx's own top comment) and "View Serial Cards" (opens the same
+  // dedicated list, without producing new ones — for a line that may already have cards from a
+  // previous Produce). `sourceType` comes from the SAME already-fetched inventoryCards.list()
+  // aggregation Code/Name resolution already uses above (inventory-card.service.ts sets
+  // `sourceType = 'fabric'` for exactly the Fabric slice) — no second lookup. Both require a
+  // persisted line (__rowId) since a serial card must link to a real IM_ReceiptItem row, not a
+  // draft.
+  const getLineRowActions = (row: LineRow): RowAction[] => {
+    const item = row.inventoryId != null ? inventoryById.get(String(row.inventoryId)) : null;
+    const isFabric = item?.sourceType === "fabric";
+    const enabled = isFabric && row.__rowId != null && inventoryReceiptId != null;
+    const disabledTitle = !row.inventoryId
+      ? "This row has no resolved Inventory Item."
+      : row.__rowId == null
+        ? "Save this line before generating serial cards."
+        : !isFabric
+          ? "Only available for Fabric items."
+          : undefined;
+    return [
+      {
+        key: "generate-serial-cards", label: "Generate Serial Card", icon: Layers,
+        onSelect: () => { if (row.__rowId != null) setSerialCardsItemId(row.__rowId); },
+        disabled: !enabled,
+        title: disabledTitle,
+      },
+      {
+        key: "view-serial-cards", label: "View Serial Cards", icon: Layers,
+        onSelect: () => { if (row.__rowId != null) openSerialCardsScreen(row.__rowId); },
+        disabled: !enabled,
+        title: disabledTitle,
+      },
+    ];
+  };
 
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
@@ -1374,7 +1426,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
             {visibleRows.map((r, idx) => {
               const rowBg = idx % 2 === 1 ? "bg-muted/20" : "bg-card";
 
-              return (
+              const rowEl = (
                 <TableRow key={r.clientId} className={cn(ROW_H, "group transition-colors [&>td]:p-0", "hover:bg-muted/30", rowBg)}>
                   {displayColumnDefs.map((col, i) => {
                     const firstBorder = i === 0 ? FIRST_COL_BORDER : undefined;
@@ -1803,6 +1855,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                   )}
                 </TableRow>
               );
+              return <RowContextMenu key={r.clientId} actions={getLineRowActions(r)}>{rowEl}</RowContextMenu>;
             })}
           </TableBody>
         </Table>
@@ -1854,6 +1907,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         fixedColumns={FIXED_COLS}
         columns={gridColumnDefs}
         description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
+      />
+
+      <GenerateSerialCardsDialog
+        open={serialCardsItemId != null}
+        onOpenChange={(open) => !open && setSerialCardsItemId(null)}
+        receiptId={inventoryReceiptId}
+        itemId={serialCardsItemId}
       />
     </div>
   );

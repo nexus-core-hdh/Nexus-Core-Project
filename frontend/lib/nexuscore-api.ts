@@ -348,6 +348,31 @@ function buildItemStatementQuery(filters?: ItemStatementFilters): string {
   return qs.toString();
 }
 
+// Every editable IM_SerialCard field — shared between Produce (as batch DEFAULTS stamped onto
+// every newly-created card, matching the reference legacy screen's own header-becomes-every-row
+// behavior) and Update (per-record edits), and between the receipt-scoped PATCH (nested route)
+// and the flat, receipt-agnostic PATCH the Serial Cards screen uses. One shape, every call site.
+export interface SerialCardFieldValues {
+  explanation?: string | null; partyNo?: string | null; qualityTypeId?: number | null;
+  resourceId?: number | null; employeeId?: number | null;
+  /** "Man. C/A Code" in the reference screen — IM_SerialCard.CurrentAccountId. */
+  currentAccountId?: number | null;
+  producerSerialCode?: string | null;
+  manufacturingDate?: string | null; expirationDate?: string | null; shelfLife?: number | null;
+  quantity?: number | null;
+  /** "Miktar II" / "3.Miktar" in the reference screen. */
+  quantityMT?: number | null; quantity3?: number | null;
+  width?: number | null; weight?: number | null; rawWidth?: number | null;
+  rawWeight?: number | null; rawLength?: number | null; productLength?: number | null;
+  /** "M2" / "Mtul" in the reference screen. */
+  weightM2?: number | null; weightMt?: number | null;
+  pus?: number | null; fine?: number | null; pieceCount?: number | null;
+}
+
+export interface SerialCardUpdateItem extends SerialCardFieldValues {
+  id: number;
+}
+
 // Legacy ERP (migrated SQL Server schema, raw-SQL backed)
 export const legacyErpApi = {
   warehouses: {
@@ -478,6 +503,57 @@ export const legacyErpApi = {
       const qs = params.toString();
       return api.get(`/legacy-erp/trim-planning${qs ? `?${qs}` : ""}`);
     },
+  },
+  // Received Allocation — reservation-only linkage between an already-received Inventory Receipt
+  // line (Purchase Receipt / Outside Process Receive) and a Work Order line, backed by the real,
+  // pre-existing IM_ItemAllocation/IM_ItemAllocationHistory tables (see item-allocation.service.ts's
+  // own top comment). Never mutates stock/receipt quantities — only the allocation record.
+  itemAllocations: {
+    // View Allocations — every live allocation of one receipt line, across all Work Orders.
+    receiptItemAllocations: (receiptItemId: number) => api.get(`/legacy-erp/item-allocations/receipt-items/${receiptItemId}`),
+    availableReceipts: (workOrderId: number, inventoryId: number, colorCardId?: string | null) => {
+      const params = new URLSearchParams({ workOrderId: String(workOrderId), inventoryId: String(inventoryId) });
+      if (colorCardId) params.set("colorCardId", colorCardId);
+      return api.get(`/legacy-erp/item-allocations/available-receipts?${params.toString()}`);
+    },
+    list: (workOrderId: number, inventoryId: number, colorCardId?: string | null) => {
+      const params = new URLSearchParams({ workOrderId: String(workOrderId), inventoryId: String(inventoryId) });
+      if (colorCardId) params.set("colorCardId", colorCardId);
+      return api.get(`/legacy-erp/item-allocations?${params.toString()}`);
+    },
+    save: (dto: {
+      id?: number; inventoryReceiptItemId: number; workOrderId: number; inventoryId: number;
+      colorCardId?: string | null; inventoryVariantId?: number | null; quantity: number; grossQuantity?: number | null;
+    }) => api.post(`/legacy-erp/item-allocations`, dto),
+    remove: (id: number) => api.delete(`/legacy-erp/item-allocations/${id}`),
+  },
+  // Generate Serial Cards — backed by the real, pre-existing IM_SerialCard/IM_SerialTransaction
+  // tables (see serial-card.service.ts's own top comment). Fabric receipt lines only.
+  serialCards: {
+    context: (receiptId: number, itemId: number) =>
+      api.get(`/legacy-erp/inventory-receipts/${receiptId}/items/${itemId}/serial-cards/context`),
+    list: (receiptId: number, itemId: number) =>
+      api.get(`/legacy-erp/inventory-receipts/${receiptId}/items/${itemId}/serial-cards`),
+    produce: (receiptId: number, itemId: number, dto: SerialCardFieldValues & { count: number; serialNo?: string | null }) =>
+      api.post(`/legacy-erp/inventory-receipts/${receiptId}/items/${itemId}/serial-cards`, dto),
+    update: (receiptId: number, itemId: number, items: SerialCardUpdateItem[]) =>
+      api.patch(`/legacy-erp/inventory-receipts/${receiptId}/items/${itemId}/serial-cards`, items),
+    // Flat, receipt-agnostic routes for the dedicated Serial Cards list view — a row there can
+    // belong to any receipt item, so these don't need a :receiptId/:itemId in the path. Same
+    // underlying SerialCardService.update()/remove() the nested routes above already use.
+    listAll: (params?: {
+      receiptItemId?: number; inventoryId?: number; workOrderId?: number; search?: string;
+      serialNo?: string; inventoryQuery?: string; receiptNo?: string; workOrderNo?: string;
+      variantQuery?: string; dateFrom?: string; dateTo?: string; status?: "has" | "none";
+      skip?: number; take?: number;
+    }) => {
+      const qs = new URLSearchParams();
+      if (params) for (const [k, v] of Object.entries(params)) if (v != null && v !== "") qs.set(k, String(v));
+      const s = qs.toString();
+      return api.get(`/legacy-erp/serial-cards${s ? `?${s}` : ""}`);
+    },
+    updateFlat: (items: SerialCardUpdateItem[]) => api.patch(`/legacy-erp/serial-cards`, items),
+    remove: (id: number) => api.delete(`/legacy-erp/serial-cards/${id}`),
   },
   workOrders: {
     // Plain string keeps the existing search-box call site unchanged; the object form adds the
@@ -922,6 +998,19 @@ export const legacyErpApi = {
   },
   lookupParameters: (group: "style-group" | "brand" | "style-department", search?: string) =>
     api.get(`/legacy-erp/lookup/parameters/${group}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  // Order Manufacturing Entry (order-manufacturing.service.ts) — main read model, the shared
+  // Manufacturing IN/OUT/Sent (Repair)/Received (Repair) child-screen entries, and Price Contract.
+  orderManufacturing: {
+    context: (workOrderId: number, processId?: number | null) =>
+      api.get(`/legacy-erp/order-manufacturing/context?workOrderId=${workOrderId}${processId ? `&processId=${processId}` : ""}`),
+    getEntries: (workOrderId: number, processId: number, color: string, mode: string) =>
+      api.get(`/legacy-erp/order-manufacturing/entries?workOrderId=${workOrderId}&processId=${processId}&color=${encodeURIComponent(color)}&mode=${encodeURIComponent(mode)}`),
+    saveEntries: (body: { workOrderId: number; processId: number; color: string; mode: string; rows: Record<string, any>[]; deletedIds?: number[] }) =>
+      api.put(`/legacy-erp/order-manufacturing/entries`, body),
+    listPriceContracts: (workOrderId: number) => api.get(`/legacy-erp/order-manufacturing/price-contracts?workOrderId=${workOrderId}`),
+    savePriceContracts: (body: { workOrderId: number; rows: Record<string, any>[]; deletedIds?: number[] }) =>
+      api.put(`/legacy-erp/order-manufacturing/price-contracts`, body),
+  },
   lookupTable: (
     key: "category" | "group" | "mark" | "model" | "variant-type" | "tax" | "withholding-type" | "warehouse"
       | "fabric" | "process" | "finish-gsm" | "dye-type" | "composition" | "forex" | "unit"

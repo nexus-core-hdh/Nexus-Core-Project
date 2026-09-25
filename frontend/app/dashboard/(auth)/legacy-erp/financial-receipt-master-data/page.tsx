@@ -25,6 +25,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
 
 // "Financial Receipt & Master Data" — a structural clone of the existing "Receipt & Master
 // Data" screen (receipt-master-data/page.tsx), scoped to the genuinely separate FI_Receipt
@@ -60,6 +61,10 @@ export default function FinancialReceiptMasterDataPage() {
   // mechanism as receipt-master-data/page.tsx, namespaced under its own key so it can't
   // collide with that screen's saved worklists.
   const wl = useWorklist({ storageKey: "financialReceiptMasterDataWorklists" });
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — row identity here is
+  // `RecId` (same field this screen's own `getRowKey` already uses below), not `.id`.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(rows, { getId: (row) => String(row.RecId) });
 
   const actions = TABLE_ACTIONS[selectedTable];
 
@@ -227,6 +232,9 @@ export default function FinancialReceiptMasterDataPage() {
           getRowKey={(row) => String(row.RecId)}
           loading={loading}
           onRowDoubleClick={(row) => actions.onView({ row, router, reload, openDetails: setDetailsRow })}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => <RowActionsMenu actions={getRowActions(row)} />}
           wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
           emptyState={
