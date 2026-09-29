@@ -1,4 +1,6 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Put, Delete, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { WorkOrderService, BomLineType } from './work-order.service';
 // Entity-agnostic (config-driven table/fkColumn per tab, confirmed by reading its own
@@ -9,6 +11,7 @@ import { YarnCardSatellitesService } from './yarn-card-satellites.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Work Orders')
+@PermissionModule('work-orders', 'Work orders')
 @Controller('legacy-erp/work-orders')
 export class WorkOrderController {
   constructor(
@@ -16,8 +19,8 @@ export class WorkOrderController {
     private readonly satellites: YarnCardSatellitesService,
   ) {}
 
-  @Get() list(@Query('search') search?: string, @Query('styleCardId') styleCardId?: string) {
-    return this.svc.list(search, styleCardId);
+  @Get() list(@Query('search') search?: string, @Query('styleCardId') styleCardId?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, styleCardId, paging ?? null);
   }
 
   @Get('next-code') async previewNextCode() {

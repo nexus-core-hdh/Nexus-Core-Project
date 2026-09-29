@@ -1,15 +1,18 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { TrimCardService } from './trim-card.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Customer Define Trims')
+@PermissionModule('trim-cards', 'Trim cards')
 @Controller('legacy-erp/trim-cards')
 export class TrimCardController {
   constructor(private readonly svc: TrimCardService) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, paging ?? null);
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {

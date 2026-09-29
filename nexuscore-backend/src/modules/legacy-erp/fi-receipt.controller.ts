@@ -1,4 +1,7 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { FiReceiptService } from './fi-receipt.service';
@@ -6,6 +9,7 @@ import { FiReceiptAttachmentsService } from './fi-receipt-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Financial Receipts')
+@PermissionModule('financial-receipts', 'Financial receipts')
 @Controller('legacy-erp/financial-receipts')
 export class FiReceiptController {
   constructor(
@@ -13,8 +17,8 @@ export class FiReceiptController {
     private readonly attachments: FiReceiptAttachmentsService,
   ) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, paging ?? null);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptNo') receiptNo: string) {
@@ -81,12 +85,8 @@ export class FiReceiptController {
     @Param('attId', ParseIntPipe) attId: number,
     @Res() res: Response,
   ) {
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

@@ -1,16 +1,19 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { SizeSetService } from './size-set.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 // Mirrors unit-set.controller.ts's route shape exactly (header CRUD + nested detail-row CRUD).
 @ApiTags('Legacy ERP - Sizes')
+@PermissionModule('master-data', 'Master data')
 @Controller('legacy-erp/size-sets')
 export class SizeSetController {
   constructor(private readonly svc: SizeSetService) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, paging ?? null);
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {

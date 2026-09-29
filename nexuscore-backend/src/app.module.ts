@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
@@ -13,6 +13,7 @@ import { MessagingModule } from './messaging/messaging.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -61,10 +62,13 @@ import { AuditModule } from './modules/audit/audit.module';
       load: [databaseConfig, jwtConfig, rabbitmqConfig],
       envFilePath: '.env',
     }),
+    // Global limit per signed-in user (or per client IP when anonymous) — see AppThrottlerGuard.
+    // Auth endpoints (login, refresh, password reset) set much stricter per-route limits.
     ThrottlerModule.forRoot([
       {
+        name: 'default',
         ttl: parseInt(process.env.THROTTLE_TTL || '60') * 1000,
-        limit: parseInt(process.env.THROTTLE_LIMIT || '100'),
+        limit: parseInt(process.env.THROTTLE_LIMIT || '600'),
       },
     ]),
     PrismaModule,
@@ -130,7 +134,7 @@ import { AuditModule } from './modules/audit/audit.module';
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: AppThrottlerGuard },
   ],
 })
 export class AppModule {}

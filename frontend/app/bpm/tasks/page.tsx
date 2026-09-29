@@ -419,7 +419,8 @@ export default function BpmTaskQueuePage() {
   // ── Socket.IO ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     const token = localStorage.getItem("nc_token");
-    const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3000";
+    // "" (same-origin deployment) is valid: io("/nexuscore") then connects to the page's own origin.
+    const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:3000";
 
     const socket = io(`${SOCKET_URL}/nexuscore`, {
       auth: { token },

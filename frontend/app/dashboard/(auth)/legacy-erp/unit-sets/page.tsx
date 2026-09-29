@@ -5,7 +5,7 @@ import { Save, FilePlus2, Search, RefreshCw, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -104,7 +104,7 @@ export default function UnitSetDetailPage() {
 
   const loadLookupData = async () => {
     try {
-      const sets = await legacyErpApi.unitSets.list();
+      const sets = await fetchAllPages((req) => legacyErpApi.unitSets.list(undefined, req));
       const setList: UnitSetRow[] = Array.isArray(sets) ? sets : [];
       setAllSets(setList);
       const lists = await Promise.all(setList.map((s) => legacyErpApi.unitSets.listItems(s.id)));

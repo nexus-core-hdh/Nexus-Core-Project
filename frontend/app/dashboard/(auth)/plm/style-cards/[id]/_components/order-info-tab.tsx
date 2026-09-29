@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { ExternalLink } from "lucide-react";
-import { plmApi, legacyErpApi } from "@/lib/nexuscore-api";
+import { plmApi, legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
@@ -33,8 +33,8 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
         const list = await plmApi.sampleCards.getOrders(sampleCardId);
         setOrders(Array.isArray(list) ? list : []);
       } else {
-        const list: any = await legacyErpApi.workOrders.list({ styleCardId });
-        setOrders(Array.isArray(list) ? list : []);
+        // Every order of this Style Card (the unpaged list stops at 50).
+        setOrders(await fetchAllPages((req) => legacyErpApi.workOrders.list({ styleCardId }, req)));
       }
     } catch (e: any) {
       toast.error(e.message || "Failed to load orders");

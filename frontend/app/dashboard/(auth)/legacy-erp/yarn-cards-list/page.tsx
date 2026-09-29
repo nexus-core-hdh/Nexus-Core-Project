@@ -13,6 +13,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
@@ -61,18 +64,18 @@ export default function YarnCardListPage() {
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
   const [usageTarget, setUsageTarget] = useState<{ id: number; label: string } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("inventoryCode");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Server-side paging + sorting: the API searches/sorts the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "inventoryCode", defaultSortDir: "asc" });
   const wl = useWorklist({ storageKey: "yarnCardsListWorklists" });
 
-  const load = async (term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const r: any = worklist
-        ? await legacyErpApi.worklistFields.resolve("yarn-card-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await legacyErpApi.yarnCards.list(term);
-      const list = Array.isArray(r) ? r : [];
+        ? await legacyErpApi.worklistFields.resolve("yarn-card-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : await legacyErpApi.yarnCards.list(term, req);
+      const list = paging.take(r);
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load yarn cards");
@@ -84,19 +87,20 @@ export default function YarnCardListPage() {
   };
 
   useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
+  const doSearch = () => load(search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, paging.firstPage()); };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(search.trim() || undefined, worklist);
+    load(search.trim() || undefined, worklist, paging.firstPage());
   };
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(search.trim() || undefined, activeWorklist);
+    load(search.trim() || undefined, activeWorklist, paging.firstPage());
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
@@ -170,10 +174,9 @@ export default function YarnCardListPage() {
     }
   };
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  };
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
 
   // --- Lookup mode: return the selected Yarn Card to whichever field opened this tab -----
   const returnAndClose = (row: any) => {
@@ -208,15 +211,6 @@ export default function YarnCardListPage() {
     }
   };
 
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
-
   return (
     <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -232,7 +226,7 @@ export default function YarnCardListPage() {
         badges={
           !loading && (
             <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-              {rows.length} {rows.length === 1 ? "record" : "records"}
+              {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
             </Badge>
           )
         }
@@ -268,9 +262,9 @@ export default function YarnCardListPage() {
           storageKey="yarnCardsList"
           getRowKey={(row) => row.id}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           actionsColumnWidth={mode === "lookup" ? 160 : 56}
           getRowProps={(row, index) => ({
             ref: (el: HTMLTableRowElement | null) => { if (el) rowRefs.current.set(row.id, el); else rowRefs.current.delete(row.id); },
@@ -309,6 +303,7 @@ export default function YarnCardListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

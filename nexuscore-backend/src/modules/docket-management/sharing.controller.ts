@@ -1,11 +1,14 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { SharingService } from './sharing.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Docket Sharing')
+@PermissionModule('dockets', 'Dockets')
 @Controller()
 export class SharingController {
   constructor(private readonly svc: SharingService) {}
@@ -56,7 +59,9 @@ export class SharingController {
     return this.svc.publicGetDocket(token, req.ip, req.headers['user-agent']);
   }
 
+  // Share-link password check: strict per-IP limit against guessing.
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 15 * 60_000 } })
   @Post('public/dockets/:token/verify-password')
   publicVerifyPassword(@Param('token') token: string, @Body() body: any) {
     return this.svc.publicVerifyPassword(token, body.password);
@@ -79,6 +84,7 @@ export class SharingController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 15 * 60_000 } })
   @Post('public/review/:token/comment')
   publicSubmitComment(@Param('token') token: string, @Body() body: any) {
     return this.svc.publicSubmitReviewComment(token, body);

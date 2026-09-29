@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Catalog')
+@PermissionModule('catalog', 'Product catalog')
 @Controller('catalog')
 export class CatalogController {
   constructor(private readonly svc: CatalogService) {}

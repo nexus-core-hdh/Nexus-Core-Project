@@ -1,10 +1,12 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { InventoryReceiptService } from './inventory-receipt.service';
 import { InventoryReceiptAttachmentsService } from './inventory-receipt-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Permissions, PermissionModule } from '../../common/decorators/permissions.decorator';
 import { getReceiptTypeConfig } from './receipt-types.config';
 
 // The generic "other 11 receipt types" route — mirrors InventoryReceiptController route-for-
@@ -13,6 +15,7 @@ import { getReceiptTypeConfig } from './receipt-types.config';
 // Purchase Receipt (type 2) deliberately stays on its own dedicated /inventory-receipts route
 // only — kept out of the whitelist here so there is exactly one path per type, no drift risk.
 @ApiTags('Legacy ERP - Receipts (generic)')
+@PermissionModule('receipts', 'Receipts (by receipt type)')
 @Controller('legacy-erp/receipts/:receiptType')
 export class ReceiptTypeController {
   constructor(
@@ -28,15 +31,19 @@ export class ReceiptTypeController {
     return cfg;
   }
 
+  // `receiptType` may also be a comma-separated set (e.g. "11,12,133,134" — Subcontract Receipts
+  // List's "All types"), each validated like a single type, so that view is one query with one
+  // total and correct cross-type sorting/paging.
   @Get() list(
     @Param('receiptType') receiptType: string,
     @Query('search') search?: string,
     // Subcontract Receipts List's own "Subcontractation" filter dropdown — every other caller
     // omits this.
     @Query('subcontractTypeId') subcontractTypeId?: string,
+    @Paging() paging?: ListPaging | null,
   ) {
-    const cfg = this.resolve(receiptType);
-    return this.svc.list(search, cfg.receiptType, subcontractTypeId ? Number(subcontractTypeId) : undefined);
+    const types = receiptType.split(',').map((t) => this.resolve(t.trim()).receiptType);
+    return this.svc.list(search, types.length === 1 ? types[0] : types, subcontractTypeId ? Number(subcontractTypeId) : undefined, paging ?? null);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptType') receiptType: string, @Param('receiptNo') receiptNo: string) {
@@ -267,12 +274,8 @@ export class ReceiptTypeController {
   ) {
     const cfg = this.resolve(receiptType);
     await this.svc.get(id, cfg.receiptType);
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') async removeAttachment(

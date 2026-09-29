@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, plmApi, fetchAllPages } from "@/lib/nexuscore-api";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
@@ -383,7 +383,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     legacyErpApi.lookupTable("unit").then((r: any) => setUnitOptions(Array.isArray(r) ? r : [])).catch(() => {});
     legacyErpApi.lookupTable("forex").then((r: any) => setForexOptions(Array.isArray(r) ? r : [])).catch(() => {});
     plmApi.colors.list().then((r: any) => setColorOptions(Array.isArray(r) ? r : [])).catch(() => {});
-    legacyErpApi.inventoryCards.list().then((r: any) => setInventoryOptions(Array.isArray(r) ? r : [])).catch(() => {});
+    fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req)).then((r: any) => setInventoryOptions(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
 
   // Split once (not per-row, per-render) into the two datasources Code's smart search actually
@@ -442,7 +442,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
     try {
-      const all: any = await legacyErpApi.inventoryCards.list();
+      const all: any = await fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req));
       const byId = new Map<string, any>((Array.isArray(all) ? all : []).map((r: any) => [String(r.id), r]));
       return list.map((row) => {
         if (!row.inventoryId) return row;

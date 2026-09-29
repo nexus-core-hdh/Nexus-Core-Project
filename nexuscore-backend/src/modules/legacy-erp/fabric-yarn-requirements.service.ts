@@ -8,7 +8,7 @@ import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 import { assertNonNegative } from './numeric-guards.util';
 import { toBaseAmount, applyUnitFactor } from './unit-conversion.util';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
-import { WORK_ORDER_SCREEN_KEY } from './work-order.service';
+import { WORK_ORDER_SCREEN_KEY, calculatedBomConsumption } from './work-order.service';
 
 // Fabric/Trim/Yarn Requirements — NOT a new entity. Reuses the exact same Work Order BOM data
 // (MA_Recipe/MA_RecipeItem, already served by WorkOrderService.listBom) as its Requirements
@@ -476,8 +476,9 @@ export class FabricYarnRequirementsService {
     return warnings;
   }
 
-  // ── BOM source resolution — Priority 1: the Work Order's OWN BOM (MA_Recipe/MA_RecipeItem via
-  // WorkOrderService.listBom, unchanged). Priority 2: ONLY when the Work Order has zero lines of
+  // ── BOM source resolution — Priority 1: the Work Order's own BOM (MA_Recipe/MA_RecipeItem via
+  // WorkOrderService.listBom — its EFFECTIVE BOM: Style Card values it did not explicitly
+  // override follow the Style Card live, see WorkOrderService.resolveEffectiveBom). Priority 2: ONLY when the Work Order has zero lines of
   // THIS specific lineType, fall back to the linked Style Card's own BOM (StyleBomLine —
   // style-extras.service.ts's real, pre-existing table; queried directly here via the same
   // Prisma model rather than injecting StyleExtrasService, which would create a circular module
@@ -499,6 +500,94 @@ export class FabricYarnRequirementsService {
     const styleCardId = (wo as any)?.styleCardId;
     if (!styleCardId) return [];
     return this.getStyleCardBomLinesAsWorkOrderShape(workOrderId, styleCardId, lineType);
+  }
+
+  // The BOM lines Work Order REQUIREMENTS use — resolveBomLines (the BOM every other screen uses)
+  // with the two Requirements-only BOM flags applied; nothing else reads through here, so Planning,
+  // Cutting, Order Manufacturing and the BOM screens keep every line exactly as resolved:
+  //  - "NOT for Requirement" (notForRequirement) leaves the line out of Requirements. It wins over
+  //    Use Fix Quantity.
+  //  - "Use Fix Quantity" (isFixQuantity) takes the line's Quantity from the BOM itself — the Style
+  //    Card line's own Quantity, with its own Waste % and Unit (what that Quantity is expressed in)
+  //    — instead of a Work Order override of them. A line with no Style Card counterpart (Work
+  //    Order-only line, or no Style Card linked) already is the BOM's own quantity.
+  private async resolveRequirementBomLines(workOrderId: number, lineType: DirectBomTab): Promise<any[]> {
+    const lines = await this.resolveBomLines(workOrderId, lineType);
+    return lines
+      .filter((l: any) => !Number(l.notForRequirement))
+      .map((l: any) => {
+        if (!Number(l.isFixQuantity) || !l.styleCardValues) return l;
+        const s = l.styleCardValues;
+        return { ...l, quantity: s.quantity, wastage: s.wastage, unitId: s.unitId };
+      });
+  }
+
+  // Which BOM Calculate/Save use for this tab and how it is made up: the Style Card's live BOM
+  // alone (the Work Order owns no lines of this type), the Effective BOM (Style Card + this Work
+  // Order's explicit overrides — WorkOrderService.resolveEffectiveBom), or the Work Order's own BOM
+  // alone (no Style Card linked). `differences` lists every explicit Work Order deviation from the
+  // Style Card's current BOM, so nothing that changes the result is hidden. Yarn is exploded from
+  // the Fabric BOM, so it reports Fabric's.
+  async getBomSource(workOrderId: number, tab: RequirementTab) {
+    const lineType: DirectBomTab = tab === 'yarn' ? 'fabric' : tab;
+    const [effective, wo] = await Promise.all([
+      this.workOrderSvc.resolveEffectiveBom(workOrderId, lineType),
+      this.workOrderSvc.get(workOrderId).catch(() => null),
+    ]);
+    const styleCardId: string | null = (wo as any)?.styleCardId ?? null;
+    const styleCard = styleCardId
+      ? await this.prisma.styleCard.findUnique({ where: { id: styleCardId }, select: { styleNumber: true, updatedAt: true } })
+      : null;
+    const base = { tab, lineType, styleCardId, styleNumber: styleCard?.styleNumber ?? null, styleCardUpdatedAt: styleCard?.updatedAt ?? null };
+    if (!effective.hasOwnLines) return { ...base, source: styleCardId ? 'style-card' : 'none', inSync: true, differences: [] };
+    if (!styleCardId) return { ...base, source: 'work-order', inSync: true, differences: [] };
+
+    const { lines, removedOnWorkOrder, removedFromStyleCard } = effective;
+    const names = await this.resolveInventoryNames([...lines, ...removedOnWorkOrder, ...removedFromStyleCard].map((l: any) => l.inventoryId));
+    const label = (l: any) => ({
+      inventoryId: l.inventoryId ?? null,
+      inventoryCode: l.inventoryId != null ? names.get(Number(l.inventoryId))?.code ?? null : null,
+      inventoryName: l.inventoryId != null ? names.get(Number(l.inventoryId))?.name ?? null : null,
+      variant: l.variant1 || null,
+      productionColor: l.variant2 || null,
+    });
+    const differences: any[] = [];
+    for (const l of lines) {
+      if (l.bomSource === 'work-order' && !l.overriddenFields?.length) {
+        differences.push({ ...label(l), change: 'added-on-work-order', fields: [] });
+      } else if (l.overriddenFields?.length) {
+        // Quantity/Wastage are reported as the one Consumption (Calculated Qty) they produce.
+        // `ignoredByRequirements` (display only): on a "Use Fix Quantity" line that Requirements
+        // includes, resolveRequirementBomLines takes Quantity/Waste/Unit from the Style Card, so the
+        // Work Order's Consumption/Unit override stays on its BOM but Requirements don't use it.
+        const fixBypass = !!Number(l.isFixQuantity) && !Number(l.notForRequirement) && !!l.styleCardValues;
+        const fields = l.overriddenFields
+          .filter((f: string) => f !== 'quantity' && f !== 'wastage')
+          .map((f: string) => ({ field: f, workOrder: l[f] ?? null, styleCard: l.styleCardValues?.[f] ?? null, ignoredByRequirements: fixBypass && f === 'unitId' ? 'fix-quantity' : null }));
+        if (l.overriddenFields.includes('quantity')) {
+          fields.unshift({ field: 'consumption', workOrder: calculatedBomConsumption(l), styleCard: l.styleCardValues ? calculatedBomConsumption(l.styleCardValues) : null, ignoredByRequirements: fixBypass ? 'fix-quantity' : null });
+        }
+        differences.push({ ...label(l), change: l.bomSource === 'work-order' ? 'kept-after-style-card-removal' : 'override', fields });
+      }
+    }
+    for (const l of removedOnWorkOrder) differences.push({ ...label(l), change: 'removed-on-work-order', fields: [] });
+    return { ...base, source: 'effective', inSync: differences.length === 0, differences };
+  }
+
+  // Explicit, user-confirmed "Reset to Style Card" for ONE lineType — replaces the Work Order's
+  // own lines of that type with the Style Card's current ones via the existing
+  // transferBomFromStyleCardForType, discarding this Work Order's overrides of that type only.
+  // Refused while the affected Requirement is locked, like every other edit on this screen.
+  // Returns the refreshed getBomSource() so the caller can confirm it is back in sync.
+  async refreshBomFromStyleCard(workOrderId: number, tab: RequirementTab, userId: number, currentUserId: string) {
+    const lineType: DirectBomTab = tab === 'yarn' ? 'fabric' : tab;
+    await this.assertMutationAllowed(workOrderId, lineType, currentUserId);
+    if (tab !== lineType) await this.assertMutationAllowed(workOrderId, tab, currentUserId);
+    const wo = await this.workOrderSvc.get(workOrderId);
+    const styleCardId = (wo as any)?.styleCardId;
+    if (!styleCardId) throw new NotFoundException('This Work Order has no linked Style Card to update from.');
+    await this.workOrderSvc.transferBomFromStyleCardForType(workOrderId, styleCardId, lineType, userId);
+    return this.getBomSource(workOrderId, tab);
   }
 
   // Reads StyleBomLine (the exact table/query style-extras.service.ts's own getBomLines() uses —
@@ -548,6 +637,8 @@ export class FabricYarnRequirementsService {
       unitId: r.unitId ?? null,
       wastage: (Number(r.wastePct) || 0) + (Number(r.dyeWastagePct) || 0) + (Number(r.otherWastagePct) || 0) + (Number(r.printWastagePct) || 0),
       uD_Remarks: r.process,
+      notForRequirement: r.notForRequirement ? 1 : 0,
+      isFixQuantity: r.useFixQuantity ? 1 : 0,
     }));
     return this.workOrderSvc.assignProductionColorCycle(mapped, productionColors);
   }
@@ -557,9 +648,11 @@ export class FabricYarnRequirementsService {
   // implementation — MA_RecipeItem/listBom already natively support Trim (a real BomLineType
   // alongside Fabric/Ornament/Process, RecipeType=2, see work-order.service.ts's own
   // RECIPE_TYPE_BY_LINE_TYPE) with zero code changes needed to that layer.
-  async getMaterialRequirements(workOrderId: number, lineType: DirectBomTab) {
+  // `requirements: true` — the Work Order Requirements screen (grid, Calculate, Save, Total): BOM lines
+  // come through resolveRequirementBomLines. Other callers (Fabric/Trim Planning) keep every line.
+  async getMaterialRequirements(workOrderId: number, lineType: DirectBomTab, opts: { requirements?: boolean } = {}) {
     const [lines, mfgQty] = await Promise.all([
-      this.resolveBomLines(workOrderId, lineType),
+      opts.requirements ? this.resolveRequirementBomLines(workOrderId, lineType) : this.resolveBomLines(workOrderId, lineType),
       this.getManufacturingQuantityTotals(workOrderId),
     ]);
     const names = await this.resolveInventoryNames(lines.map((l: any) => l.inventoryId));
@@ -581,7 +674,10 @@ export class FabricYarnRequirementsService {
     // one row carrying the Work Order's blended total. See that method's own comment for the full
     // rule (including the single-color/no-color fallback cases, which fall out of the same loop).
     return lines.flatMap((l: any) => {
-      const consumption = Number(l.quantity) || 0;
+      // The BOM line's Calculated Qty (Quantity with its Waste % applied — the Style Card BOM's
+      // own column), not its raw pre-waste Quantity. Yarn needs no change: getYarnRequirements
+      // already applies the same Waste % to the Fabric line before its recipe split.
+      const consumption = calculatedBomConsumption(l);
       const color = l.colorCardId ? colors.get(String(l.colorCardId)) : null;
       // Material Color's own resolved code/name feeds scope resolution as a fallback color-mapping
       // key when Variant-2 is blank — see resolveApplicableQuantityScopes' own comment on why.
@@ -664,6 +760,9 @@ export class FabricYarnRequirementsService {
         // SAME value across every color-expansion of this one line. NEVER converted — see
         // convertRawRequirementToUnit's own comment: only the FINAL Requirement below is.
         consumption,
+        // "Use Fix Quantity" line — Consumption comes from the BOM itself (resolveRequirementBomLines),
+        // so the Requirements screen shows it read-only and setConsumptionForLine refuses it.
+        fixQuantity: !!Number(l.isFixQuantity),
         // Applicable Quantity — THIS row's own resolved scope: one Production Color's Will-Be-Cut,
         // or the Work Order's total only for the documented unmatched/no-color-data fallback cases.
         applicableQuantity: scope.quantity,
@@ -705,13 +804,16 @@ export class FabricYarnRequirementsService {
     // suffix here routes an edit made from ANY of its color rows back to that one real line —
     // exactly right, since Consumption/Material Color belong to the line, not to any one color.
     const realLineId = lineId.includes('::') ? lineId.slice(0, lineId.indexOf('::')) : lineId;
+    // Effective lines — a line the Style Card added since the Work Order's copy carries its
+    // StyleBomLine id, so ids are compared as text; writing the whole effective set back keeps
+    // every inherited value inherited (upsertBom re-records the baseline) and makes only `patch`
+    // an override.
     const ownLines = await this.workOrderSvc.listBom(workOrderId, lineType);
-    const numericLineId = Number(realLineId);
     if (ownLines.length) {
-      if (!ownLines.some((l: any) => l.id === numericLineId)) {
+      if (!ownLines.some((l: any) => String(l.id) === realLineId)) {
         throw new NotFoundException('This requirement line no longer exists — reload and try again.');
       }
-      const updated = ownLines.map((l: any) => (l.id === numericLineId ? { ...l, ...patch } : l));
+      const updated = ownLines.map((l: any) => (String(l.id) === realLineId ? { ...l, ...patch } : l));
       return this.workOrderSvc.upsertBom(workOrderId, lineType, updated, userId);
     }
     const wo = await this.workOrderSvc.get(workOrderId);
@@ -739,7 +841,16 @@ export class FabricYarnRequirementsService {
   // its Yarn Recipe %, not a field of its own to edit (see getYarnRequirements).
   async setConsumptionForLine(workOrderId: number, lineType: DirectBomTab, lineId: string, quantity: number, userId: number, currentUserId: string) {
     assertNonNegative(quantity, 'Consumption');
-    return this.updateRequirementLine(workOrderId, lineType, lineId, { quantity }, userId, currentUserId);
+    // Requirements ignores a Work Order Consumption on a "Use Fix Quantity" line, so it is never
+    // written from here; that quantity is changed on the Style Card BOM.
+    const realLineId = lineId.includes('::') ? lineId.slice(0, lineId.indexOf('::')) : lineId;
+    const target = (await this.resolveBomLines(workOrderId, lineType)).find((l: any) => String(l.id) === realLineId);
+    if (target && Number(target.isFixQuantity)) {
+      throw new ConflictException('This line uses Fix Quantity — Requirements take its quantity from the Style Card BOM. Change it there.');
+    }
+    // The grid's Consumption is the line's Calculated Qty, so the value typed is stored as the
+    // final figure: Quantity = value, Waste 0 (calculatedBomConsumption then returns it exactly).
+    return this.updateRequirementLine(workOrderId, lineType, lineId, { quantity, wastage: 0 }, userId, currentUserId);
   }
 
   // Validation — "if a mapping is required but missing, surface it instead of silently calculating
@@ -802,18 +913,18 @@ export class FabricYarnRequirementsService {
   async getMappingWarnings(workOrderId: number, tab: RequirementTab): Promise<string[]> {
     const mfgQty = await this.getManufacturingQuantityTotals(workOrderId);
     if (tab === 'yarn') {
-      const fabricLines = await this.resolveBomLines(workOrderId, 'fabric');
+      const fabricLines = await this.resolveRequirementBomLines(workOrderId, 'fabric');
       const colorWarnings = await this.buildMappingWarnings(fabricLines, mfgQty);
       const recipeWarnings = await this.buildYarnRecipeWarnings(fabricLines);
       // Unit warnings for Yarn are checked against the YARN item's own inventoryId (see
       // getYarnRequirements' own comment on why), not the source Fabric's — reuses its own
       // already-computed rows rather than re-deriving the recipe explosion a second time.
-      const yarnRows = await this.getYarnRequirements(workOrderId);
+      const yarnRows = await this.getYarnRequirements(workOrderId, { requirements: true });
       const { unresolvedIds, ambiguousIds } = await this.resolveRequirementUnits(yarnRows.map((r: any) => r.inventoryId));
       const unitWarnings = this.buildUnitWarnings(yarnRows, unresolvedIds, ambiguousIds);
       return [...colorWarnings, ...recipeWarnings, ...unitWarnings];
     }
-    const lines = await this.resolveBomLines(workOrderId, tab);
+    const lines = await this.resolveRequirementBomLines(workOrderId, tab);
     const colorWarnings = await this.buildMappingWarnings(lines, mfgQty);
     const { unresolvedIds, ambiguousIds } = await this.resolveRequirementUnits(lines.map((l: any) => l.inventoryId));
     const unitWarnings = this.buildUnitWarnings(lines.map((l: any) => ({ inventoryId: l.inventoryId, inventoryCode: null })), unresolvedIds, ambiguousIds);
@@ -828,9 +939,10 @@ export class FabricYarnRequirementsService {
   // so routing through the same resolveBomLines() the Fabric tab uses is what gives Yarn the
   // correct "Work Order Fabric first, Style Card Fabric only if the Work Order has none" priority
   // automatically, with no separate Yarn-specific fallback logic needed.
-  async getYarnRequirements(workOrderId: number) {
+  // `requirements: true` — see getMaterialRequirements. Yarn Planning keeps every Fabric line.
+  async getYarnRequirements(workOrderId: number, opts: { requirements?: boolean } = {}) {
     const [fabricLines, mfgQty] = await Promise.all([
-      this.resolveBomLines(workOrderId, 'fabric'),
+      opts.requirements ? this.resolveRequirementBomLines(workOrderId, 'fabric') : this.resolveBomLines(workOrderId, 'fabric'),
       this.getManufacturingQuantityTotals(workOrderId),
     ]);
     // Resolved up front (same as getMaterialRequirements) so each Fabric line's own Material Color
@@ -976,7 +1088,9 @@ export class FabricYarnRequirementsService {
   }
 
   private async getRequirementRows(workOrderId: number, tab: RequirementTab) {
-    return tab === 'yarn' ? this.getYarnRequirements(workOrderId) : this.getMaterialRequirements(workOrderId, tab);
+    return tab === 'yarn'
+      ? this.getYarnRequirements(workOrderId, { requirements: true })
+      : this.getMaterialRequirements(workOrderId, tab, { requirements: true });
   }
 
   // ── Total Requirements Table — GROUP BY InventoryId SUM(Quantity) over the rows above. A pure

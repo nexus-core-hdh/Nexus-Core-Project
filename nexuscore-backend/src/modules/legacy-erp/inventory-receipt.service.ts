@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -269,7 +270,10 @@ export class InventoryReceiptService {
   // num(r.netItemTotal ?? 0), 0)`) — same NetItemTotal column, same "null treated as 0" rule,
   // just computed server-side as SUM() instead of client-side reduce() so it can be a sortable/
   // searchable list column without loading every receipt's full line grid.
-  async list(search?: string, receiptType: number = RECEIPT_TYPE, subcontractTypeId?: number) {
+  async list(search?: string, receiptType: number | number[] = RECEIPT_TYPE, subcontractTypeId?: number, paging: ListPaging | null = null) {
+    const typeFilter = Array.isArray(receiptType)
+      ? Prisma.sql`"IM_Receipt"."ReceiptType" IN (${Prisma.join(receiptType)})`
+      : Prisma.sql`"IM_Receipt"."ReceiptType" = ${receiptType}`;
     const qualifiedHeaderSelect = Prisma.raw(
       ['"IM_Receipt"."RecId" as id', ...HEADER_COLUMNS.map((c) => `"IM_Receipt"."${c}" as "${camel(c)}"`)].join(', '),
     );
@@ -287,14 +291,16 @@ export class InventoryReceiptService {
     const subcontractTypeFilter = subcontractTypeId !== undefined
       ? Prisma.sql`AND "IM_Receipt"."SubcontractTypeId" = ${subcontractTypeId}`
       : Prisma.sql``;
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${qualifiedHeaderSelect},
+    // Every join below yields at most one row per receipt (FK lookups + a single-row LATERAL
+    // aggregate), so the count over the same FROM/WHERE is exact.
+    return runLegacyList(this.prisma, {
+      select: Prisma.sql`${qualifiedHeaderSelect},
         st."SubcontractTypeName" as "subcontractTypeName",
         acc."CurrentAccountCode" as "currentAccountCode",
         acc."CurrentAccountName" as "currentAccountName",
         wh."WarehouseCode" as "warehouseCode",
-        COALESCE(tot."total", 0) as "receiptTotal"
-      FROM "IM_Receipt"
+        COALESCE(tot."total", 0) as "receiptTotal"`,
+      from: Prisma.sql`FROM "IM_Receipt"
       LEFT JOIN "MD_SubcontractType" st ON st."RecId" = "IM_Receipt"."SubcontractTypeId"
       LEFT JOIN "FI_Account" acc ON acc."RecId" = "IM_Receipt"."CurrentAccountId"
       LEFT JOIN "IM_Warehouse" wh ON wh."RecId" = "IM_Receipt"."InWarehouseId"
@@ -303,10 +309,16 @@ export class InventoryReceiptService {
         FROM "IM_ReceiptItem" ri
         WHERE ri."InventoryReceiptId" = "IM_Receipt"."RecId" AND ri."IsDeleted" = 0
       ) tot ON true
-      WHERE "IM_Receipt"."IsDeleted" = 0 AND "IM_Receipt"."ReceiptType" = ${receiptType} ${searchFilter} ${subcontractTypeFilter}
-      ORDER BY "IM_Receipt"."ReceiptNo" DESC LIMIT 50
-    `);
-    return sanitizeRawRow(rows);
+      WHERE "IM_Receipt"."IsDeleted" = 0 AND ${typeFilter} ${searchFilter} ${subcontractTypeFilter}`,
+      sortable: {
+        receiptNo: Prisma.sql`"IM_Receipt"."ReceiptNo"`, documentNo: Prisma.sql`"IM_Receipt"."DocumentNo"`,
+        receiptType: Prisma.sql`"IM_Receipt"."ReceiptType"`,
+        receiptDate: Prisma.sql`"IM_Receipt"."ReceiptDate"`, currentAccountName: Prisma.sql`acc."CurrentAccountName"`,
+        currentAccountCode: Prisma.sql`acc."CurrentAccountCode"`, warehouseCode: Prisma.sql`wh."WarehouseCode"`,
+        subcontractTypeName: Prisma.sql`st."SubcontractTypeName"`, receiptTotal: Prisma.sql`COALESCE(tot."total", 0)`,
+      },
+      defaultSortBy: 'receiptNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`"IM_Receipt"."RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number, receiptType: number = RECEIPT_TYPE) {

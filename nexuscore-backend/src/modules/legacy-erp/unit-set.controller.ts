@@ -1,15 +1,18 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { UnitSetService } from './unit-set.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Unit Sets')
+@PermissionModule('master-data', 'Master data')
 @Controller('legacy-erp/unit-sets')
 export class UnitSetController {
   constructor(private readonly svc: UnitSetService) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, paging ?? null);
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {

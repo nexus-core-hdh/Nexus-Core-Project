@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { EntitiesService } from './entities.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Entities')
+@PermissionModule('crm', 'CRM')
 @Controller('entities')
 export class EntitiesController {
   constructor(private readonly entitiesService: EntitiesService) {}

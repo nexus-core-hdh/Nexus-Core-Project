@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
@@ -215,7 +215,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
   useEffect(() => {
     legacyErpApi.lookupTable("unit").then((r: any) => setUnitOptions(Array.isArray(r) ? r : [])).catch(() => {});
     legacyErpApi.lookupTable("forex").then((r: any) => setForexOptions(Array.isArray(r) ? r : [])).catch(() => {});
-    legacyErpApi.inventoryCards.list().then((r: any) => setInventoryOptions(Array.isArray(r) ? r : [])).catch(() => {});
+    fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req)).then((r: any) => setInventoryOptions(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
 
   // Name's smart-search datasource + id->record resolver — same shape as Purchase Order's own
@@ -250,7 +250,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
     try {
-      const all: any = await legacyErpApi.inventoryCards.list();
+      const all: any = await fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req));
       const byId = new Map<string, any>((Array.isArray(all) ? all : []).map((r: any) => [String(r.id), r]));
       return list.map((row) => {
         if (!row.inventoryId) return row;

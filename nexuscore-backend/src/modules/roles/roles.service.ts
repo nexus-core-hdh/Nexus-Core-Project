@@ -77,13 +77,33 @@ export class RolesService {
     return { data: permissions };
   }
 
-  async seedPermissions(permissions: Array<{ module: string; action: string; description?: string }>) {
+  /**
+   * Upserts Permission catalog rows. With grantToSystemRoles, also grants them to the system
+   * ("Full access") role(s) — the same invariant prisma/seed.ts keeps for Admin — adding only what
+   * is missing and never touching any other role's grants.
+   */
+  async seedPermissions(
+    permissions: Array<{ module: string; action: string; description?: string }>,
+    opts: { grantToSystemRoles?: boolean } = {},
+  ) {
+    const ids: string[] = [];
     for (const p of permissions) {
-      await this.prisma.permission.upsert({
+      const row = await this.prisma.permission.upsert({
         where: { module_action: { module: p.module, action: p.action } },
         create: p,
         update: { description: p.description },
+        select: { id: true },
       });
+      ids.push(row.id);
+    }
+    if (opts.grantToSystemRoles && ids.length) {
+      const systemRoles = await this.prisma.role.findMany({ where: { isSystem: true }, select: { id: true } });
+      for (const role of systemRoles) {
+        await this.prisma.rolePermission.createMany({
+          data: ids.map((permissionId) => ({ roleId: role.id, permissionId })),
+          skipDuplicates: true,
+        });
+      }
     }
   }
 }

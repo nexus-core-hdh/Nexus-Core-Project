@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { validateUpload } from '../../common/security/file-safety';
 
 // Coarse category only — used to build a display-ish "type" in the upload response (the
 // PLM attachment record itself stores the browser's own File.type, not this), and to keep
@@ -11,10 +12,12 @@ export class UploadService {
   constructor(private readonly prisma: PrismaService) {}
 
   async save(file: { originalname: string; mimetype: string; buffer: Buffer }, userId?: string) {
+    // The stored type comes from the validated extension + content, never from the client.
+    const { mimeType } = validateUpload(file.originalname, file.buffer);
     const saved = await this.prisma.uploadedFile.create({
       data: {
         fileName: file.originalname,
-        mimeType: file.mimetype,
+        mimeType,
         data: file.buffer,
         createdBy: userId ?? undefined,
       },

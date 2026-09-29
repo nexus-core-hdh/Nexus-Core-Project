@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -20,6 +21,22 @@ const SAFE_SELECT = {
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * A user holding a system ("Full access") role may only be edited or deleted by someone who can
+   * also manage roles — otherwise users:update would be enough to take over an administrator
+   * (e.g. by setting their password).
+   */
+  async assertCanManage(actorId: string, targetId: string) {
+    if (actorId === targetId) return;
+    const targetIsSystem = await this.prisma.userRole.findFirst({ where: { userId: targetId, role: { isSystem: true } }, select: { roleId: true } });
+    if (!targetIsSystem) return;
+    const actorCanManageRoles = await this.prisma.rolePermission.findFirst({
+      where: { permission: { module: 'roles', action: 'manage' }, role: { userRoles: { some: { userId: actorId } } } },
+      select: { roleId: true },
+    });
+    if (!actorCanManageRoles) throw new ForbiddenException('Only users who can manage roles may change an administrator account');
+  }
 
   async create(dto: CreateUserDto) {
     const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });

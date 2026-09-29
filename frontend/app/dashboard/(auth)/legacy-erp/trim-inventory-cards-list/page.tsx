@@ -13,6 +13,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
@@ -62,18 +65,18 @@ export default function TrimCardListPage() {
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
   const [usageTarget, setUsageTarget] = useState<{ id: number; label: string } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("inventoryCode");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Server-side paging + sorting: the API searches/sorts the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "inventoryCode", defaultSortDir: "asc" });
   const wl = useWorklist({ storageKey: "trimInventoryCardsListWorklists" });
 
-  const load = async (term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const r: any = worklist
-        ? await legacyErpApi.worklistFields.resolve("trim-inventory-card-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await legacyErpApi.trimInventoryCards.list(term);
-      const list = Array.isArray(r) ? r : [];
+        ? await legacyErpApi.worklistFields.resolve("trim-inventory-card-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : await legacyErpApi.trimInventoryCards.list(term, req);
+      const list = paging.take(r);
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load trim cards");
@@ -85,19 +88,20 @@ export default function TrimCardListPage() {
   };
 
   useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
+  const doSearch = () => load(search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, paging.firstPage()); };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(search.trim() || undefined, worklist);
+    load(search.trim() || undefined, worklist, paging.firstPage());
   };
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(search.trim() || undefined, activeWorklist);
+    load(search.trim() || undefined, activeWorklist, paging.firstPage());
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
@@ -122,10 +126,9 @@ export default function TrimCardListPage() {
     }
   };
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  };
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
 
   const returnAndClose = (row: any) => {
     if (mode !== "lookup" || !requestId) return;
@@ -158,15 +161,6 @@ export default function TrimCardListPage() {
       returnAndClose(row);
     }
   };
-
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
 
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
@@ -244,7 +238,7 @@ export default function TrimCardListPage() {
         badges={
           !loading && (
             <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-              {rows.length} {rows.length === 1 ? "record" : "records"}
+              {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
             </Badge>
           )
         }
@@ -280,9 +274,9 @@ export default function TrimCardListPage() {
           storageKey="trimInventoryCardsList"
           getRowKey={(row) => row.id}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           onRowDoubleClick={(row) => returnAndClose(row)}
           wrapRow={wrapTrimCardRow}
           renderRowActions={(row) => (
@@ -310,6 +304,7 @@ export default function TrimCardListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

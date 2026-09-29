@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { AllowAuthenticated, PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FeedService } from './feed.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Feed')
+@PermissionModule('collaboration', 'Collaboration')
 @Controller('feed')
 export class FeedController {
   constructor(private readonly svc: FeedService) {}
@@ -26,6 +28,8 @@ export class FeedController {
   @Delete(':id')
   deletePost(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.deletePost(id, u.companyId); }
 
+  // A personal reaction (toggles the caller's own like), not content creation.
+  @AllowAuthenticated()
   @Post(':id/like')
   toggleLike(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.toggleLike(id, u.id); }
 

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CrmService } from './crm.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('CRM')
+@PermissionModule('crm', 'CRM')
 @Controller('crm')
 export class CrmController {
   constructor(private readonly svc: CrmService) {}

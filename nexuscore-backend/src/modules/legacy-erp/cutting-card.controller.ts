@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { CuttingCardService } from './cutting-card.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -7,6 +8,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 // Registered BEFORE WorkOrderController in legacy-erp.module.ts — WorkOrderController's own
 // '/:id/:tab' catch-all (Explanation/Activities/Expenses satellites) would otherwise swallow
 // '/:id/cutting-card' first, same reasoning as FabricYarnRequirementsController's own comment.
+@PermissionModule('cutting-cards', 'Cutting cards')
 @Controller('legacy-erp/work-orders/:id/cutting-card')
 export class CuttingCardController {
   constructor(private readonly svc: CuttingCardService) {}

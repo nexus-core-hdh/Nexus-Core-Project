@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppConfigService } from './config.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Config')
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('config')
 export class AppConfigController {
   constructor(private readonly svc: AppConfigService) {}

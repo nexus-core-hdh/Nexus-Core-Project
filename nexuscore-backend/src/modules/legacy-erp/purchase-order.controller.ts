@@ -1,12 +1,15 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { PurchaseOrderService } from './purchase-order.service';
 import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Permissions, PermissionModule } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Legacy ERP - Purchase Orders')
+@PermissionModule('purchase-orders', 'Purchase orders')
 @Controller('legacy-erp/purchase-orders')
 export class PurchaseOrderController {
   constructor(
@@ -14,8 +17,8 @@ export class PurchaseOrderController {
     private readonly attachments: PurchaseOrderAttachmentsService,
   ) {}
 
-  @Get() list(@Query('search') search?: string, @Query('approvalStatus') approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected') {
-    return this.svc.list(search, approvalStatus);
+  @Get() list(@Query('search') search?: string, @Query('approvalStatus') approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected', @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, approvalStatus, undefined, paging ?? null);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptNo') receiptNo: string) {
@@ -186,12 +189,8 @@ export class PurchaseOrderController {
     @Param('attId', ParseIntPipe) attId: number,
     @Res() res: Response,
   ) {
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

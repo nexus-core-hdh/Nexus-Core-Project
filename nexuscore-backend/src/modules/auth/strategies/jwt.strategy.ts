@@ -14,12 +14,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('jwt.secret', 'nexuscore-secret'),
+      // No fallback: jwt.config.ts guarantees a real secret (and fails startup in production without one).
+      secretOrKey: configService.getOrThrow<string>('jwt.secret'),
       issuer: configService.get<string>('jwt.issuer', 'nexuscore'),
     });
   }
 
-  async validate(payload: JwtPayload) {
+  async validate(payload: JwtPayload & { scope?: string }) {
+    // Purpose-scoped tokens (e.g. the 5-minute 'attachment-view' / 'file-view' tokens handed to
+    // file viewers) are signed with the same secret but must never work as a session token.
+    if (payload.scope) throw new UnauthorizedException('Invalid token');
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       include: { company: true, branch: true },

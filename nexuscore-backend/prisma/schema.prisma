@@ -3217,6 +3217,19 @@ model ScreenParameter {
 // legacy-erp already uses (e.g. inventory-receipt-attachments.service.ts), just generic/not
 // tied to one parent entity's own table, since PLM attachments are a plain {id,name,type,url}
 // JSON array on the card itself rather than a per-entity attachments table with its own FK.
+// Effective BOM baseline — see migration 20260929000000_add_work_order_bom_baseline and
+// work-order.service.ts resolveEffectiveBom (accessed with raw SQL, like the MA_ tables it pairs with).
+model WorkOrderBomBaseline {
+  id          String   @id @default(uuid())
+  workOrderId BigInt
+  lineType    String
+  styleCardId String
+  lines       Json
+  capturedAt  DateTime @default(now())
+
+  @@unique([workOrderId, lineType])
+}
+
 model UploadedFile {
   id        String   @id @default(uuid())
   fileName  String
@@ -3649,6 +3662,11 @@ model CostingRawMaterialLine {
   costingSheetId String
   groupCode      String?
   groupName      String?
+  // The selected Inventory item — IM_Item.RecId (a raw-SQL legacy table, so a plain nullable Int,
+  // not a Prisma relation: the same convention as StyleBomLine.fabricInventoryId). When set it is
+  // the source of truth and inventoryCode/inventoryName are that item's code/name (filled by the
+  // server); rows saved before this column existed keep their typed text with no id.
+  inventoryId    Int?
   inventoryCode  String?
   inventoryName  String?
   quantity       Decimal @default(0) @db.Decimal(14, 4)
@@ -3663,6 +3681,7 @@ model CostingRawMaterialLine {
   costingSheet CostingSheet @relation(fields: [costingSheetId], references: [id], onDelete: Cascade)
 
   @@index([costingSheetId])
+  @@index([inventoryId])
 }
 
 model CostingLaborLine {
@@ -3851,8 +3870,10 @@ model StyleBomLine {
   // any of these (confirmed during audit), so they're genuine new columns, not a second table.
   // printWastagePct joins wastePct/dyeWastagePct/otherWastagePct in the SAME existing applyWaste()
   // sum (lib/legacy-erp/waste-calc.ts takes a variadic wastePercentages list already) — not a new
-  // calculation. notForRequirement/useFixQuantity are stored flags only, deliberately not wired
-  // into the Fabric/Yarn Requirements screens or the auto-quantity formula (out of scope here).
+  // calculation. notForRequirement/useFixQuantity are Work Order REQUIREMENTS-only controls (copied
+  // to MA_RecipeItem.NotForRequirement/IsFixQuantity): the first leaves the line out of
+  // Requirements, the second makes Requirements use this Quantity instead of a Work Order override —
+  // see fabric-yarn-requirements.service.ts resolveRequirementBomLines. No other screen reads them.
   notForRequirement Boolean @default(false)
   useFixQuantity    Boolean @default(false)
   printWastagePct   Decimal @default(0) @db.Decimal(8, 4)

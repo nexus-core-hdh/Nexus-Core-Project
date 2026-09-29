@@ -1,9 +1,14 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CommunicationService } from './communication.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
+const MANAGE_SMTP = { module: 'communication', action: 'manage-smtp' };
+const SMTP_PASSWORD_MASK = '********';
+
 @ApiTags('Communication')
+@PermissionModule('communication', 'Communication')
 @Controller('communication')
 export class CommunicationController {
   constructor(private readonly svc: CommunicationService) {}
@@ -51,16 +56,27 @@ export class CommunicationController {
   @Delete('mails/:id')
   deleteMail(@Param('id') id: string) { return this.svc.deleteMail(id); }
 
-  // SMTP Settings
+  // SMTP Settings — mail server credentials: a separate permission, and the stored password is
+  // never returned (a masked value sent back unchanged keeps the existing password).
+  @Permissions(MANAGE_SMTP)
   @Get('smtp')
-  getSmtp(@CurrentUser() u: any) { return this.svc.getSmtpSettings(u.companyId); }
+  async getSmtp(@CurrentUser() u: any) {
+    const rows = await this.svc.getSmtpSettings(u.companyId);
+    return rows.map((r) => ({ ...r, password: r.password ? SMTP_PASSWORD_MASK : '' }));
+  }
 
+  @Permissions(MANAGE_SMTP)
   @Post('smtp')
   createSmtp(@Body() dto: any, @CurrentUser() u: any) { return this.svc.createSmtpSetting(dto, u.companyId); }
 
+  @Permissions(MANAGE_SMTP)
   @Patch('smtp/:id')
-  updateSmtp(@Param('id') id: string, @Body() dto: any) { return this.svc.updateSmtpSetting(id, dto); }
+  updateSmtp(@Param('id') id: string, @Body() dto: any) {
+    if (dto?.password === SMTP_PASSWORD_MASK) delete dto.password;
+    return this.svc.updateSmtpSetting(id, dto);
+  }
 
+  @Permissions(MANAGE_SMTP)
   @Delete('smtp/:id')
   deleteSmtp(@Param('id') id: string) { return this.svc.deleteSmtpSetting(id); }
 

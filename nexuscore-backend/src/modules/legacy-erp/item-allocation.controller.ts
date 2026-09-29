@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { ItemAllocationService, SaveAllocationDto } from './item-allocation.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -8,6 +9,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 // (IM_ItemAllocation/IM_ItemAllocationHistory) — a reservation against an already-received
 // receipt line, never a new stock transaction.
 @ApiTags('Legacy ERP - Received Allocation')
+@PermissionModule('item-allocation', 'Item allocation')
 @Controller('legacy-erp/item-allocations')
 export class ItemAllocationController {
   constructor(private readonly svc: ItemAllocationService) {}

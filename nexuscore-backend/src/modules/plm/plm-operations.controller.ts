@@ -1,10 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PlmOperationsService } from './plm-operations.service';
 import { PlmReportsService } from './plm-reports.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('PLM Operations')
+@PermissionModule('plm', 'PLM')
 @Controller('plm')
 export class PlmOperationsController {
   constructor(

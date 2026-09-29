@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { SerialCardService, ProduceSerialCardsDto, UpdateSerialCardDto } from './serial-card.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Generate Serial Cards')
+@PermissionModule('serial-cards', 'Serial cards')
 @Controller('legacy-erp/inventory-receipts/:receiptId/items/:itemId/serial-cards')
 export class SerialCardController {
   constructor(private readonly svc: SerialCardService) {}
@@ -48,6 +50,7 @@ export class SerialCardController {
 // does. Reuses the exact same SerialCardService.update()/remove() this feature already has —
 // no new persistence logic, just a route shape that fits browsing/acting on arbitrary rows.
 @ApiTags('Legacy ERP - Serial Cards List')
+@PermissionModule('serial-cards', 'Serial cards')
 @Controller('legacy-erp/serial-cards')
 export class SerialCardListController {
   constructor(private readonly svc: SerialCardService) {}

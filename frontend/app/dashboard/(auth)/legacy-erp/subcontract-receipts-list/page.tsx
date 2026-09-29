@@ -12,7 +12,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, type PageRequest } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { getReceiptTypeConfig, SUBCONTRACT_RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
@@ -45,9 +47,6 @@ const TYPE_OPTIONS = SUBCONTRACT_RECEIPT_TYPES.map((t) => getReceiptTypeConfig(t
 // visible row shares the same value while the type dropdown is scoped to one type — sorting by
 // it is a harmless no-op in that case, not a bug.
 type SortKey = "receiptType" | "subcontractTypeName" | "receiptNo" | "receiptDate" | "currentAccountCode" | "receiptTotal";
-// Sorted against the actual underlying number, not the formatted "22,500.0000" display string —
-// every other sort key here is already a plain string/short code, safe for localeCompare.
-const NUMERIC_SORT_KEYS = new Set<SortKey>(["receiptTotal"]);
 
 // "all" fans a request out across every SUBCONTRACT_RECEIPT_TYPES member instead of scoping to
 // one — the actual "show ALL Subcontract Receipt records" default this screen needs. Picking a
@@ -64,8 +63,8 @@ export default function SubcontractReceiptsListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string; receiptType: number } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("receiptNo");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Server-side paging + sorting: the API searches/sorts every selected receipt type, then pages.
+  const paging = useServerPaging({ defaultSortBy: "receiptNo", defaultSortDir: "desc" });
   // One shared worklist set across the 4 Outside Process types this page serves, same convention
   // inventory-receipts-list uses across its own 17 — a worklist's fields carry their own source
   // tag, so switching receiptType just re-resolves the same active worklist against the newly
@@ -82,7 +81,7 @@ export default function SubcontractReceiptsListPage() {
   // unconditionally, see inventory-receipt.service.ts), so merging four single-type responses is
   // exactly equivalent to one query with `ReceiptType IN (11,12,133,134)`, just without touching
   // the shared generic backend route (reused by 13 other unrelated receipt-type screens).
-  const load = async (type: TypeFilter, term?: string, worklistOverride?: Worklist | null, subcontractTypeOverride?: string) => {
+  const load = async (type: TypeFilter, term?: string, worklistOverride?: Worklist | null, subcontractTypeOverride?: string, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
       const types = type === "all" ? [...SUBCONTRACT_RECEIPT_TYPES] : [type];
@@ -91,13 +90,23 @@ export default function SubcontractReceiptsListPage() {
       // The filter only applies to the Standard path today — a custom worklist's rows come from
       // the generic cross-source resolver (worklistFields.resolve), which has no
       // subcontractTypeId param; adding one there is a separate, bigger change than this fix.
-      const results = await Promise.all(types.map((t) =>
-        worklist
-          ? legacyErpApi.worklistFields.resolve(getReceiptTypeConfig(t).key, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-          : legacyErpApi.receipts(t).list(term, subType ? Number(subType) : undefined),
-      ));
-      const list = results.flatMap((r: any) => (Array.isArray(r) ? r : []));
-      setRows(worklist ? wl.normalizeRows(list) : list);
+      if (worklist) {
+        // The resolver is per receipt type: page N of every selected type, merged (totals summed),
+        // so every record of every type stays reachable by paging.
+        const results: any[] = await Promise.all(types.map((t) =>
+          legacyErpApi.worklistFields.resolve(getReceiptTypeConfig(t).key, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize }),
+        ));
+        const merged = {
+          rows: results.flatMap((r) => (Array.isArray(r?.rows) ? r.rows : [])),
+          total: results.reduce((s, r) => s + (Number(r?.total) || 0), 0),
+          pageCount: Math.max(1, ...results.map((r) => Number(r?.pageCount) || 1)),
+        };
+        setRows(wl.normalizeRows(paging.take(merged)));
+      } else {
+        // One query across every selected type: exact total, sorted/paged as a single list.
+        const r = await legacyErpApi.receipts(types.length === 1 ? types[0] : types).list(term, subType ? Number(subType) : undefined, req);
+        setRows(paging.take(r));
+      }
     } catch (e: any) {
       toast.error(e.message || `Failed to load ${typeLabel.toLowerCase()}s`);
       setRows([]);
@@ -108,18 +117,19 @@ export default function SubcontractReceiptsListPage() {
   };
 
   useEffect(() => { load(receiptType); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  paging.reloadRef.current = () => load(receiptType, search.trim() || undefined);
 
-  const doSearch = () => load(receiptType, search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(receiptType); };
+  const doSearch = () => load(receiptType, search.trim() || undefined, undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(receiptType, undefined, undefined, undefined, paging.firstPage()); };
   const onSubcontractTypeFilterSelect = (o: { id: number | string; name: string }) => {
     setSubcontractTypeFilterId(String(o.id));
     setSubcontractTypeFilterLabel(o.name);
-    load(receiptType, search.trim() || undefined, wl.activeWorklist, String(o.id));
+    load(receiptType, search.trim() || undefined, wl.activeWorklist, String(o.id), paging.firstPage());
   };
   const onSubcontractTypeFilterClear = () => {
     setSubcontractTypeFilterId("");
     setSubcontractTypeFilterLabel("");
-    load(receiptType, search.trim() || undefined, wl.activeWorklist, "");
+    load(receiptType, search.trim() || undefined, wl.activeWorklist, "", paging.firstPage());
   };
 
   // Selected dropdown type has absolute priority, same as receipt-master-data's onTableChange:
@@ -130,18 +140,18 @@ export default function SubcontractReceiptsListPage() {
     setReceiptType(next);
     setSearch("");
     setRows([]);
-    load(next, undefined, wl.activeWorklist);
+    load(next, undefined, wl.activeWorklist, undefined, paging.firstPage());
   };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(receiptType, search.trim() || undefined, worklist);
+    load(receiptType, search.trim() || undefined, worklist, undefined, paging.firstPage());
   };
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(receiptType, search.trim() || undefined, activeWorklist);
+    load(receiptType, search.trim() || undefined, activeWorklist, undefined, paging.firstPage());
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
@@ -212,21 +222,9 @@ export default function SubcontractReceiptsListPage() {
     }
   };
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const cmp = NUMERIC_SORT_KEYS.has(sortKey)
-        ? Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0)
-        : String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
+  // Rows arrive already sorted by the server (numerically for receiptTotal), across every
+  // selected type — sorting a single page client-side would misorder the list as a whole.
+  const sortedRows = rows;
 
   // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
   // page.tsx's own comment on this same pattern.
@@ -251,7 +249,7 @@ export default function SubcontractReceiptsListPage() {
               <p className="text-xs text-muted-foreground">{receiptType === "all" ? "All Types" : `${typeLabel}s`}</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
+                  {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
                 </Badge>
               )}
             </div>
@@ -319,9 +317,9 @@ export default function SubcontractReceiptsListPage() {
           storageKey="subcontractReceiptsList"
           getRowKey={(row) => row.id}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           onRowDoubleClick={(row) => view(row)}
           selectedIds={selectedIds}
           onRowClick={selectRow}
@@ -345,6 +343,7 @@ export default function SubcontractReceiptsListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

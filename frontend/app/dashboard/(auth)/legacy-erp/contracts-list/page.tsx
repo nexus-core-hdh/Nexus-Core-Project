@@ -12,6 +12,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
@@ -41,22 +44,22 @@ export default function ContractListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("receiptNo");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Server-side paging + sorting: the API searches/sorts the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "receiptNo", defaultSortDir: "desc" });
   // One shared worklist set across both contract types this page serves (via ?receiptType=),
   // same convention Inventory Receipts List uses for its own 17 types — a worklist's fields
   // carry their own source tag, so switching type just re-resolves the same active worklist.
   const wl = useWorklist({ storageKey: "contractsListWorklists" });
   const primaryTable = `${cfg.key}-list`;
 
-  const load = async (term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const r: any = worklist
-        ? await legacyErpApi.worklistFields.resolve(primaryTable, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await client.list(term);
-      const list = Array.isArray(r) ? r : [];
+        ? await legacyErpApi.worklistFields.resolve(primaryTable, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : await client.list(term, req);
+      const list = paging.take(r);
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || `Failed to load ${cfg.label.toLowerCase()}s`);
@@ -67,20 +70,21 @@ export default function ContractListPage() {
     }
   };
 
-  useEffect(() => { load(); }, [receiptType]);
+  useEffect(() => { load(undefined, undefined, paging.firstPage()); }, [receiptType]);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
+  const doSearch = () => load(search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, paging.firstPage()); };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(search.trim() || undefined, worklist);
+    load(search.trim() || undefined, worklist, paging.firstPage());
   };
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(search.trim() || undefined, activeWorklist);
+    load(search.trim() || undefined, activeWorklist, paging.firstPage());
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
@@ -102,19 +106,9 @@ export default function ContractListPage() {
     }
   };
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
 
   // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
   // page.tsx's own comment on this same pattern.
@@ -178,7 +172,7 @@ export default function ContractListPage() {
               <p className="text-xs text-muted-foreground">{cfg.label}s</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
+                  {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
                 </Badge>
               )}
             </div>
@@ -216,9 +210,9 @@ export default function ContractListPage() {
           storageKey="contractsList"
           getRowKey={(row) => row.id}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           onRowDoubleClick={(row) => view(row.id)}
           selectedIds={selectedIds}
           onRowClick={selectRow}
@@ -242,6 +236,7 @@ export default function ContractListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

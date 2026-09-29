@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { toast } from "sonner";
 import { CheckCircle2, AlertTriangle, Plus, Trash2, Search, Scissors, Copy, Check, ChevronsUpDown, Pencil, Info } from "lucide-react";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
@@ -141,7 +141,7 @@ export function YarnRecipeDialog({ open, onOpenChange, fabricInventoryId, fabric
   // full Yarn Card list applies to every bucket).
   useEffect(() => {
     if (!open) return;
-    legacyErpApi.yarnCards.list().then((yarns: any) => {
+    fetchAllPages((req) => legacyErpApi.yarnCards.list(undefined, req)).then((yarns: any) => {
       const yarnList = Array.isArray(yarns) ? yarns : [];
       yarnList.forEach((y: any) => { yarnCacheRef.current[String(y.id)] = y; });
       setYarnOptions(yarnList.map((y: any) => ({ id: String(y.id), code: y.inventoryCode, name: y.inventoryName })));

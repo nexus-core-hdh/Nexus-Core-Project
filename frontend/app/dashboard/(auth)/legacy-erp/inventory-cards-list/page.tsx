@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { RecipeUsageDialog } from "@/components/legacy-erp/recipe-usage-dialog";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, type PageRequest } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
@@ -59,8 +61,7 @@ export default function InventoryCardListPage() {
   const returnTab = params.get("returnTab") ? decodeURIComponent(params.get("returnTab")!) : undefined;
   // Optional narrowing filter — e.g. Purchase Order's Fixed Asset Code column opens this same
   // screen with sourceType=fixedasset so only Fixed Asset rows are offered, without a second
-  // dedicated picker screen. Client-side only: the backend already returns the full combined
-  // (≤200 row) list in one call, so narrowing here adds no extra request.
+  // dedicated picker screen. Sent to the API so it applies to the whole list, before paging.
   const sourceTypeFilter = params.get("sourceType") || undefined;
   const tabCtx = useWorkspaceTabContext();
   const closeTab = useWorkspaceStore((s) => s.closeTab);
@@ -73,8 +74,9 @@ export default function InventoryCardListPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("inventoryCode");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Server-side paging + sorting (+ the optional sourceType narrowing), all applied by the API
+  // before paging.
+  const paging = useServerPaging({ defaultSortBy: "inventoryCode" });
   // This screen's Standard rows already carry every field a custom worklist could select (the
   // synthetic UNION ALL's fixed output — see inventory-card.service.ts's INVENTORY_CARD_COLUMNS).
   // So unlike every other list screen, a custom worklist here is just a client-side column
@@ -86,15 +88,11 @@ export default function InventoryCardListPage() {
   // use the bare camelCase key directly (there's no raw table to alias from) — strip the prefix.
   const rawKey = (c: string) => c.slice(c.indexOf(":") + 1);
 
-  const load = async (term?: string, sortByOverride?: SortKey, sortDirOverride?: "asc" | "desc") => {
+  const load = async (term?: string, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
-      const r: any = await legacyErpApi.inventoryCards.list({
-        search: term,
-        sortBy: sortByOverride ?? sortKey,
-        sortDir: sortDirOverride ?? sortDir,
-      });
-      setRows(Array.isArray(r) ? r : []);
+      const r: any = await legacyErpApi.inventoryCards.list({ search: term, sourceType: sourceTypeFilter }, req);
+      setRows(paging.take(r));
     } catch (e: any) {
       toast.error(e.message || "Failed to load inventory cards");
       setRows([]);
@@ -105,16 +103,10 @@ export default function InventoryCardListPage() {
   };
 
   useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
-
-  const toggleSort = (key: SortKey) => {
-    const nextDir = sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : "asc";
-    setSortKey(key);
-    setSortDir(nextDir);
-    load(search.trim() || undefined, key, nextDir);
-  };
+  const doSearch = () => load(search.trim() || undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, paging.firstPage()); };
 
   const openCard = (row: any, cardMode: "view" | "edit") => {
     const base = SOURCE_ROUTES[row.sourceType];
@@ -168,13 +160,8 @@ export default function InventoryCardListPage() {
 
   const addNew = () => navigateOrOpenTab(router, "/dashboard/legacy-erp/inventory-cards-new");
 
-  // Sorting is already applied server-side (matches search, which round-trips too) — this is
-  // just a stable client-side copy so a fresh render never visibly reorders rows mid-sort,
-  // plus the optional sourceType narrowing described above.
-  const sortedRows = useMemo(
-    () => (sourceTypeFilter ? rows.filter((r) => r.sourceType === sourceTypeFilter) : rows),
-    [rows, sourceTypeFilter],
-  );
+  // Sorting and the optional sourceType narrowing are both applied server-side, before paging.
+  const sortedRows = rows;
 
   // Unified column model for WorklistTable — a custom worklist's dynamic fields (formatCell,
   // prefix-stripped via rawKey) or the Standard fixed set (own renderers/sortable headers).
@@ -249,7 +236,7 @@ export default function InventoryCardListPage() {
         badges={
           !loading && (
             <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-              {sortedRows.length} {sortedRows.length === 1 ? "record" : "records"}
+              {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
             </Badge>
           )
         }
@@ -287,9 +274,9 @@ export default function InventoryCardListPage() {
           storageKey="inventoryCardsList"
           getRowKey={(row) => `${row.sourceType}-${row.id}`}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           onRowDoubleClick={(row) => (mode === "lookup" ? returnAndClose(row) : openCard(row, "view"))}
           wrapRow={wrapInventoryRow}
           renderRowActions={(row) => (
@@ -320,6 +307,7 @@ export default function InventoryCardListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

@@ -23,6 +23,7 @@ import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
 import { cn } from "@/lib/utils";
+import { StoredImage } from "@/components/legacy-erp/stored-image";
 import {
   SizeSummary, textOn, OM_CHANGED_EVENT, OM_ROUTE,
   type GrandTotal, type MaterialColumn, type QualityType, type ReadRow,
@@ -169,7 +170,7 @@ export default function OrderManufacturingEntryPage() {
             </div>
           </div>
         </div>
-        {styleImage && <img src={styleImage} alt="" className="h-[68px] w-[68px] rounded-sm border object-cover" />}
+        {styleImage && <StoredImage url={styleImage} className="h-[68px] w-[68px] rounded-sm border object-cover" placeholder={<></>} />}
       </div>
 
       {ctx?.lockReason && <p className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">{ctx.lockReason} Manufacturing entries are read-only.</p>}

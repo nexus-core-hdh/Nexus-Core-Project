@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { CostingService } from './costing.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('PLM Costing')
+@PermissionModule('costing', 'Costing sheets')
 @Controller('plm')
 export class CostingController {
   constructor(private readonly svc: CostingService) {}

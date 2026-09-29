@@ -1,7 +1,26 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 
 const prisma = new PrismaClient();
+
+// Initial administrator. There is no built-in default password: SEED_ADMIN_PASSWORD is used when
+// set, otherwise a random one is generated and printed once. Either way the account must change
+// its password at first sign-in (mustChangePassword, enforced server-side). An existing admin
+// account is never modified by re-running the seed.
+const ADMIN_EMAIL = (process.env.SEED_ADMIN_EMAIL || 'admin@nexuscore.io').trim().toLowerCase();
+const MIN_ADMIN_PASSWORD = 12;
+
+function initialAdminPassword(): { password: string; generated: boolean } {
+  const fromEnv = process.env.SEED_ADMIN_PASSWORD;
+  if (fromEnv) {
+    if (fromEnv.length < MIN_ADMIN_PASSWORD) {
+      throw new Error(`SEED_ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD} characters`);
+    }
+    return { password: fromEnv, generated: false };
+  }
+  return { password: randomBytes(18).toString('base64url'), generated: true };
+}
 
 async function main() {
   console.log('🌱 Seeding NexusCore database...');
@@ -9,7 +28,7 @@ async function main() {
   // ── Company ───────────────────────────────────────────────────────────────────
   const company = await prisma.company.upsert({
     where: { id: 'seed-company-id-001' },
-    create: { id: 'seed-company-id-001', name: 'NexusCore Demo' },
+    create: { id: 'seed-company-id-001', name: process.env.SEED_COMPANY_NAME || 'NexusCore Demo' },
     update: {},
   });
   console.log(`✓ Company: ${company.name}`);
@@ -17,25 +36,31 @@ async function main() {
   // ── Branch ────────────────────────────────────────────────────────────────────
   const branch = await prisma.branch.upsert({
     where: { id: 'seed-branch-id-001' },
-    create: { id: 'seed-branch-id-001', companyId: company.id, name: 'Main Branch' },
+    create: { id: 'seed-branch-id-001', companyId: company.id, name: process.env.SEED_BRANCH_NAME || 'Main Branch' },
     update: {},
   });
   console.log(`✓ Branch: ${branch.name}`);
 
   // ── Admin User ────────────────────────────────────────────────────────────────
-  const password = await bcrypt.hash('nexuscore123', 10);
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@nexuscore.io' },
-    create: {
-      email: 'admin@nexuscore.io',
-      name: 'Admin',
-      password,
-      companyId: company.id,
-      branchId: branch.id,
-    },
-    update: {},
-  });
-  console.log(`✓ Admin user: ${admin.email}`);
+  let generatedAdminPassword: string | null = null;
+  let admin = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
+  if (admin) {
+    console.log(`✓ Admin user: ${admin.email} (already exists — password unchanged)`);
+  } else {
+    const initial = initialAdminPassword();
+    admin = await prisma.user.create({
+      data: {
+        email: ADMIN_EMAIL,
+        name: 'Admin',
+        password: await bcrypt.hash(initial.password, 10),
+        mustChangePassword: true,
+        companyId: company.id,
+        branchId: branch.id,
+      },
+    });
+    if (initial.generated) generatedAdminPassword = initial.password;
+    console.log(`✓ Admin user: ${admin.email} (created — must change password at first sign-in)`);
+  }
 
   // ── Permissions ───────────────────────────────────────────────────────────────
   const permissionDefs = [
@@ -117,6 +142,26 @@ async function main() {
     update: {},
   });
   console.log(`✓ Admin role assigned to ${admin.email}`);
+
+  // ── Legacy ERP company / workplace ────────────────────────────────────────────
+  // Every legacy-erp INSERT writes CompanyId = 1, WorkplaceId = 1 (e.g. work-order.service.ts
+  // `VALUES (1, 1, ...)`), and 166 / 138 legacy foreign keys point at MD_Company / MD_Workplace, so
+  // a fresh database needs exactly these two rows before any legacy screen can save. Inserted only
+  // when missing; the RecId sequences are then moved past the highest id.
+  await prisma.$executeRawUnsafe(`
+    INSERT INTO "MD_Company" ("RecId", "CompanyCode", "CompanyName", "InUse", "InsertedAt", "IsDeleted", "UUID")
+    SELECT 1, 'C001', $1, 1, now(), 0, gen_random_uuid()
+    WHERE NOT EXISTS (SELECT 1 FROM "MD_Company" WHERE "RecId" = 1)`, company.name);
+  await prisma.$executeRawUnsafe(`
+    INSERT INTO "MD_Workplace" ("RecId", "CompanyId", "WorkplaceCode", "WorkplaceName", "InUse", "InsertedAt", "IsDeleted", "UUID")
+    SELECT 1, 1, 'W001', $1, 1, now(), 0, gen_random_uuid()
+    WHERE NOT EXISTS (SELECT 1 FROM "MD_Workplace" WHERE "RecId" = 1)`, process.env.SEED_WORKPLACE_NAME || 'Main Workplace');
+  for (const table of ['MD_Company', 'MD_Workplace']) {
+    await prisma.$executeRawUnsafe(
+      `SELECT setval(pg_get_serial_sequence('"${table}"', 'RecId'), GREATEST((SELECT MAX("RecId") FROM "${table}"), 1))`,
+    );
+  }
+  console.log('✓ Legacy ERP company/workplace (RecId 1)');
 
   // ── BPM Processes ─────────────────────────────────────────────────────────────
   const processes = [
@@ -480,8 +525,12 @@ async function main() {
   }
 
   // ── Menu Items ────────────────────────────────────────────────────────────────
+  // "Already seeded" = this menu's own first root entry exists. Not `count() === 0`: migration
+  // 20260922000000_audit_log_lifecycle_fields inserts its own "Log Tracking" item, so on a fresh
+  // database the count is never 0 and the whole base menu used to be skipped.
   const existingMenus = await prisma.menuItem.count();
-  if (existingMenus === 0) {
+  const baseMenuSeeded = await prisma.menuItem.findFirst({ where: { href: '/dashboard/default', parentId: null }, select: { id: true } });
+  if (!baseMenuSeeded) {
     type MenuNode = { title: string; href: string; icon?: string; isComing?: boolean; isNew?: boolean; isDataBadge?: string; newTab?: boolean; items?: MenuNode[] };
     type MenuGroup = { title: string; items: MenuNode[] };
 
@@ -792,7 +841,11 @@ async function main() {
   }
 
   console.log('\n✅ NexusCore seed complete!');
-  console.log('   Admin login: admin@nexuscore.io / nexuscore123');
+  if (generatedAdminPassword) {
+    // Printed once, only when the account was just created; it is not stored anywhere else.
+    console.log(`   Initial admin sign-in: ${admin.email} / ${generatedAdminPassword}`);
+    console.log('   (one-time password — you will be asked to change it at first sign-in)');
+  }
 }
 
 main()

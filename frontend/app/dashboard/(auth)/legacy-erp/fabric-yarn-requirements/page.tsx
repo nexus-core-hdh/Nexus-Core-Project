@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ImageOff, ExternalLink, Lock, LockOpen, Trash2, ListX, Search } from "lucide-react";
+import { ExternalLink, Lock, LockOpen, Trash2, ListX, Search } from "lucide-react";
 import { toast } from "sonner";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
 import { getReceiptTypeLabel } from "@/lib/legacy-erp/receipt-types";
@@ -36,6 +36,8 @@ import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
+import { StoredImage } from "@/components/legacy-erp/stored-image";
+import { firstImageAttachment } from "@/lib/stored-file";
 import { RowActionsMenu, PageContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -65,6 +67,8 @@ interface RequirementRow {
   // separate fields (not just the one final number) so the grid can show input vs. calculated
   // clearly, per this screen's own "distinguish configuration from calculated requirement" goal.
   consumption: number;
+  // "Use Fix Quantity" BOM line: Consumption comes from the Style Card BOM and is read-only here.
+  fixQuantity?: boolean;
   applicableQuantity: number;
   matchedColor: string | null;
   quantity: number;
@@ -134,8 +138,40 @@ interface TransactionRow {
   receiptQuantity: number | null;
 }
 
-const attachmentUrl = (a: any) => (String(a?.url || "").startsWith("http") ? a.url : `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || "http://localhost:4000/api/v1"}/${String(a?.url || "").replace(/^\//, "")}`);
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString() : "—");
+
+// Backend getBomSource — the Effective BOM (Style Card + this Work Order's explicit overrides).
+// ignoredByRequirements: "fix-quantity" — the override stays on the Work Order BOM, but Requirements
+// take this line's quantity from the Style Card (Use Fix Quantity).
+interface BomOverrideField { field: string; workOrder: any; styleCard: any; ignoredByRequirements?: "fix-quantity" | null }
+interface BomDifference {
+  inventoryId: number | null; inventoryCode: string | null; inventoryName: string | null; variant: string | null; productionColor: string | null;
+  change: "override" | "added-on-work-order" | "removed-on-work-order" | "kept-after-style-card-removal";
+  fields: BomOverrideField[];
+}
+interface BomSource {
+  tab: RequirementTab; lineType: "fabric" | "trim"; styleCardId: string | null; styleNumber: string | null;
+  styleCardUpdatedAt: string | null; source: "effective" | "work-order" | "style-card" | "none";
+  inSync: boolean; differences: BomDifference[];
+}
+const BOM_FIELD_LABELS: Record<string, string> = {
+  consumption: "consumption", quantity: "quantity", wastage: "wastage %", unitId: "unit", price: "price", colorCardId: "material color",
+  isCutting: "will be cut", isMaster: "main fabric", explanation: "explanation", uD_Remarks: "process",
+  notForRequirement: "NOT for Requirement", isFixQuantity: "Use Fix Quantity",
+};
+const describeBomDifference = (d: BomDifference) => {
+  const item = [d.inventoryCode, d.inventoryName].filter(Boolean).join(" — ") || `Item ${d.inventoryId ?? "?"}`;
+  const label = [item, d.variant, d.productionColor].filter(Boolean).join(" · ");
+  if (d.change === "added-on-work-order") return `${label}: added on this Work Order only`;
+  if (d.change === "removed-on-work-order") return `${label}: on the Style Card but removed from this Work Order`;
+  const parts = d.fields.map((f) =>
+    (f.field === "colorCardId" || f.field === "unitId"
+      ? `${BOM_FIELD_LABELS[f.field]} changed`
+      : `${BOM_FIELD_LABELS[f.field] ?? f.field} ${f.workOrder ?? "—"} (Style Card: ${f.styleCard ?? "—"})`)
+    + (f.ignoredByRequirements === "fix-quantity" ? " — ignored: Fix Quantity" : ""));
+  const suffix = d.change === "kept-after-style-card-removal" ? " — no longer on the Style Card, kept because it was overridden" : "";
+  return `${label}: ${parts.join(", ")}${suffix}`;
+};
 
 // Total Requirements, computed from an already-filtered (isSaved-only) row set — mirrors
 // fabric-yarn-requirements.service.ts's own getTotalRequirements grouping EXACTLY (GROUP BY
@@ -189,6 +225,12 @@ export default function FabricYarnRequirementsPage() {
   // on why this never blocks Calculate/Save). Scoped by (workOrderId, type) exactly like every
   // other piece of state on this screen.
   const [mappingWarnings, setMappingWarnings] = useState<string[]>([]);
+  // Which BOM Calculate uses — the Work Order's own copy or the Style Card's live BOM — and how the
+  // own copy differs from the Style Card's current BOM (backend getBomSource). Shown so Calculate
+  // can never again silently run on an old copy after the Style Card BOM was edited.
+  const [bomSource, setBomSource] = useState<BomSource | null>(null);
+  const [refreshBomDialogOpen, setRefreshBomDialogOpen] = useState(false);
+  const [refreshingBom, setRefreshingBom] = useState(false);
   const [loadingGrids, setLoadingGrids] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -238,6 +280,9 @@ export default function FabricYarnRequirementsPage() {
       const wo: any = await legacyErpApi.workOrders.get(id);
       setWorkOrder(wo);
       setWorkOrderId(id);
+      // The Work Order's linked Style Card fills Style No and the style image; the lookup below
+      // can still switch it by hand.
+      setStyleCard(wo?.styleCardId ? await plmApi.styleCards.get(String(wo.styleCardId)).catch(() => null) : null);
     } catch (e: any) {
       toast.error(e.message || "Failed to load work order");
     } finally {
@@ -267,14 +312,16 @@ export default function FabricYarnRequirementsPage() {
   const loadGrids = async (id: number) => {
     setLoadingGrids(true);
     try {
-      const [saved, hasHistory, transactions, mfgQtySummary, warnings] = await Promise.all([
+      const [saved, hasHistory, transactions, mfgQtySummary, warnings, source] = await Promise.all([
         legacyErpApi.workOrders.requirements.getSaved(id, type).catch(() => []),
         legacyErpApi.workOrders.requirements.hasHistory(id, type).catch(() => false),
         legacyErpApi.workOrders.requirements.getTransactions(id).catch(() => []),
         legacyErpApi.workOrders.requirements.getManufacturingQuantity(id).catch(() => null),
         legacyErpApi.workOrders.requirements.getMappingWarnings(id, type).catch(() => []),
+        legacyErpApi.workOrders.requirements.getBomSource(id, type).catch(() => null),
       ]);
       setMappingWarnings(Array.isArray(warnings) ? warnings : []);
+      setBomSource((source as BomSource | null) ?? null);
       // Reload shows the last SAVED requirement (from MA_Requirement) if this Work Order/type has
       // ever been saved; otherwise falls back to the live BOM/Yarn-Recipe-derived rows so a
       // never-yet-saved Work Order still shows something meaningful. getSaved() now returns the
@@ -450,7 +497,7 @@ export default function FabricYarnRequirementsPage() {
     }
   };
 
-  const styleImage = (Array.isArray(styleCard?.attachments) ? styleCard.attachments : []).find((a: any) => String(a?.type || "").startsWith("image/"));
+  const styleImage = firstImageAttachment(styleCard?.attachments);
 
   // save() is self-contained — it independently recomputes getTotalRequirements() server-side
   // (fabric-yarn-requirements.service.ts's own save(), not merely persisting whatever calculate()
@@ -473,6 +520,25 @@ export default function FabricYarnRequirementsPage() {
       toast.error(e.message || "Failed to calculate");
     } finally {
       setCalculating(false);
+    }
+  };
+
+  // Explicit "Reset to Style Card": discards this Work Order's overrides of this BOM type (Yarn: the
+  // Fabric lines it is exploded from) so it follows the Style Card's BOM entirely. Only after the
+  // user confirms, and never implied by Calculate itself.
+  const refreshBomFromStyleCard = async () => {
+    if (!workOrderId) return;
+    setRefreshingBom(true);
+    try {
+      const source: any = await legacyErpApi.workOrders.requirements.refreshBomFromStyleCard(workOrderId, type);
+      setBomSource(source as BomSource);
+      setRefreshBomDialogOpen(false);
+      toast.success("Work Order overrides removed — click Calculate to recalculate requirements");
+      await loadGrids(workOrderId);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to reset the BOM to the Style Card");
+    } finally {
+      setRefreshingBom(false);
     }
   };
 
@@ -726,6 +792,16 @@ export default function FabricYarnRequirementsPage() {
         // isn't a BOM line reference at all, so editing had to be disabled entirely rather than
         // send the wrong id; fixed by targeting `lineId` instead — see setConsumptionForRow's own
         // comment).
+        // "Use Fix Quantity" line: Requirements use the Style Card BOM's quantity whatever the Work
+        // Order holds, so there is nothing to edit here — shown read-only, like Yarn's column above.
+        if (r.fixQuantity) {
+          return (
+            <span className="block px-1 text-right font-mono" title="Use Fix Quantity — taken from the Style Card BOM. Change it on the Style Card BOM.">
+              {r.consumption}
+              <span className="ml-1 text-[10px] text-muted-foreground">Fixed</span>
+            </span>
+          );
+        }
         return (
           <input
             type="number"
@@ -887,6 +963,31 @@ export default function FabricYarnRequirementsPage() {
         </div>
       )}
 
+      {/* BOM source — which BOM Calculate/Save use: the Style Card's live BOM plus this Work
+          Order's explicit overrides (the Effective BOM). Every override is listed so nothing that
+          changes the result differs from the Style Card without the user seeing it. */}
+      {workOrderId && bomSource && bomSource.source !== "none" && (
+        bomSource.source === "effective" && !bomSource.inSync ? (
+          <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <div className="flex items-start gap-2">
+              <p className="font-medium">
+                Calculate uses Style Card {bomSource.styleNumber}&apos;s current {bomSource.lineType} BOM with {bomSource.differences.length} Work Order override{bomSource.differences.length === 1 ? "" : "s"}:
+              </p>
+              <Button size="sm" variant="outline" className="ml-auto h-6 shrink-0 text-[11px]" disabled={mutationBlocked || refreshingBom} title={mutationBlocked ? "Locked — Unlock first" : undefined} onClick={() => setRefreshBomDialogOpen(true)}>
+                Reset to Style Card
+              </Button>
+            </div>
+            {bomSource.differences.map((d, i) => <p key={i}>{describeBomDifference(d)}</p>)}
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            BOM used by Calculate: {bomSource.source === "work-order"
+              ? `this Work Order's own ${bomSource.lineType} BOM (no Style Card linked)`
+              : `Style Card ${bomSource.styleNumber ?? ""} ${bomSource.lineType} BOM (live${bomSource.source === "effective" ? ", no Work Order overrides" : ""})`}
+          </p>
+        )
+      )}
+
       <div className="grid grid-cols-12 gap-3 rounded-md border p-3">
         <div className="col-span-3 space-y-1">
           <label className="text-xs text-muted-foreground">Order No</label>
@@ -904,7 +1005,7 @@ export default function FabricYarnRequirementsPage() {
             displayValue={workOrder?.workOrderNo || ""}
             fetchOptions={(t) => legacyErpApi.lookupTable("manufacturing-order", t) as Promise<MasterOption[]>}
             onSelect={(o) => loadWorkOrder(Number(o.id))}
-            onClear={() => { setWorkOrder(null); setWorkOrderId(null); setRequirementRows([]); setTotalRows([]); setTransactionRows([]); setMfgQty(null); setMappingWarnings([]); setTransactionFilter(null); setSelectedRequirementId(null); setSelectedTotalRowId(null); }}
+            onClear={() => { setWorkOrder(null); setWorkOrderId(null); setStyleCard(null); setRequirementRows([]); setTotalRows([]); setTransactionRows([]); setMfgQty(null); setMappingWarnings([]); setBomSource(null); setTransactionFilter(null); setSelectedRequirementId(null); setSelectedTotalRowId(null); }}
           />
         </div>
         <div className="col-span-4 space-y-1">
@@ -937,12 +1038,7 @@ export default function FabricYarnRequirementsPage() {
         </div>
         <div className="col-span-2 flex justify-end">
           <div className="h-20 w-20 shrink-0 overflow-hidden rounded-md border">
-            {styleImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={attachmentUrl(styleImage)} alt={styleCard?.title || "Style"} className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-muted-foreground"><ImageOff className="h-5 w-5" /></div>
-            )}
+            <StoredImage url={styleImage?.url} alt={styleCard?.title || "Style"} className="h-full w-full object-cover" />
           </div>
         </div>
       </div>
@@ -1117,6 +1213,23 @@ export default function FabricYarnRequirementsPage() {
             <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
             <AlertDialogAction className="bg-destructive hover:bg-destructive/90" disabled={deleteBusy} onClick={confirmDeleteRow}>
               {deleteBusy ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={refreshBomDialogOpen} onOpenChange={(open) => !open && setRefreshBomDialogOpen(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset Work Order BOM to Style Card?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes every override listed for Work Order {workOrder?.workOrderNo}&apos;s {bomSource?.lineType} BOM (consumption, material colors, production color mappings, added or removed materials), so it follows Style Card {bomSource?.styleNumber}&apos;s {bomSource?.lineType} BOM entirely. Other BOM types are not touched. Requirements are not recalculated until you click Calculate.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={refreshingBom}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={refreshingBom} onClick={(e) => { e.preventDefault(); refreshBomFromStyleCard(); }}>
+              {refreshingBom ? "Resetting..." : "Reset BOM"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

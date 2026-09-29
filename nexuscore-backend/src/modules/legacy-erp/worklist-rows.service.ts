@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -300,7 +301,7 @@ export class WorklistRowsService {
   // Server-side relational resolution: one query, joining/aggregating only the sources the
   // active worklist actually references (never N+1, never every relation unconditionally — see
   // RELATIONSHIPS comment above and worklist-fields.service.ts for the field whitelist).
-  async resolve(primaryTable: string, rawFields: RequestedField[], search?: string) {
+  async resolve(primaryTable: string, rawFields: RequestedField[], search?: string, paging: ListPaging | null = null) {
     const cfg = resolvePrimaryConfig(primaryTable);
     if (!cfg) throw new BadRequestException(`Unknown Receipt & Master Data source "${primaryTable}"`);
 
@@ -372,7 +373,6 @@ export class WorklistRowsService {
 
     const table = id(cfg.table);
     const extraWhere = cfg.extraWhere ?? Prisma.sql``;
-    const orderDir = Prisma.raw(cfg.orderDir === 'DESC' ? 'DESC' : 'ASC');
     const whereSearch = search
       ? Prisma.sql`AND (${Prisma.join(cfg.searchColumns.map((c) => Prisma.sql`r.${id(c)} ILIKE ${`%${search}%`}`), ' OR ')})`
       : Prisma.sql``;
@@ -381,14 +381,16 @@ export class WorklistRowsService {
     // cross-source fields needs no joins at all) — Prisma.sql`` is a safe empty fragment.
     const joinsSql = joinParts.length ? Prisma.join(joinParts, ' ') : Prisma.sql``;
 
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${Prisma.join(selectParts, ', ')}
-      FROM ${table} r
-      ${joinsSql}
-      WHERE r."IsDeleted" = 0 ${extraWhere} ${whereSearch}
-      ORDER BY r.${id(cfg.orderBy)} ${orderDir}
-      LIMIT 200
-    `);
-    return sanitizeRawRow(rows);
+    // Forward joins are FK lookups and reverse/bridge sources are single-row LATERAL aggregates,
+    // so there is one row per primary record and the count over the same FROM/WHERE is exact.
+    return runLegacyList(this.prisma, {
+      select: Prisma.join(selectParts, ', '),
+      from: Prisma.sql`FROM ${table} r ${joinsSql} WHERE r."IsDeleted" = 0 ${extraWhere} ${whereSearch}`,
+      sortable: Object.fromEntries([...new Set([cfg.orderBy, ...cfg.searchColumns])].map((c) => [c, Prisma.sql`r.${id(c)}`])),
+      defaultSortBy: cfg.orderBy,
+      defaultSortDir: cfg.orderDir === 'DESC' ? 'desc' : 'asc',
+      tiebreak: Prisma.sql`r."RecId"`,
+      legacyLimit: 200,
+    }, paging, sanitizeRawRow);
   }
 }

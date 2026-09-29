@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FinanceService } from './finance.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Finance')
+@PermissionModule('finance', 'Finance')
 @Controller('finance')
 export class FinanceController {
   constructor(private readonly svc: FinanceService) {}

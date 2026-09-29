@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { WhatsappService } from './whatsapp.service';
@@ -7,6 +8,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('WhatsApp')
+@PermissionModule('whatsapp', 'WhatsApp')
 @Controller('whatsapp')
 export class WhatsappController {
   constructor(private readonly whatsappService: WhatsappService) {}

@@ -7,7 +7,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Layers, Lock } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
@@ -159,7 +159,7 @@ export default function YarnCardPage() {
       const entries = await Promise.all(LOOKUP_KEYS.map((k) => legacyErpApi.lookupTable(k).catch(() => [])));
       setLookups(Object.fromEntries(LOOKUP_KEYS.map((k, i) => [k, entries[i] as LookupOption[]])) as any);
     })();
-    legacyErpApi.unitSets.list().then((r: any) => setUnitSets(Array.isArray(r) ? r : [])).catch(() => setUnitSets([]));
+    fetchAllPages((req) => legacyErpApi.unitSets.list(undefined, req)).then((r: any) => setUnitSets(Array.isArray(r) ? r : [])).catch(() => setUnitSets([]));
   }, []);
 
   useEffect(() => {

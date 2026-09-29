@@ -1,10 +1,12 @@
 import { Body, Controller, Get, Post, Put } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CompanyService } from './company.service';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Company')
+@PermissionModule('company', 'Company & branches')
 @Controller('company')
 export class CompanyController {
   constructor(private readonly companyService: CompanyService) {}

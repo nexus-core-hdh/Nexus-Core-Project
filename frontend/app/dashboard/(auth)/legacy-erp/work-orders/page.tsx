@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SelectSizesDialog, type SizeGroup } from "@/app/dashboard/(auth)/plm/_components/select-sizes-dialog";
 import { BomTab } from "@/app/dashboard/(auth)/plm/style-cards/[id]/_components/bom-tab";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { StoredImage } from "@/components/legacy-erp/stored-image";
+import { firstImageAttachment } from "@/lib/stored-file";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
@@ -1111,8 +1113,9 @@ export default function WorkOrderPage() {
               <h1 className="truncate text-[15px] font-semibold leading-tight">{titleText}</h1>
               <p className="text-[11px] text-muted-foreground">Manufacturing Work Order</p>
             </div>
+            {/* The linked Style Card's first picture (the same image its Picture Gallery shows). */}
             <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded border border-dashed bg-background text-muted-foreground">
-              <ImageIcon className="h-4 w-4" />
+              <StoredImage url={firstImageAttachment(styleCardFull?.attachments)?.url} alt={styleCardFull?.title || "Style"} className="h-full w-full object-cover" placeholder={<ImageIcon className="h-4 w-4" />} />
             </div>
             <Button size="sm" className="h-7 text-xs" onClick={save} disabled={saving || readOnly}>
               <Save className="h-3.5 w-3.5 mr-1" />{saving ? "Saving..." : "Save"}
@@ -1357,7 +1360,9 @@ export default function WorkOrderPage() {
                 {Array.isArray(styleCardFull?.attachments) && styleCardFull.attachments.length ? (
                   <div className="flex flex-wrap gap-2">
                     {styleCardFull.attachments.map((a: any, i: number) => (
-                      <img key={i} src={typeof a === "string" ? a : a?.url} alt="" className="h-20 w-20 rounded border object-cover" />
+                      <div key={i} className="h-20 w-20 overflow-hidden rounded border">
+                        <StoredImage url={typeof a === "string" ? a : a?.url} alt={a?.name || ""} className="h-full w-full object-cover" />
+                      </div>
                     ))}
                   </div>
                 ) : <p className="text-[11.5px] text-muted-foreground">No images on the selected Style Card.</p>}

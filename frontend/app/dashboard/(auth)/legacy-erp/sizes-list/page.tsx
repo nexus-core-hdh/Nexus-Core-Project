@@ -12,6 +12,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, Scaling, SearchX, ChevronRight } from "lucide-react";
@@ -39,16 +42,18 @@ export default function SizesListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SizeSetRow | null>(null);
+  // Server-side paging: the API searches the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "code" });
   const wl = useWorklist({ storageKey: "sizesListWorklists" });
 
-  const load = async (term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const r: any = worklist
-        ? await legacyErpApi.worklistFields.resolve("size-set-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await legacyErpApi.sizeSets.list(term);
-      const list = Array.isArray(r) ? r : [];
+        ? await legacyErpApi.worklistFields.resolve("size-set-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : await legacyErpApi.sizeSets.list(term, req);
+      const list = paging.take(r);
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load sizes");
@@ -60,19 +65,20 @@ export default function SizesListPage() {
   };
 
   useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
+  const doSearch = () => load(search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, paging.firstPage()); };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(search.trim() || undefined, worklist);
+    load(search.trim() || undefined, worklist, paging.firstPage());
   };
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(search.trim() || undefined, activeWorklist);
+    load(search.trim() || undefined, activeWorklist, paging.firstPage());
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
@@ -146,7 +152,7 @@ export default function SizesListPage() {
               <p className="text-xs text-muted-foreground">Size master data</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
+                  {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
                 </Badge>
               )}
             </div>
@@ -203,6 +209,7 @@ export default function SizesListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

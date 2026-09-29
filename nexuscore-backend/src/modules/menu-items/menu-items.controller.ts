@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { MenuItemsService } from './menu-items.service';
 
 @ApiTags('Menu Items')
+@PermissionModule('menu', 'Navigation menu')
 @Controller('menu-items')
 export class MenuItemsController {
   constructor(private readonly svc: MenuItemsService) {}

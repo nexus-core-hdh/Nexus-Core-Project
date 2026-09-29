@@ -2,18 +2,21 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from 
 import { ApiTags } from '@nestjs/swagger';
 import { FabricYarnRequirementsService, RequirementTab } from './fabric-yarn-requirements.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Permissions, PermissionModule } from '../../common/decorators/permissions.decorator';
 
 const asTab = (q?: string): RequirementTab => (q === 'yarn' || q === 'trim' ? q : 'fabric');
 
 @ApiTags('Legacy ERP - Fabric/Trim/Yarn Requirements')
+@PermissionModule('requirements', 'Fabric/Yarn/Trim requirements')
 @Controller('legacy-erp/work-orders/:id/requirements')
 export class FabricYarnRequirementsController {
   constructor(private readonly svc: FabricYarnRequirementsService) {}
 
   @Get() getRequirementsGrid(@Param('id', ParseIntPipe) id: number, @Query('type') type?: string) {
     const tab = asTab(type);
-    return tab === 'yarn' ? this.svc.getYarnRequirements(id) : this.svc.getMaterialRequirements(id, tab);
+    return tab === 'yarn'
+      ? this.svc.getYarnRequirements(id, { requirements: true })
+      : this.svc.getMaterialRequirements(id, tab, { requirements: true });
   }
 
   @Get('saved') getSavedRequirements(@Param('id', ParseIntPipe) id: number, @Query('type') type?: string) {
@@ -33,6 +36,23 @@ export class FabricYarnRequirementsController {
 
   @Get('manufacturing-quantity') getManufacturingQuantitySummary(@Param('id', ParseIntPipe) id: number) {
     return this.svc.getManufacturingQuantitySummary(id);
+  }
+
+  // Which BOM Calculate uses (Work Order's own copy vs the Style Card's live BOM) and how it
+  // differs from the Style Card's current BOM — see the service's getBomSource().
+  @Get('bom-source') getBomSource(@Param('id', ParseIntPipe) id: number, @Query('type') type?: string) {
+    return this.svc.getBomSource(id, asTab(type));
+  }
+
+  // "Reset to Style Card": replaces this Work Order's own BOM lines of one type (discarding its overrides) — the
+  // same write as saving the Work Order's BOM tab, so it needs the same permission.
+  @Permissions({ module: 'work-orders', action: 'update' })
+  @Post('refresh-bom-from-style-card') refreshBomFromStyleCard(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('type') type: string | undefined,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.svc.refreshBomFromStyleCard(id, asTab(type), Number(userId) || 1, userId);
   }
 
   // Additive — Multi-Color BOM mapping validation. New endpoint, does not change any existing

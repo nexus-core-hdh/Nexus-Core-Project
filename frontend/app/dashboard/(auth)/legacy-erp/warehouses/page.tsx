@@ -40,10 +40,22 @@ export default function WarehousesPage() {
     setLoading(true);
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
-      const r = worklist
-        ? await legacyErpApi.worklistFields.resolve("warehouse-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })))
-        : await legacyErpApi.warehouses.list();
-      const list = Array.isArray(r) ? (worklist ? wl.normalizeRows(r) : r) : [];
+      let list: any[];
+      if (worklist) {
+        // Small master table shown in full (like the Standard view below): page through the
+        // resolver so no warehouse is ever cut off by its per-request limit.
+        const fields = worklist.fields.map((f) => ({ source: f.source, key: f.key }));
+        const all: any[] = [];
+        for (let page = 1; ; page++) {
+          const r: any = await legacyErpApi.worklistFields.resolve("warehouse-list", fields, undefined, { page, pageSize: 500 });
+          all.push(...(r?.rows ?? []));
+          if (!r?.rows?.length || all.length >= Number(r.total ?? 0)) break;
+        }
+        list = wl.normalizeRows(all);
+      } else {
+        const r = await legacyErpApi.warehouses.list();
+        list = Array.isArray(r) ? r : [];
+      }
       setData(list.map((w: any) => ({ ...w, id: String(w.id) })));
     } finally {
       setLoading(false);

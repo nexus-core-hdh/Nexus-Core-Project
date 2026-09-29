@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PipelineService } from './pipeline.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Pipeline')
+@PermissionModule('crm', 'CRM')
 @Controller('pipeline')
 export class PipelineController {
   constructor(private readonly svc: PipelineService) {}

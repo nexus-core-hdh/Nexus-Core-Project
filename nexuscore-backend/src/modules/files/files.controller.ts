@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FilesService } from './files.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Files')
+@PermissionModule('files', 'File manager')
 @Controller('files')
 export class FilesController {
   constructor(private readonly svc: FilesService) {}

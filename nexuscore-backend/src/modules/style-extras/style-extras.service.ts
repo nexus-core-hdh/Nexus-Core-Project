@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LegacyMasterLookupService } from '../legacy-erp/legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit } from '../legacy-erp/unit-conversion.util';
@@ -32,6 +32,14 @@ function pickBomLine(l: any) {
   // Normal business quantities/values — none of these has a legitimate signed meaning on a BOM
   // line (no discount/reversal/adjustment concept exists here); Consumption, Wastage %s, Market
   // dimensions and Unit Price are always magnitudes.
+  // Quantity is a user-entered value on every line type (Fabric included) — reject what the
+  // StyleBomLine/SampleBomLine Decimal(14,4) column cannot hold with a clear 400 instead of a
+  // database error.
+  if (out.quantity !== undefined && out.quantity !== null && out.quantity !== '') {
+    const q = Number(out.quantity);
+    if (!Number.isFinite(q)) throw new BadRequestException('Quantity must be a number.');
+    if (Math.abs(q) >= 1e10) throw new BadRequestException('Quantity is too large.');
+  }
   assertAllNonNegative({
     Quantity: out.quantity, 'Waste %': out.wastePct, 'Dye Wastage %': out.dyeWastagePct,
     'Other Wastage %': out.otherWastagePct, 'Print Wastage %': out.printWastagePct,
@@ -82,25 +90,25 @@ export class StyleExtrasService {
 
   async upsertBomLines(styleCardId: string, lines: any[]) {
     await this.findStyleCardOrThrow(styleCardId);
-    await this.prisma.styleBomLine.deleteMany({ where: { styleCardId } });
-    if (lines?.length) {
-      // Fabric/Trim Card = IM_Item (fabricInventoryId is that Item's RecId — see bom-tab.tsx's
-      // own comment) so the exact same Item -> Unit resolution/validation Purchase Order and
-      // Purchase Receipt already enforce (unit-conversion.util.ts, reused as-is) applies here:
-      // a stale/foreign/hand-crafted unitId from the client is normalized to one of the card's
-      // own configured units rather than trusted outright. Lines with no fabricInventoryId
-      // (Ornament/Process, or a Fabric/Trim line with no card selected) pass through untouched —
-      // resolveLineUnitId/assertValidItemUnit are both no-ops when inventoryId is null.
-      const picked = await Promise.all(lines.map(async (l) => {
-        const line = pickBomLine(l);
-        line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
-        await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
-        return line;
-      }));
-      await this.prisma.styleBomLine.createMany({
-        data: picked.map((line, i) => ({ ...line, sortOrder: i, styleCardId })),
-      });
-    }
+    // Fabric/Trim Card = IM_Item (fabricInventoryId is that Item's RecId — see bom-tab.tsx's
+    // own comment) so the exact same Item -> Unit resolution/validation Purchase Order and
+    // Purchase Receipt already enforce (unit-conversion.util.ts, reused as-is) applies here:
+    // a stale/foreign/hand-crafted unitId from the client is normalized to one of the card's
+    // own configured units rather than trusted outright. Lines with no fabricInventoryId
+    // (Ornament/Process, or a Fabric/Trim line with no card selected) pass through untouched —
+    // resolveLineUnitId/assertValidItemUnit are both no-ops when inventoryId is null.
+    // Every line is validated BEFORE the existing lines are replaced, and the replace is one
+    // transaction — a rejected save leaves the card's BOM exactly as it was.
+    const picked = await Promise.all((lines || []).map(async (l) => {
+      const line = pickBomLine(l);
+      line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
+      await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
+      return line;
+    }));
+    await this.prisma.$transaction([
+      this.prisma.styleBomLine.deleteMany({ where: { styleCardId } }),
+      this.prisma.styleBomLine.createMany({ data: picked.map((line, i) => ({ ...line, sortOrder: i, styleCardId })) }),
+    ]);
     return this.getBomLines(styleCardId);
   }
 
@@ -116,18 +124,17 @@ export class StyleExtrasService {
 
   async upsertSampleBomLines(sampleCardId: string, lines: any[]) {
     await this.findSampleCardOrThrow(sampleCardId);
-    await this.prisma.sampleBomLine.deleteMany({ where: { sampleCardId } });
-    if (lines?.length) {
-      const picked = await Promise.all(lines.map(async (l) => {
-        const line = pickBomLine(l);
-        line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
-        await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
-        return line;
-      }));
-      await this.prisma.sampleBomLine.createMany({
-        data: picked.map((line, i) => ({ ...line, sortOrder: i, sampleCardId })),
-      });
-    }
+    // Validate first, then replace in one transaction — same as upsertBomLines above.
+    const picked = await Promise.all((lines || []).map(async (l) => {
+      const line = pickBomLine(l);
+      line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
+      await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
+      return line;
+    }));
+    await this.prisma.$transaction([
+      this.prisma.sampleBomLine.deleteMany({ where: { sampleCardId } }),
+      this.prisma.sampleBomLine.createMany({ data: picked.map((line, i) => ({ ...line, sortOrder: i, sampleCardId })) }),
+    ]);
     return this.getSampleBomLines(sampleCardId);
   }
 

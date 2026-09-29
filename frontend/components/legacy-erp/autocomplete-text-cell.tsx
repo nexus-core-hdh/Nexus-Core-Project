@@ -35,7 +35,7 @@ export interface AutocompleteOption {
 // — "verify-me" matches "v", "ify", "me", "fy", "ABC"/"abc"/"AbC" all match identically, since
 // both the query and the candidate text are lower-cased before the same String.includes() check.
 export function AutocompleteTextCell({
-  value, options, disabled, autoFocus, showDropdownIcon, startOpen = true, placeholder, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
+  value, options, disabled, autoFocus, showDropdownIcon, startOpen = true, openOnFocus = false, popoverClassName, placeholder, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
 }: {
   value: string;
   options: AutocompleteOption[];
@@ -53,6 +53,13 @@ export function AutocompleteTextCell({
   // list closed until the user actually interacts — startOpen={false} opts into that without
   // changing behavior for any existing caller.
   startOpen?: boolean;
+  // Opt-in for a permanently mounted lookup field: clicking/focusing it opens the list, showing
+  // every option until the user types (the field's current value doesn't narrow it) — so an empty
+  // field, or one already holding a selection, still offers the full list on click.
+  openOnFocus?: boolean;
+  // Optional extra classes for the suggestion list (e.g. a min-width so long "Code - Name" options
+  // stay readable in a narrow cell). Omitted: the list matches the cell's width, as before.
+  popoverClassName?: string;
   onChange: (v: string) => void;
   onCommit: (finalValue: string) => void;
   onCancel: () => void;
@@ -67,7 +74,13 @@ export function AutocompleteTextCell({
 }) {
   const [open, setOpen] = useState(startOpen);
   const [highlighted, setHighlighted] = useState(0);
-  const q = value.trim().toLowerCase();
+  // openOnFocus only: whether the user has typed since the field was focused (see the prop).
+  const [typedSinceFocus, setTypedSinceFocus] = useState(false);
+  // openOnFocus only: whether the user has typed or moved through the list (arrow keys) since the
+  // field was focused. Until then the list is only being shown, so Tab/Enter just leave/commit the
+  // field instead of picking the first suggestion — merely tabbing through never changes the value.
+  const [pickedSinceFocus, setPickedSinceFocus] = useState(false);
+  const q = openOnFocus && !typedSinceFocus ? "" : value.trim().toLowerCase();
   // Matches Code AND Name (not just whichever of the two happens to be non-empty) — fields
   // built on this component may bind either one as the primary searchable value (e.g. Name
   // search with a locked auto-filled Code), so both need to be searchable regardless of which
@@ -91,7 +104,8 @@ export function AutocompleteTextCell({
   // free text is never rejected just because nothing in the list matched it.
   const resolveHighlightedOrTyped = () => {
     setOpen(false);
-    if (filtered.length && highlighted >= 0 && highlighted < filtered.length) selectSuggestion(filtered[highlighted]);
+    const mayPick = !openOnFocus || pickedSinceFocus;
+    if (mayPick && filtered.length && highlighted >= 0 && highlighted < filtered.length) selectSuggestion(filtered[highlighted]);
     else onCommit(value);
   };
 
@@ -113,13 +127,15 @@ export function AutocompleteTextCell({
           value={value}
           disabled={disabled}
           placeholder={placeholder}
-          onChange={(v) => { onChange(v); setOpen(true); }}
+          onChange={(v) => { onChange(v); setTypedSinceFocus(true); setPickedSinceFocus(true); setOpen(true); }}
+          onFocus={openOnFocus ? () => { setTypedSinceFocus(false); setPickedSinceFocus(false); setOpen(true); } : undefined}
+          onClick={openOnFocus ? () => setOpen(true) : undefined}
           onBlur={() => { setOpen(false); onCommit(value); }}
           onDoubleClick={onDoubleClick}
           onKeyDown={(e) => {
             if (e.key === "Escape") { e.preventDefault(); setOpen(false); onCancel(); return; }
-            if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHighlighted((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0))); return; }
-            if (e.key === "ArrowUp") { e.preventDefault(); setHighlighted((h) => Math.max(h - 1, 0)); return; }
+            if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setPickedSinceFocus(true); setHighlighted((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0))); return; }
+            if (e.key === "ArrowUp") { e.preventDefault(); setPickedSinceFocus(true); setHighlighted((h) => Math.max(h - 1, 0)); return; }
             // Enter/Tab resolve immediately (same net effect as blur) rather than routing
             // through the grid's shared handleEditorKeyDown — that helper calls persistRow
             // synchronously off the row's current state, but resolving a brand-new typed value
@@ -144,7 +160,7 @@ export function AutocompleteTextCell({
         // which is why every suggestion popup used to silently ignore the trigger width and
         // just grow to fit its longest suggestion's own text width instead of matching the
         // cell it belongs to.
-        className="w-[var(--radix-popover-trigger-width)] max-h-44 overflow-y-auto p-1"
+        className={cn("w-[var(--radix-popover-trigger-width)] max-h-44 overflow-y-auto p-1", popoverClassName)}
       >
         <div role="listbox">
           {filtered.map((o, i) => (
@@ -156,6 +172,7 @@ export function AutocompleteTextCell({
               onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => setHighlighted(i)}
               onClick={() => selectSuggestion(o)}
+              title={o.code ? `${o.code} - ${o.name}` : o.name ?? undefined}
               className={cn("block w-full truncate rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-accent", i === highlighted && "bg-accent")}
             >
               {o.code ? `${o.code} - ${o.name}` : o.name}

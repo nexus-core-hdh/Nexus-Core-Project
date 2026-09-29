@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -139,40 +140,37 @@ export class AccountService {
     return `${prefix}-${String(next).padStart(3, '0')}`;
   }
 
-  async list(search?: string) {
+  async list(search?: string, paging: ListPaging | null = null) {
     // Also returns Debit/Credit/Balance summed from the existing FI_AccountTotal (no new
     // table) for the account list screen's grid. "Balance Trial (BT)" has no documented
     // definition anywhere in the migrated schema/procedures (same situation as
     // CurrentAccountType earlier) — shown as the same Debit-minus-Credit balance until a real
     // definition is supplied.
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT a."RecId" as id, a."CurrentAccountCode" as "code", a."CurrentAccountName" as "name",
+    const where = search
+      ? Prisma.sql`WHERE a."IsDeleted" = 0 AND (a."CurrentAccountCode" ILIKE ${`%${search}%`} OR a."CurrentAccountName" ILIKE ${`%${search}%`})`
+      : Prisma.sql`WHERE a."IsDeleted" = 0`;
+    const debit = Prisma.sql`COALESCE(SUM(t."Debit01"+t."Debit02"+t."Debit03"+t."Debit04"+t."Debit05"+t."Debit06"+t."Debit07"+t."Debit08"+t."Debit09"+t."Debit10"+t."Debit11"+t."Debit12"), 0)::float`;
+    const credit = Prisma.sql`COALESCE(SUM(t."Credit01"+t."Credit02"+t."Credit03"+t."Credit04"+t."Credit05"+t."Credit06"+t."Credit07"+t."Credit08"+t."Credit09"+t."Credit10"+t."Credit11"+t."Credit12"), 0)::float`;
+    return runLegacyList(this.prisma, {
+      select: Prisma.sql`a."RecId" as id, a."CurrentAccountCode" as "code", a."CurrentAccountName" as "name",
             a."SpecialCode" as "specialCode",
-            COALESCE(SUM(t."Debit01"+t."Debit02"+t."Debit03"+t."Debit04"+t."Debit05"+t."Debit06"+t."Debit07"+t."Debit08"+t."Debit09"+t."Debit10"+t."Debit11"+t."Debit12"), 0)::float as "debit",
-            COALESCE(SUM(t."Credit01"+t."Credit02"+t."Credit03"+t."Credit04"+t."Credit05"+t."Credit06"+t."Credit07"+t."Credit08"+t."Credit09"+t."Credit10"+t."Credit11"+t."Credit12"), 0)::float as "credit"
-          FROM "FI_Account" a
+            ${debit} as "debit",
+            ${credit} as "credit"`,
+      from: Prisma.sql`FROM "FI_Account" a
           LEFT JOIN "FI_AccountTotal" t ON t."CurrentAccountId" = a."RecId"
-          WHERE a."IsDeleted" = 0 AND (a."CurrentAccountCode" ILIKE ${`%${search}%`} OR a."CurrentAccountName" ILIKE ${`%${search}%`})
-          GROUP BY a."RecId", a."CurrentAccountCode", a."CurrentAccountName", a."SpecialCode"
-          ORDER BY a."CurrentAccountCode" LIMIT 100
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT a."RecId" as id, a."CurrentAccountCode" as "code", a."CurrentAccountName" as "name",
-            a."SpecialCode" as "specialCode",
-            COALESCE(SUM(t."Debit01"+t."Debit02"+t."Debit03"+t."Debit04"+t."Debit05"+t."Debit06"+t."Debit07"+t."Debit08"+t."Debit09"+t."Debit10"+t."Debit11"+t."Debit12"), 0)::float as "debit",
-            COALESCE(SUM(t."Credit01"+t."Credit02"+t."Credit03"+t."Credit04"+t."Credit05"+t."Credit06"+t."Credit07"+t."Credit08"+t."Credit09"+t."Credit10"+t."Credit11"+t."Credit12"), 0)::float as "credit"
-          FROM "FI_Account" a
-          LEFT JOIN "FI_AccountTotal" t ON t."CurrentAccountId" = a."RecId"
-          WHERE a."IsDeleted" = 0
-          GROUP BY a."RecId", a."CurrentAccountCode", a."CurrentAccountName", a."SpecialCode"
-          ORDER BY a."CurrentAccountCode" LIMIT 100
-        `);
-    return sanitizeRawRow(rows).map((r: any) => ({
+          ${where}
+          GROUP BY a."RecId", a."CurrentAccountCode", a."CurrentAccountName", a."SpecialCode"`,
+      countFrom: Prisma.sql`FROM "FI_Account" a ${where}`,
+      sortable: {
+        code: Prisma.sql`a."CurrentAccountCode"`, name: Prisma.sql`a."CurrentAccountName"`, specialCode: Prisma.sql`a."SpecialCode"`,
+        debit, credit, balance: Prisma.sql`(${debit} - ${credit})`, balanceTrial: Prisma.sql`(${debit} - ${credit})`,
+      },
+      defaultSortBy: 'code', defaultSortDir: 'asc', tiebreak: Prisma.sql`a."RecId"`, legacyLimit: 100,
+    }, paging, (rows) => sanitizeRawRow(rows).map((r: any) => ({
       ...r,
       balance: r.debit - r.credit,
       balanceTrial: r.debit - r.credit,
-    }));
+    })));
   }
 
   async get(id: number) {

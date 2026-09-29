@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Param, Put } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { StyleExtrasService } from './style-extras.service';
 
 @ApiTags('PLM Style Extras')
+@PermissionModule('plm', 'PLM')
 @Controller('plm')
 export class StyleExtrasController {
   constructor(private readonly svc: StyleExtrasService) {}

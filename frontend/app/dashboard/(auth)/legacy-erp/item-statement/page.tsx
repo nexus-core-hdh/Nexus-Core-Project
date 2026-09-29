@@ -11,7 +11,7 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
-import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, plmApi, fetchAllPages } from "@/lib/nexuscore-api";
 import type { ItemStatementFilters } from "@/lib/nexuscore-api";
 import { cn } from "@/lib/utils";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
@@ -147,7 +147,7 @@ export default function ItemStatementPage() {
   useEffect(() => {
     plmApi.colors.list().then((r: any) => setColorOptions(Array.isArray(r) ? r : [])).catch(() => {});
     legacyErpApi.warehouses.list().then((r: any) => setWarehouseOptions(Array.isArray(r) ? r : [])).catch(() => {});
-    legacyErpApi.accounts.list().then((r: any) => setAccountOptions(Array.isArray(r) ? r : [])).catch(() => {});
+    fetchAllPages((req) => legacyErpApi.accounts.list(undefined, req)).then((r: any) => setAccountOptions(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
 
   const load = async (filters: ItemStatementFilters, currentView: ViewMode) => {

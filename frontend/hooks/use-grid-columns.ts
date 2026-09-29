@@ -304,6 +304,9 @@ export function useGridColumns<K extends string>({
   const [modalHidden, setModalHidden] = useState<Set<K>>(hiddenColumns);
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  // "Reset Default" in the modal also puts column widths back to their declared defaults —
+  // applied (like the order/visibility draft) only when the user then saves.
+  const [resetWidthsPending, setResetWidthsPending] = useState(false);
   const modalDragRef = useRef<K | null>(null);
   const [modalDragOver, setModalDragOver] = useState<K | null>(null);
 
@@ -311,6 +314,7 @@ export function useGridColumns<K extends string>({
     setModalOrder(columnOrder);
     setModalHidden(new Set(hiddenColumns));
     setSearch("");
+    setResetWidthsPending(false);
     setOpen(true);
   }, [columnOrder, hiddenColumns]);
   const closeModal = useCallback(() => setOpen(false), []);
@@ -350,17 +354,22 @@ export function useGridColumns<K extends string>({
   const resetToDefault = useCallback(() => {
     setModalOrder(reorderableDefault);
     setModalHidden(new Set(defaultHidden));
+    setResetWidthsPending(true);
   }, [reorderableDefault, defaultHidden]);
 
-  const applySession = useCallback((order: K[], hidden: Set<K>) => {
+  // Returns the widths that were applied (the defaults after "Reset Default", else the live ones).
+  const applySession = useCallback((order: K[], hidden: Set<K>): Record<K, number> => {
+    const widths = resetWidthsPending ? defaultWidths : colWidths;
     setColumnOrder(order);
     setHiddenColumns(hidden);
+    if (resetWidthsPending) { setColWidths(defaultWidths); setResetWidthsPending(false); }
     try {
       sessionStorage.setItem(sessionOrderKey(storageKey), JSON.stringify(order));
       sessionStorage.setItem(sessionHiddenKey(storageKey), JSON.stringify(Array.from(hidden)));
-      sessionStorage.setItem(sessionWidthsKey(storageKey), JSON.stringify(colWidths));
+      sessionStorage.setItem(sessionWidthsKey(storageKey), JSON.stringify(widths));
     } catch { /* sessionStorage unavailable — live grid still updated above */ }
-  }, [storageKey, colWidths]);
+    return widths;
+  }, [storageKey, colWidths, defaultWidths, resetWidthsPending]);
 
   const saveForSession = useCallback(() => {
     applySession(modalOrder, modalHidden);
@@ -370,19 +379,19 @@ export function useGridColumns<K extends string>({
   const savePermanently = useCallback(async () => {
     setSaving(true);
     try {
-      applySession(modalOrder, modalHidden);
+      const widths = applySession(modalOrder, modalHidden);
       await settingsApi.updateCurrentSettings({
         tablePreferences: {
           [permOrderKey(storageKey)]: modalOrder,
           [permHiddenKey(storageKey)]: Array.from(modalHidden),
-          [permWidthsKey(storageKey)]: colWidths,
+          [permWidthsKey(storageKey)]: widths,
         },
       });
       setOpen(false);
     } finally {
       setSaving(false);
     }
-  }, [applySession, modalOrder, modalHidden, colWidths, storageKey]);
+  }, [applySession, modalOrder, modalHidden, storageKey]);
 
   const orderFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();

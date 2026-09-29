@@ -1,10 +1,12 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { WarehouseService } from './warehouse.service';
 import { CreateWarehouseDto, UpdateWarehouseDto } from './dto/warehouse.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Warehouses')
+@PermissionModule('warehouses', 'Warehouses')
 @Controller('legacy-erp/warehouses')
 export class WarehouseController {
   constructor(private readonly svc: WarehouseService) {}

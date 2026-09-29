@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PlmCardsService } from './plm-cards.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('PLM Cards')
+@PermissionModule('plm', 'PLM')
 @Controller('plm')
 export class PlmCardsController {
   constructor(private readonly svc: PlmCardsService) {}

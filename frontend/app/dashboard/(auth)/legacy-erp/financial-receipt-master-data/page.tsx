@@ -15,7 +15,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, type PageRequest } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
 import { toast } from "sonner";
 import { Landmark, ChevronRight, Search, RefreshCw, Plus, SearchX, Eye, Pencil, Trash2, BadgeCheck } from "lucide-react";
 import { TABLE_ACTIONS, TABLE_OPTIONS, type TableKey } from "./_lib/table-config";
@@ -61,6 +63,8 @@ export default function FinancialReceiptMasterDataPage() {
   // mechanism as receipt-master-data/page.tsx, namespaced under its own key so it can't
   // collide with that screen's saved worklists.
   const wl = useWorklist({ storageKey: "financialReceiptMasterDataWorklists" });
+  // Server-side paging (every source is searched in full by the API, then paged).
+  const paging = useServerPaging({ defaultSortBy: "" });
 
   // Project-wide grid selection standard (hooks/use-row-selection.ts) — row identity here is
   // `RecId` (same field this screen's own `getRowKey` already uses below), not `.id`.
@@ -68,17 +72,16 @@ export default function FinancialReceiptMasterDataPage() {
 
   const actions = TABLE_ACTIONS[selectedTable];
 
-  const load = async (table: TableKey, term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (table: TableKey, term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
     setLoading(true);
+    // No column sorting on this screen: each source keeps its own server-side default order.
+    const pageReq = { page: req.page, pageSize: req.pageSize };
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
-      let r: any;
-      if (worklist) {
-        r = await legacyErpApi.worklistFields.resolve(table, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term);
-      } else {
-        r = await legacyErpApi.unifiedGrid.list(table, term);
-      }
-      setRows(Array.isArray(r) ? r : []);
+      const r: any = worklist
+        ? await legacyErpApi.worklistFields.resolve(table, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, pageReq)
+        : await legacyErpApi.unifiedGrid.list(table, term, pageReq);
+      setRows(paging.take(r));
     } catch (e: any) {
       toast.error(e.message || `Failed to load ${TABLE_ACTIONS[table].label}`);
       setRows([]);
@@ -90,26 +93,27 @@ export default function FinancialReceiptMasterDataPage() {
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(selectedTable, search.trim() || undefined, activeWorklist);
+    load(selectedTable, search.trim() || undefined, activeWorklist, paging.firstPage());
   };
 
   useEffect(() => { load(selectedTable); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  paging.reloadRef.current = () => load(selectedTable, search.trim() || undefined);
 
   const onTableChange = (value: TableKey) => {
     setSelectedTable(value);
     setSearch("");
     setRows([]);
-    load(value, undefined, wl.activeWorklist);
+    load(value, undefined, wl.activeWorklist, paging.firstPage());
   };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(selectedTable, search.trim() || undefined, worklist);
+    load(selectedTable, search.trim() || undefined, worklist, paging.firstPage());
   };
 
-  const doSearch = () => load(selectedTable, search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(selectedTable); };
+  const doSearch = () => load(selectedTable, search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(selectedTable, undefined, undefined, paging.firstPage()); };
   const reload = () => load(selectedTable, search.trim() || undefined);
 
   const columns = useMemo(
@@ -184,7 +188,7 @@ export default function FinancialReceiptMasterDataPage() {
             <h1 className="text-[15px] font-semibold leading-tight tracking-tight">Financial Receipt & Master Data</h1>
             <div className="mt-1 flex items-center gap-2">
               <p className="text-xs text-muted-foreground">Unified browser over the Financial Receipt (FI_Receipt) source</p>
-              {!loading && <Badge variant="secondary" className="h-5 text-[11px] font-normal">{rows.length} {rows.length === 1 ? "record" : "records"}</Badge>}
+              {!loading && <Badge variant="secondary" className="h-5 text-[11px] font-normal">{paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}</Badge>}
             </div>
           </div>
         </div>
@@ -249,6 +253,7 @@ export default function FinancialReceiptMasterDataPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

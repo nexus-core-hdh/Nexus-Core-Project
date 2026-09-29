@@ -1,10 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FabricService } from './fabric.service';
 import { CreateFabricTypeDto } from './dto/create-fabric-type.dto';
 import { CreateFabricRollDto } from './dto/create-fabric-roll.dto';
 
 @ApiTags('Fabric')
+@PermissionModule('fabric', 'Fabric inventory')
 @Controller()
 export class FabricController {
   constructor(private readonly fabricService: FabricService) {}

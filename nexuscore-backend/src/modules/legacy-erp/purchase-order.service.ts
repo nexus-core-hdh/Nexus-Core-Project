@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -182,7 +183,7 @@ export class PurchaseOrderService {
   // decided": no ApprovalRequest row at all (never submitted/approval not required) OR still
   // pending_approval — matching the List filter's job of surfacing everything not yet Approved
   // or Rejected, not inventing a third "draft" bucket the UI doesn't ask for.
-  async list(search?: string, approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected', receiptType: number = RECEIPT_TYPE) {
+  async list(search?: string, approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected', receiptType: number = RECEIPT_TYPE, paging: ListPaging | null = null) {
     const statusFilter = !approvalStatus || approvalStatus === 'all'
       ? Prisma.sql``
       : approvalStatus === 'approved'
@@ -191,15 +192,16 @@ export class PurchaseOrderService {
           ? Prisma.sql`AND ar."status" = 'rejected'`
           : Prisma.sql`AND (ar."status" IS NULL OR ar."status" = 'pending_approval')`;
     const searchFilter = search ? Prisma.sql`AND ("t"."ReceiptNo" ILIKE ${`%${search}%`} OR "t"."DocumentNo" ILIKE ${`%${search}%`})` : Prisma.sql``;
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${Prisma.raw(['t."RecId" as id', ...HEADER_COLUMNS.map((c) => `t."${c}" as "${camel(c)}"`)].join(', '))},
-        CASE WHEN ar."status" IN ('approved', 'rejected') THEN ar."status" ELSE 'unapproved' END as "approvalStatus"
-      FROM "IM_OrderReceipt" t
+    return runLegacyList(this.prisma, {
+      select: Prisma.sql`${Prisma.raw(['t."RecId" as id', ...HEADER_COLUMNS.map((c) => `t."${c}" as "${camel(c)}"`)].join(', '))},
+        CASE WHEN ar."status" IN ('approved', 'rejected') THEN ar."status" ELSE 'unapproved' END as "approvalStatus"`,
+      // ApprovalRequest is unique per (screenKey, transactionId): the join keeps one row per order.
+      from: Prisma.sql`FROM "IM_OrderReceipt" t
       LEFT JOIN "ApprovalRequest" ar ON ar."screenKey" = ${screenKeyFor(receiptType)} AND ar."transactionId" = t."RecId"::text
-      WHERE t."IsDeleted" = 0 AND t."ReceiptType" = ${receiptType} ${searchFilter} ${statusFilter}
-      ORDER BY t."ReceiptNo" DESC LIMIT 50
-    `);
-    return sanitizeRawRow(rows);
+      WHERE t."IsDeleted" = 0 AND t."ReceiptType" = ${receiptType} ${searchFilter} ${statusFilter}`,
+      sortable: { receiptNo: Prisma.sql`t."ReceiptNo"`, documentNo: Prisma.sql`t."DocumentNo"`, receiptDate: Prisma.sql`t."ReceiptDate"`, approvalStatus: Prisma.sql`ar."status"` },
+      defaultSortBy: 'receiptNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`t."RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number, receiptType: number = RECEIPT_TYPE) {

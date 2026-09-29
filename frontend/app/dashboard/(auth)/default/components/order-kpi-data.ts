@@ -37,7 +37,7 @@
 // "From last month" is a real month-over-month comparison computed from `workOrderDate`
 // (Total/Running/Completed/Pending/Cancelled only), not a fabricated percentage.
 
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 
 export type OrderKpiKey = "total" | "running" | "completed" | "delayed" | "pending" | "cancelled";
 
@@ -74,8 +74,8 @@ function bucketOf(status: number | null): Exclude<OrderKpiKey, "total" | "delaye
 }
 
 export async function fetchOrderKpis(): Promise<OrderKpi[]> {
-  const res = await legacyErpApi.workOrders.list().catch(() => null);
-  const orders: any[] = Array.isArray(res) ? res : ((res as any)?.data ?? []);
+  // Every work order, not just the unpaged list's first 50 — the KPIs aggregate all of them.
+  const orders: any[] = await fetchAllPages((req) => legacyErpApi.workOrders.list(undefined, req)).catch(() => []);
 
   const now = new Date();
   const thisMonthKey = monthKey(now);

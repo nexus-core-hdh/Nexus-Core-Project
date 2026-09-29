@@ -43,7 +43,8 @@ export function EcommerceTotalRevenueCard() {
             endDate: monthEnd.toISOString(),
           });
 
-          const stats = await response.json();
+          // getOrderStats already returns the parsed stats object (see lib/api.ts), not a fetch Response.
+          const stats = response;
           const monthName = format(monthStart, "MMMM");
           
           // For demo, split revenue between desktop and mobile

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { DocketsService } from './dockets.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Dockets')
+@PermissionModule('dockets', 'Dockets')
 @Controller()
 export class DocketsController {
   constructor(private readonly svc: DocketsService) {}

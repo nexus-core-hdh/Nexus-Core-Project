@@ -17,6 +17,9 @@ import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight } from "lucide-react";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 import { useRowSelection } from "@/hooks/use-row-selection";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
 
 // List screen for the new Work Order transaction screen — same List+Detail convention every
 // other Legacy ERP module already uses (fabric-cards-list.tsx, purchase-orders-list.tsx, ...),
@@ -32,14 +35,14 @@ export default function WorkOrderListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("workOrderNo");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Server-side paging + sorting: the API searches/sorts every work order, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "workOrderNo", defaultSortDir: "desc" });
 
-  const load = async (term?: string) => {
+  const load = async (term?: string, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
-      const r: any = await legacyErpApi.workOrders.list(term);
-      setRows(Array.isArray(r) ? r : []);
+      const r: any = await legacyErpApi.workOrders.list(term, req);
+      setRows(paging.take(r));
     } catch (e: any) {
       toast.error(e.message || "Failed to load work orders");
       setRows([]);
@@ -50,9 +53,10 @@ export default function WorkOrderListPage() {
   };
 
   useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
+  const doSearch = () => load(search.trim() || undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, paging.firstPage()); };
 
   // filterable — shared header-filter implementation (hooks/use-column-filters.ts), picked
   // per-column by actual data shape: identifying/enum columns get the default checkbox "select"
@@ -103,20 +107,9 @@ export default function WorkOrderListPage() {
     }
   };
 
-  const toggleSort = (key: string) => {
-    const k = key as SortKey;
-    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(k); setSortDir("asc"); }
-  };
-
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
 
   // Project-wide grid selection standard (hooks/use-row-selection.ts) — plain/ctrl/shift-click +
   // right-click preserve/collapse highlighting. Existing per-row `getRowActions`/`wrapRow`/
@@ -144,7 +137,7 @@ export default function WorkOrderListPage() {
               <p className="text-xs text-muted-foreground">Manufacturing work orders</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
+                  {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
                 </Badge>
               )}
             </div>
@@ -190,9 +183,9 @@ export default function WorkOrderListPage() {
           storageKey="workOrdersList"
           getRowKey={(row) => row.id}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={toggleSort}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           onRowDoubleClick={(row) => view(row.id)}
           selectedIds={selectedIds}
           onRowClick={selectRow}
@@ -216,6 +209,7 @@ export default function WorkOrderListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -80,20 +81,16 @@ export class TrimInventoryCardService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, TABLE));
   }
 
-  async list(search?: string) {
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "IM_Item"
-          WHERE "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE}
-            AND ("InventoryCode" ILIKE ${`%${search}%`} OR "InventoryName" ILIKE ${`%${search}%`})
-          ORDER BY "InventoryCode" LIMIT 50
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "IM_Item"
-          WHERE "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE}
-          ORDER BY "InventoryCode" LIMIT 50
-        `);
-    return sanitizeRawRow(rows);
+  async list(search?: string, paging: ListPaging | null = null) {
+    const searchFilter = search
+      ? Prisma.sql`AND ("InventoryCode" ILIKE ${`%${search}%`} OR "InventoryName" ILIKE ${`%${search}%`})`
+      : Prisma.sql``;
+    return runLegacyList(this.prisma, {
+      select: HEADER_SELECT,
+      from: Prisma.sql`FROM "IM_Item" WHERE "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE} ${searchFilter}`,
+      sortable: { inventoryCode: Prisma.sql`"InventoryCode"`, inventoryName: Prisma.sql`"InventoryName"`, specialCode: Prisma.sql`"SpecialCode"` },
+      defaultSortBy: 'inventoryCode', defaultSortDir: 'asc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number) {

@@ -13,6 +13,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import {
@@ -46,8 +49,8 @@ export default function PurchaseOrderListPage() {
   const [loading, setLoading] = useState(true);
   const [searched, setSearched] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("receiptNo");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Server-side paging + sorting: the API searches/sorts the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "receiptNo", defaultSortDir: "desc" });
   const wl = useWorklist({ storageKey: "purchaseOrdersListWorklists" });
 
   // General Settings -> Approval Configuration — the status filter (and its column) only ever
@@ -64,15 +67,16 @@ export default function PurchaseOrderListPage() {
       .catch(() => {});
   }, []);
 
-  const load = async (term?: string, worklistOverride?: Worklist | null, statusOverride?: ApprovalFilter) => {
+  const load = async (term?: string, worklistOverride?: Worklist | null, statusOverride?: ApprovalFilter, req: PageRequest = paging.request) => {
     setLoading(true);
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const status = statusOverride ?? approvalFilter;
+      // The approval filter is applied by the API before paging, so it covers every order.
       const r: any = worklist
-        ? await legacyErpApi.worklistFields.resolve("purchase-order-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term)
-        : await legacyErpApi.purchaseOrders.list(term, status === "all" ? undefined : status);
-      const list = Array.isArray(r) ? r : [];
+        ? await legacyErpApi.worklistFields.resolve("purchase-order-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : await legacyErpApi.purchaseOrders.list(term, status === "all" ? undefined : status, req);
+      const list = paging.take(r);
       setRows(worklist ? wl.normalizeRows(list) : list);
     } catch (e: any) {
       toast.error(e.message || "Failed to load purchase orders");
@@ -84,23 +88,24 @@ export default function PurchaseOrderListPage() {
   };
 
   useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
 
-  const doSearch = () => load(search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(); };
+  const doSearch = () => load(search.trim() || undefined, undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, undefined, paging.firstPage()); };
   const onApprovalFilterChange = (value: ApprovalFilter) => {
     setApprovalFilter(value);
-    load(search.trim() || undefined, undefined, value);
+    load(search.trim() || undefined, undefined, value, paging.firstPage());
   };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(search.trim() || undefined, worklist);
+    load(search.trim() || undefined, worklist, undefined, paging.firstPage());
   };
 
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(search.trim() || undefined, activeWorklist);
+    load(search.trim() || undefined, activeWorklist, undefined, paging.firstPage());
   };
 
   const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
@@ -175,19 +180,9 @@ export default function PurchaseOrderListPage() {
     }
   };
 
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
-      const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [rows, sortKey, sortDir]);
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
 
   // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
   // page.tsx's own comment on this same pattern.
@@ -212,7 +207,7 @@ export default function PurchaseOrderListPage() {
               <p className="text-xs text-muted-foreground">Purchase order receipts</p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
-                  {rows.length} {rows.length === 1 ? "record" : "records"}
+                  {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
                 </Badge>
               )}
             </div>
@@ -263,9 +258,9 @@ export default function PurchaseOrderListPage() {
           storageKey="purchaseOrdersList"
           getRowKey={(row) => row.id}
           loading={loading}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
           onRowDoubleClick={(row) => view(row.id)}
           selectedIds={selectedIds}
           onRowClick={selectRow}
@@ -289,6 +284,7 @@ export default function PurchaseOrderListPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

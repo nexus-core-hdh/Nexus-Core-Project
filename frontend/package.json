@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "predev": "node ../scripts/ensure-port-free.mjs 3000 \"frontend :3000\" && node scripts/generate-workspace-registry.mjs",
-    "dev": "next dev",
+    "dev": "node scripts/dev-supervisor.mjs",
+    "dev:raw": "next dev",
+    "dev:clean-cache": "node scripts/trim-dev-cache.mjs --force",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
-    "prebuild": "node scripts/generate-workspace-registry.mjs && node -e \"require('fs').rmSync('.next/dev/types',{recursive:true,force:true})\"",
+    "prebuild": "node scripts/check-production-env.mjs && node scripts/generate-workspace-registry.mjs && node -e \"require('fs').rmSync('.next/dev/types',{recursive:true,force:true})\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -42,22 +43,16 @@ export class TrimCardService {
   // isn't usable, and this join costs nothing HEADER_SELECT wasn't already doing (still one
   // query, same WHERE/ORDER/LIMIT). get()/getByCode() below are left as plain HEADER_SELECT —
   // the Customer Define Trim form already resolves the customer via its own LookupField.
-  async list(search?: string) {
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${LIST_SELECT}, a."CurrentAccountName" as "customerName"
-          FROM "MA_YarnTrimCard" t
-          LEFT JOIN "FI_Account" a ON a."RecId" = t."CustomerId"
-          WHERE t."IsDeleted" = 0 AND (t."Code" ILIKE ${`%${search}%`} OR t."Explanation" ILIKE ${`%${search}%`})
-          ORDER BY t."Code" LIMIT 50
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${LIST_SELECT}, a."CurrentAccountName" as "customerName"
-          FROM "MA_YarnTrimCard" t
-          LEFT JOIN "FI_Account" a ON a."RecId" = t."CustomerId"
-          WHERE t."IsDeleted" = 0 ORDER BY t."Code" LIMIT 50
-        `);
-    return sanitizeRawRow(rows);
+  async list(search?: string, paging: ListPaging | null = null) {
+    const searchFilter = search
+      ? Prisma.sql`AND (t."Code" ILIKE ${`%${search}%`} OR t."Explanation" ILIKE ${`%${search}%`})`
+      : Prisma.sql``;
+    return runLegacyList(this.prisma, {
+      select: Prisma.sql`${LIST_SELECT}, a."CurrentAccountName" as "customerName"`,
+      from: Prisma.sql`FROM "MA_YarnTrimCard" t LEFT JOIN "FI_Account" a ON a."RecId" = t."CustomerId" WHERE t."IsDeleted" = 0 ${searchFilter}`,
+      sortable: { code: Prisma.sql`t."Code"`, explanation: Prisma.sql`t."Explanation"`, customerName: Prisma.sql`a."CurrentAccountName"` },
+      defaultSortBy: 'code', defaultSortDir: 'asc', tiebreak: Prisma.sql`t."RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number) {

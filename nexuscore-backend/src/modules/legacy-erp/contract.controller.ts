@@ -1,4 +1,7 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { ContractService } from './contract.service';
@@ -13,6 +16,7 @@ import { getContractTypeConfig } from './contract-types.config';
 // types are equally generic here, so every configured receiptType (including 1 and 2) is served
 // straight from this one controller.
 @ApiTags('Legacy ERP - Contracts (generic)')
+@PermissionModule('contracts', 'Contracts')
 @Controller('legacy-erp/contracts/:receiptType')
 export class ContractController {
   constructor(
@@ -27,9 +31,9 @@ export class ContractController {
     return cfg;
   }
 
-  @Get() list(@Param('receiptType') receiptType: string, @Query('search') search?: string) {
+  @Get() list(@Param('receiptType') receiptType: string, @Query('search') search?: string, @Paging() paging?: ListPaging | null) {
     const cfg = this.resolve(receiptType);
-    return this.svc.list(search, cfg.receiptType);
+    return this.svc.list(search, cfg.receiptType, paging ?? null);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptType') receiptType: string, @Param('receiptNo') receiptNo: string) {
@@ -134,12 +138,8 @@ export class ContractController {
     @Res() res: Response,
   ) {
     this.resolve(receiptType);
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

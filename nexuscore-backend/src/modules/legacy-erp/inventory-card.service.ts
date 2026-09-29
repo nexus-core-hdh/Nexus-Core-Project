@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -49,6 +50,23 @@ export function stockApprovalGateSql(recAlias: string): Prisma.Sql {
 // which Number(uuid) always collapses to a meaningless fallback). Falls back to "Unknown
 // User" when the column is null (record created before this column existed) or the user was
 // deleted since — never a fabricated placeholder like "User #1".
+// An Inventory item's Unit as the Inventory Card list shows it: its Main Unit (else first unit) from
+// the item's unit tab (IM_ItemUnitItemSize -> MD_UnitSetItem.UnitName). A LATERAL join exposing
+// "unit_lookup"."unitName" for the IM_Item row aliased `itemAlias`. Shared so every reader of an
+// item's Unit (this list, Costing Raw Material lines) resolves the same value.
+export function itemUnitNameLateral(itemAlias: string): Prisma.Sql {
+  const item = Prisma.raw(`"${itemAlias}"`);
+  return Prisma.sql`
+    LEFT JOIN LATERAL (
+      SELECT usi."UnitName" AS "unitName"
+      FROM "IM_ItemUnitItemSize" iuis
+      JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+      WHERE iuis."InventoryId" = ${item}."RecId" AND iuis."IsDeleted" = 0
+      ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC
+      LIMIT 1
+    ) unit_lookup ON true`;
+}
+
 const SORTABLE_COLUMNS: Record<string, string> = {
   inventoryCode: 'inventoryCode',
   inventoryName: 'inventoryName',
@@ -71,6 +89,8 @@ export interface InventoryCardListParams {
   search?: string;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
+  /** Narrow to one card type (fabric | yarn | trim | fixedasset), applied before paging. */
+  sourceType?: string;
 }
 
 @Injectable()
@@ -97,21 +117,23 @@ export class InventoryCardService {
     return Prisma.sql`COALESCE(${Prisma.join(tiers, ', ')})`;
   }
 
-  async list(params: InventoryCardListParams) {
-    const sortColumn = SORTABLE_COLUMNS[params.sortBy ?? 'inventoryCode'] ?? 'inventoryCode';
-    const sortDir = params.sortDir === 'desc' ? Prisma.raw('DESC') : Prisma.raw('ASC');
+  async list(params: InventoryCardListParams, paging: ListPaging | null = null) {
     if (params.sortBy && !SORTABLE_COLUMNS[params.sortBy]) {
       throw new BadRequestException(`Cannot sort by "${params.sortBy}"`);
     }
 
-    const whereSearch = params.search
-      ? Prisma.sql`WHERE ("inventoryCode" ILIKE ${`%${params.search}%`} OR "inventoryName" ILIKE ${`%${params.search}%`} OR "inventoryType" ILIKE ${`%${params.search}%`} OR "insertedBy" ILIKE ${`%${params.search}%`})`
-      : Prisma.sql``;
+    const conditions: Prisma.Sql[] = [];
+    if (params.search) {
+      conditions.push(Prisma.sql`("inventoryCode" ILIKE ${`%${params.search}%`} OR "inventoryName" ILIKE ${`%${params.search}%`} OR "inventoryType" ILIKE ${`%${params.search}%`} OR "insertedBy" ILIKE ${`%${params.search}%`})`);
+    }
+    if (params.sourceType) conditions.push(Prisma.sql`"sourceType" = ${params.sourceType}`);
+    const whereSearch = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.sql``;
 
     const creatorName = await this.creatorNameExpr();
 
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT * FROM (
+    return runLegacyList(this.prisma, {
+      select: Prisma.sql`*`,
+      from: Prisma.sql`FROM (
         ${this.fabricAndTrimSlice('FABRIC', 'Fabric', 'fabric', creatorName)}
         UNION ALL
         ${this.yarnSlice(creatorName)}
@@ -120,11 +142,15 @@ export class InventoryCardService {
         UNION ALL
         ${this.fabricAndTrimSlice('FIXEDASSET', 'Fixed Asset', 'fixedasset', creatorName)}
       ) combined
-      ${whereSearch}
-      ORDER BY "${Prisma.raw(sortColumn)}" ${sortDir}
-      LIMIT 200
-    `);
-    return sanitizeRawRow(rows);
+      ${whereSearch}`,
+      sortable: Object.fromEntries(Object.entries(SORTABLE_COLUMNS).map(([k, col]) => [k, Prisma.sql`${Prisma.raw(`"${col}"`)}`])),
+      // Legacy callers pass sortBy/sortDir as their own query params; paged callers via paging.
+      defaultSortBy: params.sortBy ?? 'inventoryCode',
+      defaultSortDir: params.sortDir === 'desc' ? 'desc' : 'asc',
+      // every slice is IM_Item, so "id" (its RecId) is unique across the union
+      tiebreak: Prisma.sql`"id"`,
+      legacyLimit: 200,
+    }, paging, sanitizeRawRow);
   }
 
   // Fabric, Trim and Fixed Asset share the exact same "no direct Unit column, resolve via the
@@ -147,14 +173,7 @@ export class InventoryCardService {
         i."InsertedAt" AS "insertedAt",
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
-      LEFT JOIN LATERAL (
-        SELECT usi."UnitName" AS "unitName"
-        FROM "IM_ItemUnitItemSize" iuis
-        JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
-        WHERE iuis."InventoryId" = i."RecId" AND iuis."IsDeleted" = 0
-        ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC
-        LIMIT 1
-      ) unit_lookup ON true
+      ${itemUnitNameLateral('i')}
       ${this.stockLateral()}
       ${this.lastPurchasePriceLateral()}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"
@@ -176,14 +195,7 @@ export class InventoryCardService {
         i."InsertedAt" AS "insertedAt",
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
-      LEFT JOIN LATERAL (
-        SELECT usi."UnitName" AS "unitName"
-        FROM "IM_ItemUnitItemSize" iuis
-        JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
-        WHERE iuis."InventoryId" = i."RecId" AND iuis."IsDeleted" = 0
-        ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC
-        LIMIT 1
-      ) unit_lookup ON true
+      ${itemUnitNameLateral('i')}
       ${this.stockLateral()}
       ${this.lastPurchasePriceLateral()}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"

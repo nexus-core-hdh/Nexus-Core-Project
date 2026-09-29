@@ -15,7 +15,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, type PageRequest } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
 import { toast } from "sonner";
 import { Database, ChevronRight, Search, RefreshCw, Plus, SearchX, Eye, Pencil, Trash2, BadgeCheck, XCircle } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -63,6 +65,8 @@ export default function ReceiptMasterDataPage() {
   // JSON blob (same mechanism as Workspace/My Menu/PO line-grid column prefs), namespaced under
   // its own key so it can't collide with those. No dedicated worklist table/schema.
   const wl = useWorklist({ storageKey: "receiptMasterDataWorklists" });
+  // Server-side paging (every source is searched in full by the API, then paged).
+  const paging = useServerPaging({ defaultSortBy: "" });
 
   // Project-wide grid selection standard (hooks/use-row-selection.ts) — row identity here is
   // `RecId` (same field this screen's own `getRowKey` already uses below), not `.id`, so this
@@ -79,29 +83,31 @@ export default function ReceiptMasterDataPage() {
   // all 20 dropdown sources, not just the 3 retained ones). Standard never changes this at all —
   // it keeps calling each source's own original list endpoint (unifiedGrid for the 3 retained
   // options, the generic receipt-type route for the 16 others) untouched.
-  const load = async (table: TableKey, term?: string, worklistOverride?: Worklist | null) => {
+  const load = async (table: TableKey, term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
     setLoading(true);
+    // No column sorting on this screen: each source keeps its own server-side default order.
+    const pageReq = { page: req.page, pageSize: req.pageSize };
     try {
       const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
       const receiptType = RECEIPT_TYPE_BY_KEY[table];
-      let r: any;
+      let rows: any[];
       if (worklist) {
         // worklist-rows.service.ts now recognizes every one of the 16 other receipt types too
         // (reusing Purchase Receipt's own relationship map), so a custom worklist resolves the
         // same way regardless of which dropdown source is active — this call already returns
         // raw "RecId" natively (it selects straight off the real table, unlike the Standard
         // receipts() path below), so no id->RecId remap is needed here.
-        r = await legacyErpApi.worklistFields.resolve(table, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term);
+        rows = paging.take(await legacyErpApi.worklistFields.resolve(table, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, pageReq));
       } else if (receiptType !== undefined) {
         // Standard for one of the 16 other receipt types — existing generic receipt-type route.
         // Reindex "id" -> "RecId" so row identity/context-menu actions below (which already
         // expect row.RecId, matching unified-grid's convention) work identically for these rows.
-        r = await legacyErpApi.receipts(receiptType).list(term);
-        r = (Array.isArray(r) ? r : []).map(({ id, ...rest }: any) => ({ ...rest, RecId: id }));
+        rows = paging.take(await legacyErpApi.receipts(receiptType).list(term, undefined, pageReq))
+          .map(({ id, ...rest }: any) => ({ ...rest, RecId: id }));
       } else {
-        r = await legacyErpApi.unifiedGrid.list(table, term);
+        rows = paging.take(await legacyErpApi.unifiedGrid.list(table, term, pageReq));
       }
-      setRows(Array.isArray(r) ? r : []);
+      setRows(rows);
     } catch (e: any) {
       toast.error(e.message || `Failed to load ${TABLE_ACTIONS[table].label}`);
       setRows([]);
@@ -116,10 +122,11 @@ export default function ReceiptMasterDataPage() {
   // relying on already-loaded rows.
   const handleSaveWorklists = async (next: Worklist[]) => {
     const { activeWorklist } = await wl.saveWorklists(next);
-    load(selectedTable, search.trim() || undefined, activeWorklist);
+    load(selectedTable, search.trim() || undefined, activeWorklist, paging.firstPage());
   };
 
   useEffect(() => { load(selectedTable); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  paging.reloadRef.current = () => load(selectedTable, search.trim() || undefined);
 
   // Selected dropdown table has absolute priority: switching it clears the grid and reloads
   // fresh, unfiltered, from the newly selected source — never mixes columns/rows across tables.
@@ -130,17 +137,17 @@ export default function ReceiptMasterDataPage() {
     setSelectedTable(value);
     setSearch("");
     setRows([]);
-    load(value, undefined, wl.activeWorklist);
+    load(value, undefined, wl.activeWorklist, paging.firstPage());
   };
 
   const onWorklistChange = (id: string) => {
     const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
     wl.setActiveWorklistId(id);
-    load(selectedTable, search.trim() || undefined, worklist);
+    load(selectedTable, search.trim() || undefined, worklist, paging.firstPage());
   };
 
-  const doSearch = () => load(selectedTable, search.trim() || undefined);
-  const refresh = () => { setSearch(""); load(selectedTable); };
+  const doSearch = () => load(selectedTable, search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(selectedTable, undefined, undefined, paging.firstPage()); };
   const reload = () => load(selectedTable, search.trim() || undefined);
 
   // Standard = existing behavior, unchanged. A custom worklist's columns come directly from its
@@ -234,7 +241,7 @@ export default function ReceiptMasterDataPage() {
             <h1 className="text-[15px] font-semibold leading-tight tracking-tight">Receipt & Master Data</h1>
             <div className="mt-1 flex items-center gap-2">
               <p className="text-xs text-muted-foreground">Unified browser over existing Legacy ERP sources</p>
-              {!loading && <Badge variant="secondary" className="h-5 text-[11px] font-normal">{rows.length} {rows.length === 1 ? "record" : "records"}</Badge>}
+              {!loading && <Badge variant="secondary" className="h-5 text-[11px] font-normal">{paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}</Badge>}
             </div>
           </div>
         </div>
@@ -299,6 +306,7 @@ export default function ReceiptMasterDataPage() {
             </Empty>
           }
         />
+        <ListPager paging={paging} loading={loading} />
       </div>
 
       <WorklistBar

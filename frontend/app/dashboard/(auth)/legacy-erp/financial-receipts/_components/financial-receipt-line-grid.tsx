@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -107,7 +107,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
   const editingClientId = useRef<string | null>(null);
 
   useEffect(() => {
-    legacyErpApi.accounts.list().then((r: any) => setAccountOptions(
+    fetchAllPages((req) => legacyErpApi.accounts.list(undefined, req)).then((r: any) => setAccountOptions(
       (Array.isArray(r) ? r : []).map((a: any) => ({ id: String(a.id), code: a.code, name: a.name })),
     )).catch(() => {});
   }, []);

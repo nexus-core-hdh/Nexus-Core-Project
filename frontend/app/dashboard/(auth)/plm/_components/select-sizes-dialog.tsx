@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, plmApi, fetchAllPages } from "@/lib/nexuscore-api";
 
 export interface SizeGroup { id: number; code: string; name: string; inUse?: number }
 
@@ -55,7 +55,7 @@ export function SelectSizesDialog({
     setLoading(true);
     (async () => {
       try {
-        const r = await legacyErpApi.sizeSets.list();
+        const r = await fetchAllPages((req) => legacyErpApi.sizeSets.list(undefined, req));
         const rows: SizeGroup[] = Array.isArray(r) ? r : [];
         setGroups(rows.filter((g: any) => g.inUse !== 0));
       } catch (e: any) {

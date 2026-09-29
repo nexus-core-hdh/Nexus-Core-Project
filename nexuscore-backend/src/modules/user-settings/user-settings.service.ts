@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import * as bcrypt from 'bcrypt';
-import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class UserSettingsService {
@@ -35,43 +33,7 @@ export class UserSettingsService {
     });
   }
 
-  async createPasswordResetToken(email: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) return { message: 'If the email exists, a reset link has been sent' };
-
-    const token = uuidv4();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-
-    await this.prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
-    await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, token, expiresAt },
-    });
-
-    return { token, email: user.email };
-  }
-
-  async consumePasswordResetToken(token: string, newPassword: string) {
-    const record = await this.prisma.passwordResetToken.findFirst({
-      where: { token, expiresAt: { gt: new Date() }, used: false },
-      include: { user: true },
-    });
-
-    if (!record) throw new Error('Invalid or expired token');
-
-    const hashedPassword = await bcrypt.hash(newPassword, 12);
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: record.userId },
-        data: { password: hashedPassword, mustChangePassword: false },
-      }),
-      this.prisma.passwordResetToken.update({
-        where: { id: record.id },
-        data: { used: true },
-      }),
-    ]);
-
-    return { success: true };
-  }
+  // Password reset lives in auth/password-reset.service.ts (hashed, emailed, never returned).
 
   async getNotificationPreferences(userId: string) {
     return this.prisma.userSettings.findFirst({

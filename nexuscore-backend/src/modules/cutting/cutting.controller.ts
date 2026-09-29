@@ -1,6 +1,7 @@
 import {
   Body, Controller, Delete, Get, Param, Patch, Post, Put, Query,
 } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CuttingService } from './cutting.service';
 import { CreateCuttingOrderDto } from './dto/create-cutting-order.dto';
@@ -12,6 +13,7 @@ import { UpdateCostDto } from './dto/update-cost.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Cutting Orders')
+@PermissionModule('cutting', 'Cutting orders')
 @Controller('cutting-orders')
 export class CuttingController {
   constructor(private readonly cuttingService: CuttingService) {}

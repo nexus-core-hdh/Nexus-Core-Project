@@ -1,3 +1,4 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { UnifiedGridService } from './unified-grid.service';
@@ -12,7 +13,7 @@ export class UnifiedGridController {
     return this.svc.meta();
   }
 
-  @Get(':key') list(@Param('key') key: string, @Query('search') search?: string) {
-    return this.svc.list(key, search);
+  @Get(':key') list(@Param('key') key: string, @Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(key, search, paging ?? null);
   }
 }

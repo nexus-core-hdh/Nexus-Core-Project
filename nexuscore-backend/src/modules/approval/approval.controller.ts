@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { ApprovalService } from './approval.service';
-import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Permissions, PermissionModule } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 // screenKey values are Legacy ERP MenuItem.href strings, which already contain "/" and often
@@ -9,6 +9,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 // unsafe/ambiguous as a ":screenKey" URL path segment even URL-encoded. Query-string / body
 // params are used instead of the path-param shape sketched in the spec, for that reason.
 @ApiTags('Approval')
+@PermissionModule('approval', 'Approvals')
 @Controller('approval')
 export class ApprovalController {
   constructor(private readonly svc: ApprovalService) {}

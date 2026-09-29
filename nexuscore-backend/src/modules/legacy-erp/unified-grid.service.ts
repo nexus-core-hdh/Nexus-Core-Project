@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -83,20 +84,25 @@ export class UnifiedGridService {
     return Object.entries(TABLES).map(([key, cfg]) => ({ key, label: cfg.label }));
   }
 
-  async list(key: string, search?: string) {
+  async list(key: string, search?: string, paging: ListPaging | null = null) {
     const cfg = this.config(key);
     const table = Prisma.raw(`"${cfg.table}"`);
     const extraWhere = cfg.extraWhere ?? Prisma.sql``;
-    const orderDir = Prisma.raw(cfg.orderDir === 'DESC' ? 'DESC' : 'ASC');
     const whereSearch = search
       ? Prisma.sql`AND (${Prisma.join(cfg.searchColumns.map((c) => Prisma.sql`"${Prisma.raw(c)}" ILIKE ${`%${search}%`}`), ' OR ')})`
       : Prisma.sql``;
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT * FROM ${table}
-      WHERE "IsDeleted" = 0 ${extraWhere} ${whereSearch}
-      ORDER BY "${Prisma.raw(cfg.orderBy)}" ${orderDir}
-      LIMIT 200
-    `);
-    return sanitizeRawRow(rows);
+    // Sortable = the table's own configured order + search columns (all real, fixed column names).
+    const sortable = Object.fromEntries(
+      [...new Set([cfg.orderBy, ...cfg.searchColumns])].map((c) => [c, Prisma.sql`${Prisma.raw(`"${c}"`)}`]),
+    );
+    return runLegacyList(this.prisma, {
+      select: Prisma.sql`*`,
+      from: Prisma.sql`FROM ${table} WHERE "IsDeleted" = 0 ${extraWhere} ${whereSearch}`,
+      sortable,
+      defaultSortBy: cfg.orderBy,
+      defaultSortDir: cfg.orderDir === 'DESC' ? 'desc' : 'asc',
+      tiebreak: Prisma.sql`"RecId"`,
+      legacyLimit: 200,
+    }, paging, sanitizeRawRow);
   }
 }

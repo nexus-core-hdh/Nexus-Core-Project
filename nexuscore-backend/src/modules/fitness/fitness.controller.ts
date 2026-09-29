@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FitnessService } from './fitness.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Fitness')
+@PermissionModule('fitness', 'Fitness')
 @Controller('fitness')
 export class FitnessController {
   constructor(private readonly svc: FitnessService) {}

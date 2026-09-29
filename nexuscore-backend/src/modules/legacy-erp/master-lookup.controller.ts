@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -10,6 +11,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 // manageable master is "configuration only": add `activeColumn`/`label` to its existing
 // entry there — nothing here needs to change.
 @ApiTags('Legacy ERP - Master Lookup')
+@PermissionModule('master-data', 'Master data')
 @Controller('legacy-erp/master-lookup')
 export class MasterLookupController {
   constructor(private readonly svc: LegacyMasterLookupService) {}

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { BranchService } from './branch.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 
 @ApiTags('Branches')
+@PermissionModule('company', 'Company & branches')
 @Controller('branches')
 export class BranchController {
   constructor(private readonly branchService: BranchService) {}

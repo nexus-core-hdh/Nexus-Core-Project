@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -44,17 +45,14 @@ export class UnitSetService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, ITEM_TABLE));
   }
 
-  async list(search?: string) {
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "MD_UnitSet"
-          WHERE "IsDeleted" = 0 AND ("SetCode" ILIKE ${`%${search}%`} OR "SetName" ILIKE ${`%${search}%`})
-          ORDER BY "SetCode" LIMIT 50
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "MD_UnitSet" WHERE "IsDeleted" = 0 ORDER BY "SetCode" LIMIT 50
-        `);
-    return sanitizeRawRow(rows);
+  async list(search?: string, paging: ListPaging | null = null) {
+    const searchFilter = search ? Prisma.sql`AND ("SetCode" ILIKE ${`%${search}%`} OR "SetName" ILIKE ${`%${search}%`})` : Prisma.sql``;
+    return runLegacyList(this.prisma, {
+      select: HEADER_SELECT,
+      from: Prisma.sql`FROM "MD_UnitSet" WHERE "IsDeleted" = 0 ${searchFilter}`,
+      sortable: { setCode: Prisma.sql`"SetCode"`, setName: Prisma.sql`"SetName"` },
+      defaultSortBy: 'setCode', defaultSortDir: 'asc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number) {

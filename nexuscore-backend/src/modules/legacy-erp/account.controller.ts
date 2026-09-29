@@ -1,4 +1,7 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Request, Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtService } from '@nestjs/jwt';
@@ -10,6 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('Legacy ERP - Current Accounts')
+@PermissionModule('current-accounts', 'Current accounts')
 @Controller('legacy-erp/accounts')
 export class AccountController {
   constructor(
@@ -20,8 +24,8 @@ export class AccountController {
     private readonly configService: ConfigService,
   ) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, paging ?? null);
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {
@@ -108,12 +112,8 @@ export class AccountController {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

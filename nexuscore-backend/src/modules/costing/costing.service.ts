@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { itemUnitNameLateral } from '../legacy-erp/inventory-card.service';
 
 const num = (v: any): number => (v === null || v === undefined ? 0 : Number(v));
 
@@ -121,7 +123,50 @@ export class CostingService {
 
   async get(id: string) {
     const sheet = await this.findOrThrow(id);
-    return { ...sheet, totals: computeTotals(sheet) };
+    return { ...sheet, rawMaterialLines: await this.withInventory(sheet.rawMaterialLines), totals: computeTotals(sheet) };
+  }
+
+  // Inventory master = IM_Item (legacy raw-SQL table: RecId, InventoryCode, InventoryName; soft-
+  // deleted via IsDeleted — the same "not deleted" rule the Inventory Card list/lookup applies).
+  // Unit = the item's Unit exactly as the Inventory Card list returns it (itemUnitNameLateral).
+  private async activeInventoryItems(ids: number[]) {
+    const unique = Array.from(new Set(ids));
+    if (!unique.length) return new Map<number, { code: string; name: string; unit: string }>();
+    const rows = await this.prisma.$queryRaw<{ id: number; code: string | null; name: string | null; unit: string | null }[]>(Prisma.sql`
+      SELECT i."RecId"::int AS id, i."InventoryCode" AS code, i."InventoryName" AS name, unit_lookup."unitName" AS unit
+      FROM "IM_Item" i
+      ${itemUnitNameLateral('i')}
+      WHERE i."RecId" IN (${Prisma.join(unique)}) AND i."IsDeleted" = 0
+    `);
+    return new Map(rows.map((r) => [Number(r.id), { code: r.code ?? '', name: r.name ?? '', unit: r.unit ?? '' }]));
+  }
+
+  // Raw Material lines as the screen shows them: a line bound to an Inventory item shows that
+  // item's current code/name/unit. A line saved before the binding existed (text only) is shown
+  // bound when its code matches exactly one non-deleted item — resolved for display only; the id
+  // is stored the next time the sheet is saved. Anything else is returned exactly as stored.
+  private async withInventory<T extends { inventoryId: number | null; inventoryCode: string | null; inventoryName: string | null; unit: string | null }>(lines: T[]) {
+    const bound = await this.activeInventoryItems(lines.filter((l) => l.inventoryId != null).map((l) => l.inventoryId!));
+    const legacyCodes = Array.from(new Set(lines.filter((l) => l.inventoryId == null && l.inventoryCode?.trim()).map((l) => l.inventoryCode!.trim())));
+    const byCode = new Map<string, number>();
+    if (legacyCodes.length) {
+      const rows = await this.prisma.$queryRaw<{ code: string; id: number; n: number }[]>(Prisma.sql`
+        SELECT "InventoryCode" AS code, min("RecId")::int AS id, count(*)::int AS n
+        FROM "IM_Item" WHERE "InventoryCode" IN (${Prisma.join(legacyCodes)}) AND "IsDeleted" = 0
+        GROUP BY "InventoryCode"
+      `);
+      for (const r of rows) if (r.n === 1) byCode.set(r.code, Number(r.id));
+    }
+    const matched = await this.activeInventoryItems(Array.from(byCode.values()));
+    return lines.map((l) => {
+      if (l.inventoryId != null) {
+        const item = bound.get(l.inventoryId);
+        return item ? { ...l, inventoryCode: item.code, inventoryName: item.name, unit: item.unit } : l;
+      }
+      const id = l.inventoryCode ? byCode.get(l.inventoryCode.trim()) : undefined;
+      const item = id != null ? matched.get(id) : undefined;
+      return item ? { ...l, inventoryId: id!, inventoryName: item.name, unit: item.unit } : l;
+    });
   }
 
   async update(id: string, dto: any) {
@@ -137,18 +182,37 @@ export class CostingService {
 
   async upsertRawMaterialLines(id: string, lines: any[]) {
     await this.findOrThrow(id);
-    await this.prisma.costingRawMaterialLine.deleteMany({ where: { costingSheetId: id } });
-    if (lines?.length) {
-      await this.prisma.costingRawMaterialLine.createMany({
-        data: lines.map((l, i) => ({
-          groupCode: l.groupCode, groupName: l.groupName, inventoryCode: l.inventoryCode,
-          inventoryName: l.inventoryName, quantity: l.quantity ?? 0, wastePct: l.wastePct ?? 0,
-          unitPrice: l.unitPrice ?? 0, forex: l.forex, unit: l.unit, explanation: l.explanation,
-          costDetail: l.costDetail ?? undefined, sortOrder: i, costingSheetId: id,
-        })),
-      });
-    }
-    return this.prisma.costingRawMaterialLine.findMany({ where: { costingSheetId: id }, orderBy: { sortOrder: 'asc' } });
+    // inventoryId (IM_Item.RecId) is the source of truth: it must be an existing, non-deleted
+    // Inventory item, and the line's Inventory Code/Name/Unit are taken from that item — never from
+    // the client — so values of two different items can't be saved together. A line with no
+    // inventoryId (saved before the binding existed) keeps its typed text/unit as before. Every line
+    // is validated before anything is replaced, and the replace is one transaction.
+    const rows = lines || [];
+    const ids = rows.map((l) => {
+      if (l.inventoryId === undefined || l.inventoryId === null || l.inventoryId === '') return null;
+      const n = Number(l.inventoryId);
+      if (!Number.isInteger(n) || n <= 0) throw new BadRequestException(`Invalid Inventory reference "${l.inventoryId}".`);
+      return n;
+    });
+    const items = await this.activeInventoryItems(ids.filter((n): n is number => n != null));
+    const missing = ids.filter((n): n is number => n != null && !items.has(n));
+    if (missing.length) throw new BadRequestException(`Inventory item ${missing.map((n) => `#${n}`).join(', ')} does not exist or has been deleted.`);
+    await this.prisma.$transaction([
+      this.prisma.costingRawMaterialLine.deleteMany({ where: { costingSheetId: id } }),
+      this.prisma.costingRawMaterialLine.createMany({
+        data: rows.map((l, i) => {
+          const item = ids[i] != null ? items.get(ids[i]!) : undefined;
+          return {
+            groupCode: l.groupCode, groupName: l.groupName, inventoryId: ids[i],
+            inventoryCode: item ? item.code : l.inventoryCode, inventoryName: item ? item.name : l.inventoryName,
+            quantity: l.quantity ?? 0, wastePct: l.wastePct ?? 0,
+            unitPrice: l.unitPrice ?? 0, forex: l.forex, unit: item ? item.unit || null : l.unit, explanation: l.explanation,
+            costDetail: l.costDetail ?? undefined, sortOrder: i, costingSheetId: id,
+          };
+        }),
+      }),
+    ]);
+    return this.withInventory(await this.prisma.costingRawMaterialLine.findMany({ where: { costingSheetId: id }, orderBy: { sortOrder: 'asc' } }));
   }
 
   async upsertLaborLines(id: string, lines: any[]) {

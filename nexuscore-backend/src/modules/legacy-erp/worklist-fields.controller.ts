@@ -1,5 +1,7 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { AllowAuthenticated } from '../../common/decorators/permissions.decorator';
 import { WorklistFieldsService } from './worklist-fields.service';
 import { WorklistRowsService } from './worklist-rows.service';
 
@@ -21,8 +23,10 @@ export class WorklistFieldsController {
   // Custom-worklist row resolution — the currently selected top-right dropdown table is always
   // the primary/row-identity source (unchanged, see receipt-master-data/page.tsx); this just
   // additionally resolves whichever of the worklist's fields have a real relationship to it.
+  // A read (POST only because the field list is a request body), so any signed-in user may call it.
+  @AllowAuthenticated()
   @Post('resolve')
-  resolve(@Body() body: { primaryTable: string; fields: { source: string; key: string }[]; search?: string }) {
-    return this.rowsSvc.resolve(body.primaryTable, body.fields as any, body.search);
+  resolve(@Body() body: { primaryTable: string; fields: { source: string; key: string }[]; search?: string }, @Paging() paging?: ListPaging | null) {
+    return this.rowsSvc.resolve(body.primaryTable, body.fields as any, body.search, paging ?? null);
   }
 }

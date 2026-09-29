@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { EditableGridInput } from "@/components/ui/editable-grid-input";
+import { CostingGrid, SheetCellInput, type CostingColumn } from "../_components/costing-grid";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import type { DecimalFieldKey } from "@/lib/legacy-erp/decimal-parameters";
 
@@ -17,7 +17,9 @@ import { toast } from "sonner";
 import { ArrowLeft, Save, Search, ImageOff, Plus, Trash2, Upload, Calculator, Table2 } from "lucide-react";
 import { CostDetailDialog, CostDetailValue, emptyCostDetail } from "../_components/cost-detail-dialog";
 import { ProfitBreakdownDialog } from "../_components/profit-breakdown-dialog";
-import { plmApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
+import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
 import { FormRow as FieldRow } from "@/components/forms/form-row";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
 
@@ -27,7 +29,9 @@ const fmt4 = (n: number) => (n ?? 0).toLocaleString(undefined, { minimumFraction
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 // ---------- row types ----------
-type RawRow = { id: string; groupCode: string; groupName: string; inventoryCode: string; inventoryName: string; quantity: number; wastePct: number; unitPrice: number; forex: string; unit: string; explanation: string };
+// inventoryId = the selected Inventory item (IM_Item.RecId) — the source of truth; inventoryCode/
+// inventoryName are its display values (set together on selection, re-filled by the server).
+type RawRow = { id: string; groupCode: string; groupName: string; inventoryId: number | null; inventoryCode: string; inventoryName: string; quantity: number; wastePct: number; unitPrice: number; forex: string; unit: string; explanation: string };
 type LaborRow = { id: string; groupCode: string; groupName: string; explanation: string; quantity: number; wastePct: number; forex: string; unitPrice: number };
 type OtherRow = { id: string; groupCode: string; groupName: string; explanation: string; quantity: number; forex: string; unitPrice: number };
 
@@ -50,32 +54,8 @@ const INCOTERMS = ["FOB", "CIF", "CFR", "EXW", "DDP", "FCA"];
 // same label-left layout this file already used, now centralized so every
 // dense data-entry screen shares one implementation instead of its own copy.
 
-// Renders through the shared EditableGridInput (components/ui/editable-grid-input.tsx)
-// so this grid's cells look identical to every other input in the app instead of using
-// their own bespoke CSS.
-function GridInput({
-  value, onChange, align = "left", type = "text", decimalKey, nonNegative,
-}: {
-  value: string | number; onChange: (v: string) => void; align?: "left" | "right"; type?: string;
-  /** Opt-in Decimal Parameters rounding — forwarded straight through to EditableGridInput.
-   *  Omitted by every existing caller today, so behavior is unchanged unless a cell explicitly
-   *  adopts it. */
-  decimalKey?: DecimalFieldKey;
-  /** Opt-in — blocks negative values (Qty, Waste %, Unit Price, ...). Forwarded straight
-   *  through to EditableGridInput (see lib/numeric-guards.ts). */
-  nonNegative?: boolean;
-}) {
-  return <EditableGridInput value={value} onChange={onChange} align={align} type={type} decimalKey={decimalKey} nonNegative={nonNegative} />;
-}
-
-function SectionHeaderBar({ title, total, sharePct }: { title: string; total: number; sharePct: number }) {
-  return (
-    <div className="flex items-center justify-between bg-slate-700 dark:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-t-md">
-      <span>{title}</span>
-      <span className="font-mono">{fmt2(total)} - {fmt2(sharePct)}%</span>
-    </div>
-  );
-}
+// The three section grids (and their dark header bars) render through CostingGrid /
+// SheetCellInput (../_components/costing-grid.tsx), on the shared EditableGridInput.
 
 function SummaryRow({ label, pct, onPctChange, pkr, usd, bold = false, extra }: { label: string; pct?: number; onPctChange?: (v: number) => void; pkr: number; usd: number; bold?: boolean; extra?: React.ReactNode }) {
   return (
@@ -149,7 +129,7 @@ export default function CostingSheetDetailPage() {
       financialCost: num(s.financialCostPct), commission: num(s.commissionPct), commission3: num(s.commission3Pct),
     });
     const raw = (s.rawMaterialLines || []).map((l: any) => ({
-      id: l.id, groupCode: l.groupCode || "", groupName: l.groupName || "", inventoryCode: l.inventoryCode || "",
+      id: l.id, groupCode: l.groupCode || "", groupName: l.groupName || "", inventoryId: l.inventoryId ?? null, inventoryCode: l.inventoryCode || "",
       inventoryName: l.inventoryName || "", quantity: num(l.quantity), wastePct: num(l.wastePct),
       unitPrice: num(l.unitPrice), forex: l.forex || "", unit: l.unit || "", explanation: l.explanation || "",
     }));
@@ -210,7 +190,53 @@ export default function CostingSheetDetailPage() {
   const updateLabor = (rid: string, patch: Partial<LaborRow>) => setLaborRows((rows) => rows.map((r) => (r.id === rid ? { ...r, ...patch } : r)));
   const updateOther = (rid: string, patch: Partial<OtherRow>) => setOtherRows((rows) => rows.map((r) => (r.id === rid ? { ...r, ...patch } : r)));
 
-  const addRaw = () => setRawRows((r) => [...r, { id: uid(), groupCode: "", groupName: "", inventoryCode: "", inventoryName: "", quantity: 1, wastePct: 0, unitPrice: 0, forex: "", unit: "", explanation: "" }]);
+  const addRaw = () => setRawRows((r) => [...r, { id: uid(), groupCode: "", groupName: "", inventoryId: null, inventoryCode: "", inventoryName: "", quantity: 1, wastePct: 0, unitPrice: 0, forex: "", unit: "", explanation: "" }]);
+
+  // ---------- Raw Material Inventory lookup ----------
+  // Inventory Code is picked from the Inventory master (legacyErpApi.inventoryCards.list — the
+  // Inventory Card list's own search over code/name, non-deleted items) via the shared
+  // AutocompleteTextCell (type or click to search) and CardLookupDialog (search icon). Picking an
+  // item sets inventoryId + Code + Name + Unit together (Unit = the list's own `unit`, the item's
+  // Main Unit); typed text alone never binds anything.
+  type InventoryOption = AutocompleteOption & { unit?: string | null };
+  const [inventoryOptions, setInventoryOptions] = useState<InventoryOption[]>([]);
+  const [inventoryQuery, setInventoryQuery] = useState<Record<string, string>>({});
+  const [inventoryLookupRowId, setInventoryLookupRowId] = useState<string | null>(null);
+  const inventorySearchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const inventorySearchSeq = useRef(0);
+  const fetchInventory = async (term?: string): Promise<(CardLookupRow & { unit?: string | null })[]> => {
+    const res: any = await legacyErpApi.inventoryCards.list(term ? { search: term } : undefined);
+    return Array.isArray(res) ? res : res?.data ?? [];
+  };
+  const searchInventory = (term: string) => {
+    clearTimeout(inventorySearchTimer.current);
+    inventorySearchTimer.current = setTimeout(async () => {
+      const seq = ++inventorySearchSeq.current;
+      try {
+        const rows = await fetchInventory(term.trim() || undefined);
+        if (seq === inventorySearchSeq.current) setInventoryOptions(rows.map((x) => ({ id: String(x.id), code: x.inventoryCode, name: x.inventoryName, unit: x.unit })));
+      } catch { /* keep the previous list */ }
+    }, 200);
+  };
+  useEffect(() => { searchInventory(""); }, []);
+  const clearInventoryQuery = (rowId: string) => setInventoryQuery(({ [rowId]: _, ...rest }) => rest);
+  const selectInventory = (rowId: string, item: { id: string | number; code?: string | null; name?: string | null; unit?: string | null }) => {
+    updateRaw(rowId, { inventoryId: Number(item.id), inventoryCode: item.code ?? "", inventoryName: item.name ?? "", unit: item.unit ?? "" });
+    clearInventoryQuery(rowId);
+    searchInventory("");
+  };
+  // Leaving the field without picking: cleared text clears the selection; text that is exactly one
+  // listed code binds it; anything else is discarded and the row keeps its current selection.
+  const commitInventoryText = (row: RawRow, text: string) => {
+    const typed = text.trim();
+    clearInventoryQuery(row.id);
+    searchInventory("");
+    if (typed === row.inventoryCode) return;
+    if (!typed) { updateRaw(row.id, { inventoryId: null, inventoryCode: "", inventoryName: "", unit: "" }); return; }
+    const exact = inventoryOptions.filter((o) => (o.code ?? "").toLowerCase() === typed.toLowerCase());
+    if (exact.length === 1) selectInventory(row.id, exact[0]);
+    else toast.error("Select an inventory item from the list");
+  };
   const addLabor = () => setLaborRows((r) => [...r, { id: uid(), groupCode: "", groupName: "", explanation: "", quantity: 1, wastePct: 0, forex: "", unitPrice: 0 }]);
   const addOther = () => setOtherRows((r) => [...r, { id: uid(), groupCode: "", groupName: "", explanation: "", quantity: 1, forex: "", unitPrice: 0 }]);
 
@@ -240,7 +266,7 @@ export default function CostingSheetDetailPage() {
         await plmApi.costingSheets.update(targetId, headerPayload);
       }
 
-      // Decimal Parameters rounding happens HERE (not just via each cell's own GridInput
+      // Decimal Parameters rounding happens HERE (not just via each cell's own SheetCellInput
       // decimalKey, which is visual round-on-blur only) — this is the one place these rows are
       // actually sent to the API. Same rationale as bom-tab.tsx's own save().
       await Promise.all([
@@ -262,7 +288,7 @@ export default function CostingSheetDetailPage() {
       if (!sheetId) {
         router.replace(`/dashboard/plm/costing-sheets/${targetId}`);
       } else {
-        const refreshed = await plmApi.costingSheets.get(targetId);
+        const refreshed = await plmApi.costingSheets.get(targetId!);
         applySheet(refreshed);
       }
     } catch (e: any) {
@@ -286,6 +312,116 @@ export default function CostingSheetDetailPage() {
     otherRows.forEach((r) => bump(r.groupCode, r.groupName, r.quantity * r.unitPrice));
     return Array.from(map.values()).sort((a, b) => b.amount - a.amount);
   }, [rawRows, laborRows, otherRows]);
+
+  // ---------- section grid columns (CostingGrid) ----------
+  // Display definitions only: each cell renders/edits the row's own field and the amount cells
+  // use the same formulas as before, so column order/visibility never affects data or totals.
+  // Forex is the currency name (a text field in the data model), not a number.
+  const rawAmount = (r: RawRow) => r.quantity * r.unitPrice * (1 + r.wastePct / 100);
+  const laborAmount = (r: LaborRow) => r.quantity * r.unitPrice * (1 + r.wastePct / 100);
+  const otherAmount = (r: OtherRow) => r.quantity * r.unitPrice;
+  const textCol = <R extends { id: string }, K extends string>(key: K, label: string, width: number, field: keyof R & string, update: (id: string, patch: any) => void): CostingColumn<R, K> => ({
+    key, label, defaultWidth: width, minWidth: 60, nav: "text",
+    render: (r) => <SheetCellInput value={(r as any)[field] ?? ""} onChange={(v) => update(r.id, { [field]: v })} />,
+  });
+  const numberCol = <R extends { id: string }, K extends string>(key: K, label: string, width: number, field: keyof R & string, update: (id: string, patch: any) => void, decimalKey?: DecimalFieldKey): CostingColumn<R, K> => ({
+    key, label, defaultWidth: width, minWidth: 60, align: "right", nav: "number",
+    render: (r) => <SheetCellInput kind="number" nonNegative decimalKey={decimalKey} value={(r as any)[field]} onChange={(v) => update(r.id, { [field]: parseFloat(v) || 0 })} />,
+  });
+  const amountCol = <R extends { id: string }, K extends string>(key: K, label: string, width: number, value: (r: R) => number, footer?: number): CostingColumn<R, K> => ({
+    key, label, defaultWidth: width, minWidth: 70, align: "right",
+    render: (r) => fmt4(value(r)),
+    footer: footer === undefined ? undefined : fmt4(footer),
+  });
+
+  type RawKey = "groupCode" | "groupName" | "inventoryCode" | "inventoryName" | "quantity" | "wastePct" | "unitPrice" | "forex" | "unit" | "explanation" | "forexPrice" | "itemAmount" | "forexItemAmount";
+  const rawColumns: CostingColumn<RawRow, RawKey>[] = [
+    textCol("groupCode", "Group Code", 100, "groupCode", updateRaw),
+    textCol("groupName", "Group Name", 130, "groupName", updateRaw),
+    {
+      key: "inventoryCode", label: "Inventory Code", defaultWidth: 200, minWidth: 150, nav: "lookup",
+      render: (r) => (
+        <div className="flex h-full w-full items-stretch">
+          <div className="min-w-0 flex-1">
+            <AutocompleteTextCell
+              value={inventoryQuery[r.id] ?? r.inventoryCode}
+              options={inventoryOptions}
+              placeholder="Search code or name"
+              startOpen={false}
+              openOnFocus
+              showDropdownIcon
+              popoverClassName="min-w-[460px] max-h-72"
+              onChange={(v) => { setInventoryQuery((q) => ({ ...q, [r.id]: v })); searchInventory(v); }}
+              onCommit={(finalValue) => commitInventoryText(r, finalValue)}
+              onCancel={() => { clearInventoryQuery(r.id); searchInventory(""); }}
+              onSelectOption={(o) => selectInventory(r.id, o)}
+            />
+          </div>
+          <button
+            type="button"
+            title="Browse Inventory"
+            onClick={() => setInventoryLookupRowId(r.id)}
+            className="flex w-7 shrink-0 items-center justify-center border-l text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Search className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ),
+    },
+    // Read-only: always the selected Inventory item's own name.
+    {
+      key: "inventoryName", label: "Inventory Name", defaultWidth: 240, minWidth: 100,
+      render: (r) => <span className="block truncate" title={r.inventoryName}>{r.inventoryName || <span className="text-muted-foreground">—</span>}</span>,
+    },
+    numberCol("quantity", "Quantity", 90, "quantity", updateRaw, "quantity"),
+    numberCol("wastePct", "Waste %", 80, "wastePct", updateRaw),
+    numberCol("unitPrice", "Unit Price", 100, "unitPrice", updateRaw, "unit-price"),
+    textCol("forex", "Forex", 80, "forex", updateRaw),
+    // Unit comes from the selected Inventory item (read-only, like Inventory Name, so it can never
+    // disagree with it); only a line without an Inventory item (typed before the binding existed)
+    // keeps its own editable Unit text.
+    {
+      ...textCol<RawRow, RawKey>("unit", "Unit", 70, "unit", updateRaw),
+      nav: (r) => (r.inventoryId != null ? undefined : "text"),
+      render: (r) => r.inventoryId != null
+        ? <span className="block truncate" title={r.unit}>{r.unit || <span className="text-muted-foreground">—</span>}</span>
+        : <SheetCellInput value={r.unit ?? ""} onChange={(v) => updateRaw(r.id, { unit: v })} />,
+    },
+    textCol("explanation", "Explanation", 160, "explanation", updateRaw),
+    amountCol("forexPrice", "Forex Price", 105, (r) => rawAmount(r) / usdRate, rawTotal / usdRate),
+    amountCol("itemAmount", "Item Amount", 110, rawAmount, rawTotal),
+    amountCol("forexItemAmount", "Forex Item Amount", 130, (r) => rawAmount(r) / usdRate, rawTotal / usdRate),
+  ];
+
+  type LaborKey = "groupCode" | "groupName" | "explanation" | "quantity" | "wastePct" | "forex" | "forexPrice" | "unitPrice" | "itemAmount" | "forexItemAmount";
+  const laborColumns: CostingColumn<LaborRow, LaborKey>[] = [
+    textCol("groupCode", "Group Code", 100, "groupCode", updateLabor),
+    textCol("groupName", "Group Name", 130, "groupName", updateLabor),
+    textCol("explanation", "Explanation", 220, "explanation", updateLabor),
+    numberCol("quantity", "Quantity", 90, "quantity", updateLabor, "quantity"),
+    numberCol("wastePct", "Waste %", 80, "wastePct", updateLabor),
+    textCol("forex", "Forex", 80, "forex", updateLabor),
+    amountCol("forexPrice", "Forex Price", 105, (r) => laborAmount(r) / usdRate),
+    numberCol("unitPrice", "Unit Price", 100, "unitPrice", updateLabor, "unit-price"),
+    amountCol("itemAmount", "Item Amount", 110, laborAmount, laborTotal),
+    amountCol("forexItemAmount", "Forex Item Amount", 130, (r) => laborAmount(r) / usdRate, laborTotal / usdRate),
+  ];
+
+  type OtherKey = "groupCode" | "groupName" | "explanation" | "quantity" | "forex" | "forexRates" | "unitPrice" | "forexItemAmount" | "itemAmount";
+  const otherColumns: CostingColumn<OtherRow, OtherKey>[] = [
+    textCol("groupCode", "Group Code", 100, "groupCode", updateOther),
+    textCol("groupName", "Group Name", 130, "groupName", updateOther),
+    textCol("explanation", "Explanation", 220, "explanation", updateOther),
+    numberCol("quantity", "Quantity", 90, "quantity", updateOther, "quantity"),
+    textCol("forex", "Forex", 80, "forex", updateOther),
+    amountCol("forexRates", "Forex Rates", 105, () => usdRate),
+    numberCol("unitPrice", "Unit Price", 100, "unitPrice", updateOther, "unit-price"),
+    amountCol("forexItemAmount", "Forex Item Amount", 130, (r) => otherAmount(r) / usdRate, otherTotal / usdRate),
+    amountCol("itemAmount", "Item Amount", 110, otherAmount, otherTotal),
+  ];
+  const deleteButton = (onClick: () => void) => (
+    <Button variant="ghost" size="icon" className="h-7 w-7" title="Delete row" onClick={onClick}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>
+  );
 
   return (
     <div className="p-4 space-y-3">
@@ -440,166 +576,41 @@ export default function CostingSheetDetailPage() {
             </TabsList>
 
             <TabsContent value="lines" className="space-y-4 pt-3">
-              {/* Raw Material Costs */}
-              <div>
-                <SectionHeaderBar title="Raw Material Costs" total={rawTotal} sharePct={(rawTotal / grandLineTotal) * 100} />
-                <div className="rounded-b-md border border-t-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8">
-                        <TableHead>Group Code</TableHead>
-                        <TableHead>Group Name</TableHead>
-                        <TableHead>Inventory Code</TableHead>
-                        <TableHead className="min-w-[240px]">Inventory Name</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Waste %</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead>Forex</TableHead>
-                        <TableHead>Unit</TableHead>
-                        <TableHead>Explanation</TableHead>
-                        <TableHead className="text-right">Forex Price</TableHead>
-                        <TableHead className="text-right">Item Amount</TableHead>
-                        <TableHead className="text-right">Forex Item Amount</TableHead>
-                        <TableHead className="w-16"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rawRows.map((r) => {
-                        const itemAmount = r.quantity * r.unitPrice * (1 + r.wastePct / 100);
-                        return (
-                          <TableRow key={r.id} className="[&>td]:border-r [&>td]:p-0">
-                            <TableCell><GridInput value={r.groupCode} onChange={(v) => updateRaw(r.id, { groupCode: v })} /></TableCell>
-                            <TableCell><GridInput value={r.groupName} onChange={(v) => updateRaw(r.id, { groupName: v })} /></TableCell>
-                            <TableCell><GridInput value={r.inventoryCode} onChange={(v) => updateRaw(r.id, { inventoryCode: v })} /></TableCell>
-                            <TableCell><GridInput value={r.inventoryName} onChange={(v) => updateRaw(r.id, { inventoryName: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => updateRaw(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.wastePct} onChange={(v) => updateRaw(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateRaw(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput value={r.forex} onChange={(v) => updateRaw(r.id, { forex: v })} /></TableCell>
-                            <TableCell><GridInput value={r.unit} onChange={(v) => updateRaw(r.id, { unit: v })} /></TableCell>
-                            <TableCell><GridInput value={r.explanation} onChange={(v) => updateRaw(r.id, { explanation: v })} /></TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell className="p-0 text-center whitespace-nowrap">
-                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Cost Detail Entry" onClick={() => setCostDetailRowId(r.id)}><Calculator className="h-3.5 w-3.5 text-muted-foreground" /></Button>
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRawRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                      <TableRow className="bg-muted/40 font-semibold [&>td]:border-r">
-                        <TableCell colSpan={10} className="text-right text-xs pr-2">Total</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(rawTotal / usdRate)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(rawTotal)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(rawTotal / usdRate)}</TableCell>
-                        <TableCell></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-                <Button variant="outline" size="sm" className="mt-1.5 h-7 text-xs" onClick={addRaw}><Plus className="h-3.5 w-3.5 mr-1" />Add Row</Button>
-              </div>
+              <CostingGrid
+                title="Raw Material Costs"
+                totalText={`${fmt2(rawTotal)} - ${fmt2((rawTotal / grandLineTotal) * 100)}%`}
+                storageKey="costingRawMaterialGrid"
+                columns={rawColumns}
+                rows={rawRows}
+                onAddRow={addRaw}
+                actionsWidth={64}
+                renderActions={(r) => (
+                  <>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" title="Cost Detail Entry" onClick={() => setCostDetailRowId(r.id)}><Calculator className="h-3.5 w-3.5 text-muted-foreground" /></Button>
+                    {deleteButton(() => setRawRows((rows) => rows.filter((x) => x.id !== r.id)))}
+                  </>
+                )}
+              />
 
-              {/* Labor Costs */}
-              <div>
-                <SectionHeaderBar title="Labor Costs" total={laborTotal} sharePct={(laborTotal / grandLineTotal) * 100} />
-                <div className="rounded-b-md border border-t-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8">
-                        <TableHead>Group Code</TableHead>
-                        <TableHead>Group Name</TableHead>
-                        <TableHead className="min-w-[200px]">Explanation</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Waste %</TableHead>
-                        <TableHead>Forex</TableHead>
-                        <TableHead className="text-right">Forex Price</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Item Amount</TableHead>
-                        <TableHead className="text-right">Forex Item Amount</TableHead>
-                        <TableHead className="w-8"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {laborRows.map((r) => {
-                        const itemAmount = r.quantity * r.unitPrice * (1 + r.wastePct / 100);
-                        return (
-                          <TableRow key={r.id} className="[&>td]:border-r [&>td]:p-0">
-                            <TableCell><GridInput value={r.groupCode} onChange={(v) => updateLabor(r.id, { groupCode: v })} /></TableCell>
-                            <TableCell><GridInput value={r.groupName} onChange={(v) => updateLabor(r.id, { groupName: v })} /></TableCell>
-                            <TableCell><GridInput value={r.explanation} onChange={(v) => updateLabor(r.id, { explanation: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => updateLabor(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.wastePct} onChange={(v) => updateLabor(r.id, { wastePct: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput value={r.forex} onChange={(v) => updateLabor(r.id, { forex: v })} /></TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateLabor(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setLaborRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>
-                          </TableRow>
-                        );
-                      })}
-                      <TableRow className="bg-muted/40 font-semibold [&>td]:border-r">
-                        <TableCell colSpan={8} className="text-right text-xs pr-2">Total</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(laborTotal)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(laborTotal / usdRate)}</TableCell>
-                        <TableCell></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-                <Button variant="outline" size="sm" className="mt-1.5 h-7 text-xs" onClick={addLabor}><Plus className="h-3.5 w-3.5 mr-1" />Add Row</Button>
-              </div>
+              <CostingGrid
+                title="Labor Costs"
+                totalText={`${fmt2(laborTotal)} - ${fmt2((laborTotal / grandLineTotal) * 100)}%`}
+                storageKey="costingLaborGrid"
+                columns={laborColumns}
+                rows={laborRows}
+                onAddRow={addLabor}
+                renderActions={(r) => deleteButton(() => setLaborRows((rows) => rows.filter((x) => x.id !== r.id)))}
+              />
 
-              {/* Others */}
-              <div>
-                <SectionHeaderBar title="Others" total={otherTotal} sharePct={(otherTotal / grandLineTotal) * 100} />
-                <div className="rounded-b-md border border-t-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8">
-                        <TableHead>Group Code</TableHead>
-                        <TableHead>Group Name</TableHead>
-                        <TableHead className="min-w-[200px]">Explanation</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead>Forex</TableHead>
-                        <TableHead className="text-right">Forex Rates</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Forex Item Amount</TableHead>
-                        <TableHead className="text-right">Item Amount</TableHead>
-                        <TableHead className="w-8"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {otherRows.map((r) => {
-                        const itemAmount = r.quantity * r.unitPrice;
-                        return (
-                          <TableRow key={r.id} className="[&>td]:border-r [&>td]:p-0">
-                            <TableCell><GridInput value={r.groupCode} onChange={(v) => updateOther(r.id, { groupCode: v })} /></TableCell>
-                            <TableCell><GridInput value={r.groupName} onChange={(v) => updateOther(r.id, { groupName: v })} /></TableCell>
-                            <TableCell><GridInput value={r.explanation} onChange={(v) => updateOther(r.id, { explanation: v })} /></TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => updateOther(r.id, { quantity: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell><GridInput value={r.forex} onChange={(v) => updateOther(r.id, { forex: v })} /></TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(usdRate)}</TableCell>
-                            <TableCell><GridInput type="number" align="right" nonNegative value={r.unitPrice} decimalKey="unit-price" onChange={(v) => updateOther(r.id, { unitPrice: parseFloat(v) || 0 })} /></TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount / usdRate)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs px-2">{fmt4(itemAmount)}</TableCell>
-                            <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOtherRows((rows) => rows.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>
-                          </TableRow>
-                        );
-                      })}
-                      <TableRow className="bg-muted/40 font-semibold [&>td]:border-r">
-                        <TableCell colSpan={7} className="text-right text-xs pr-2">Total</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(otherTotal / usdRate)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs px-2">{fmt4(otherTotal)}</TableCell>
-                        <TableCell></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-                <Button variant="outline" size="sm" className="mt-1.5 h-7 text-xs" onClick={addOther}><Plus className="h-3.5 w-3.5 mr-1" />Add Row</Button>
-              </div>
+              <CostingGrid
+                title="Others"
+                totalText={`${fmt2(otherTotal)} - ${fmt2((otherTotal / grandLineTotal) * 100)}%`}
+                storageKey="costingOtherGrid"
+                columns={otherColumns}
+                rows={otherRows}
+                onAddRow={addOther}
+                renderActions={(r) => deleteButton(() => setOtherRows((rows) => rows.filter((x) => x.id !== r.id)))}
+              />
             </TabsContent>
 
             <TabsContent value="groupTotals" className="pt-3">
@@ -648,6 +659,18 @@ export default function CostingSheetDetailPage() {
         </TabsContent>
       </Tabs>
       )}
+
+      {/* Raw Material Inventory Code — full searchable Inventory list (search icon on the cell). */}
+      <CardLookupDialog<CardLookupRow>
+        open={!!inventoryLookupRowId}
+        onOpenChange={(open) => !open && setInventoryLookupRowId(null)}
+        title="Select Inventory"
+        fetchOptions={fetchInventory}
+        onSelect={(row) => {
+          if (inventoryLookupRowId) selectInventory(inventoryLookupRowId, { id: row.id, code: row.inventoryCode, name: row.inventoryName, unit: (row as { unit?: string | null }).unit });
+          setInventoryLookupRowId(null);
+        }}
+      />
 
       <CostDetailDialog
         open={!!costDetailRowId}

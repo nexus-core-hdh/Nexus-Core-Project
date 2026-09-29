@@ -1,4 +1,7 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { FabricCardService } from './fabric-card.service';
@@ -12,6 +15,7 @@ import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Legacy ERP - Fabric Cards')
+@PermissionModule('fabric-cards', 'Fabric cards')
 @Controller('legacy-erp/fabric-cards')
 export class FabricCardController {
   constructor(
@@ -21,8 +25,8 @@ export class FabricCardController {
     private readonly yarnRecipe: FabricYarnRecipeService,
   ) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, paging ?? null);
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {
@@ -71,12 +75,8 @@ export class FabricCardController {
     @Param('attId', ParseIntPipe) attId: number,
     @Res() res: Response,
   ) {
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

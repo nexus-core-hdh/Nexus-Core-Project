@@ -5,7 +5,7 @@ import { Save, FilePlus2, Search, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -127,7 +127,7 @@ export default function SizeDetailPage() {
 
   const loadLookupData = async () => {
     try {
-      const sets = await legacyErpApi.sizeSets.list();
+      const sets = await fetchAllPages((req) => legacyErpApi.sizeSets.list(undefined, req));
       setAllSets(Array.isArray(sets) ? sets : []);
     } catch {
       setAllSets([]);

@@ -15,7 +15,7 @@ import {
   type UnitOption, type UnitItem, type UnitItemForm,
   toItemForm,
 } from "@/components/legacy-erp/unit-item-detail-grid";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { Save, Ruler } from "lucide-react";
 
@@ -111,7 +111,7 @@ export function UnitTab({ itemId, readOnly = false, api }: Props) {
       try {
         const [rowsRes, setsRes] = await Promise.all([
           api.listTab(itemId, TAB),
-          legacyErpApi.unitSets.list(),
+          fetchAllPages((req) => legacyErpApi.unitSets.list(undefined, req)),
         ]);
         const activeSets: UnitSetHeader[] = (Array.isArray(setsRes) ? setsRes : []).filter((h: any) => !!h.inUse);
         setHeaders(activeSets);

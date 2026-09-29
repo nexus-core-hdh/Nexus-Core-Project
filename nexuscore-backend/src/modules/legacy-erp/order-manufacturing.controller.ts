@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { OrderManufacturingService, PriceContractRowDto, SaveEntriesDto } from './order-manufacturing.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -7,6 +8,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 // shared entries endpoint, and the Price Contract list/save. See order-manufacturing.service.ts for
 // the table mapping (MA_WorkOrderProduction / MA_WorkOrderProductionVariant / SM_ServicePriceList).
 @ApiTags('Legacy ERP - Order Manufacturing Entry')
+@PermissionModule('order-manufacturing', 'Order manufacturing')
 @Controller('legacy-erp/order-manufacturing')
 export class OrderManufacturingController {
   constructor(private readonly svc: OrderManufacturingService) {}

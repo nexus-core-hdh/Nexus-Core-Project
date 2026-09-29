@@ -31,6 +31,16 @@ import {
   Loader2, Lock, Unlock, X, ChevronDown,
 } from "lucide-react";
 
+// The stored user's companyId/branchId are backend UUID strings, although lib/auth.ts's User type
+// declares them as numbers; the API helpers skip empty values, so null and undefined are equivalent.
+const scopeIds = () => {
+  const user = getCurrentUser();
+  return {
+    companyId: user?.companyId != null ? String(user.companyId) : undefined,
+    branchId: user?.branchId != null ? String(user.branchId) : undefined,
+  };
+};
+
 // ── Entity groups ──────────────────────────────────────────────────────────────
 const ENTITY_GROUPS: { group: string; entities: { value: string; label: string }[] }[] = [
   { group: "CRM & Sales", entities: [
@@ -175,11 +185,11 @@ export default function BpmRequestTypesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const user = getCurrentUser();
+      const { companyId, branchId } = scopeIds();
       const [rt, proc, pages]: any = await Promise.all([
-        bpmApi.requestTypes.list(user?.companyId, user?.branchId),
+        bpmApi.requestTypes.list(companyId, branchId),
         bpmApi.processes.list(),
-        customEntityPageApi.getCustomEntityPages(user?.companyId, user?.branchId).catch(() => []),
+        customEntityPageApi.getCustomEntityPages(companyId, branchId).catch(() => []),
       ]);
       setData(Array.isArray(rt) ? rt : []);
       const procList = proc?.data ?? proc;
@@ -271,7 +281,6 @@ export default function BpmRequestTypesPage() {
     if (!resolvedEntityName) { toast.error("Select an entity first"); return; }
     setAddingField(true);
     try {
-      const user = getCurrentUser();
       const options = newField.type === "select" && newField.options
         ? newField.options.split(",").map((o) => o.trim()).filter(Boolean)
         : undefined;
@@ -279,7 +288,7 @@ export default function BpmRequestTypesPage() {
         entity: resolvedEntityName, name: newField.name.trim(),
         label: newField.label || newField.name.trim(),
         type: newField.type, required: newField.required,
-        options, companyId: user?.companyId, branchId: user?.branchId,
+        options, ...scopeIds(),
       });
       setSchema((prev) => prev ? { ...prev, customFields: [...prev.customFields, created] } : prev);
       setNewField(emptyNewField);

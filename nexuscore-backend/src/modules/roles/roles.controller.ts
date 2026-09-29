@@ -3,12 +3,16 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRolePermissionsDto } from './dto/update-permissions.dto';
+import { AllowAuthenticated, Permissions } from '../../common/decorators/permissions.decorator';
+
+const MANAGE_ROLES = { module: 'roles', action: 'manage' };
 
 @ApiTags('Roles')
 @Controller('roles')
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
+  @Permissions(MANAGE_ROLES)
   @Post()
   @ApiOperation({ summary: 'Create role' })
   create(@Body() dto: CreateRoleDto) {
@@ -27,12 +31,14 @@ export class RolesController {
     return this.rolesService.findOne(id);
   }
 
+  @Permissions(MANAGE_ROLES)
   @Put(':id')
   @ApiOperation({ summary: 'Update role' })
   update(@Param('id') id: string, @Body() dto: CreateRoleDto) {
     return this.rolesService.update(id, dto);
   }
 
+  @Permissions(MANAGE_ROLES)
   @Delete(':id')
   @ApiOperation({ summary: 'Delete role' })
   remove(@Param('id') id: string) {
@@ -45,6 +51,7 @@ export class RolesController {
     return this.rolesService.findOne(id);
   }
 
+  @Permissions(MANAGE_ROLES)
   @Put(':id/permissions')
   @ApiOperation({ summary: 'Bulk update role permissions (toggle)' })
   updatePermissions(@Param('id') id: string, @Body() dto: UpdateRolePermissionsDto) {
@@ -68,6 +75,8 @@ export class PermissionSettingsController {
   // across the whole menu) can do it in one request instead of one per path —
   // avoids tripping the global rate limiter on what would otherwise be dozens
   // of individual round trips for what is, today, always the same answer.
+  // A read, so any signed-in user may call it.
+  @AllowAuthenticated()
   @Post('check-batch')
   checkResourcePermissionsBatch(@Body('resourcePaths') resourcePaths: string[]) {
     const result: Record<string, boolean> = {};
@@ -80,6 +89,7 @@ export class PermissionSettingsController {
   @Get('matrix')
   getMatrix() { return []; }
 
+  @Permissions(MANAGE_ROLES)
   @Post('upsert')
   upsert(@Body() _dto: any) { return { success: true }; }
 
@@ -89,6 +99,7 @@ export class PermissionSettingsController {
   @Get('hierarchical')
   hierarchical() { return []; }
 
+  @Permissions(MANAGE_ROLES)
   @Post('hierarchical/upsert')
   upsertHierarchical(@Body() _dto: any) { return { success: true }; }
 }

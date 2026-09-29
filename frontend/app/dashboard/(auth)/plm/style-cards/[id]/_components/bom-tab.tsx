@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, ListOrdered, Search, Scissors } from "lucide-react";
-import { plmApi, legacyErpApi } from "@/lib/nexuscore-api";
+import { plmApi, legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
@@ -88,7 +88,9 @@ type BomRow = {
   // (see the model's own schema comment), plain scalar fields with no master/relation backing
   // them. Blank/false/0 for every Work Order row (MA_RecipeItem has no equivalent columns and
   // save() below never sends these in Work Order mode — same "genuinely unsupported, not sent"
-  // convention rowColumn already used before this change).
+  // convention rowColumn already used before this change) — except notForRequirement/
+  // useFixQuantity, which Work Order mode loads and saves via MA_RecipeItem.NotForRequirement/
+  // IsFixQuantity.
   notForRequirement: boolean;
   useFixQuantity: boolean;
   printWastagePct: number;
@@ -736,8 +738,8 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           : plmApi.styleBom.get(styleCardId!),
         plmApi.colors.list().catch(() => []),
         plmApi.processCards.list().catch(() => ({ data: [] })),
-        legacyErpApi.fabricCards.list().catch(() => []),
-        legacyErpApi.trimInventoryCards.list().catch(() => []),
+        fetchAllPages((req) => legacyErpApi.fabricCards.list(undefined, req)).catch(() => []),
+        fetchAllPages((req) => legacyErpApi.trimInventoryCards.list(undefined, req)).catch(() => []),
         plmApi.routeCards.list().catch(() => []),
         legacyErpApi.masterLookup.list('fabric').catch(() => []),
         legacyErpApi.masterLookup.list('forex').catch(() => []),
@@ -812,9 +814,10 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             wastePct: num(l.wastage), dyeWastagePct: 0, otherWastagePct: 0,
             unitPrice: num(l.price), component: l.uD_Component || "", dia: l.uD_Dia || "", gauge: l.uD_Guage || "",
             finishWidth: l.uD_FinishWidth || "", finishRoute: l.uD_FinishRoute || "", revision: l.uD_Revision || "",
-            // MA_RecipeItem has no equivalent columns for this task's extension (see BomRow's own
-            // comment) — always blank/false here, and save() never sends these in Work Order mode.
-            notForRequirement: false, useFixQuantity: false, printWastagePct: 0, forex: "", manProductCode: "",
+            // NOT for Requirement / Use Fix Quantity: MA_RecipeItem.NotForRequirement/IsFixQuantity
+            // (the Work Order's effective value, inherited from the Style Card unless changed here).
+            // The rest of this extension has no MA_RecipeItem column — blank here, never sent.
+            notForRequirement: !!l.notForRequirement, useFixQuantity: !!l.isFixQuantity, printWastagePct: 0, forex: "", manProductCode: "",
             orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
             category: "", bodyColor: "", printColor: "", dyeingProcess: "",
           };
@@ -877,28 +880,34 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     });
   }, [card]);
 
-  // Recalculates Quantity for Fabric-type rows on every change that can affect it (Fabric
-  // selection, Market Length/Width/Weight, Unit) since every one of those routes through this
-  // same update() — no separate effect/hook needed. Always recomputed fresh from the physical
-  // dimensions and re-expressed in whichever Unit is currently selected (calcFabricQuantity,
-  // using this row's own item-configured Units) rather than converting whatever number Quantity
-  // last held — "do not keep the previous unit's numeric quantity" on a Unit change. Trim/
+  // Fabric Quantity is the BOM's own editable, stored value. The Market Length/Width/Weight formula
+  // (calcFabricQuantity, re-expressed in the row's selected Unit via its item-configured Units) only
+  // SUGGESTS it: when one of its inputs (Market Length/Width/Weight, Unit, Fabric) changes, Quantity
+  // follows the formula only while it still holds the formula's value (or 0/blank) — a Quantity the
+  // user typed is never overwritten, and edits to any other field never touch Quantity. Trim/
   // Ornament/Process rows are untouched: their Quantity stays the plain manually-entered (or,
   // for Trim with a selected card, ratio-converted — see the Unit cell below) value it always was.
   // `guard` is optional — only the async Unit-resolution callback below needs it, to skip
   // applying a slower/stale resolution if the row's card selection has since changed again.
+  const FABRIC_QUANTITY_INPUTS = ["marketLength", "marketWidth", "marketWeight", "unit", "fabricInventoryId"] as const;
   const update = (id: string, patch: Partial<BomRow>, guard?: (row: BomRow) => boolean) => setRows((rs) => rs.map((r) => {
     if (r.id !== id || (guard && !guard(r))) return r;
     const next = { ...r, ...patch };
-    if (next.lineType === "fabric") {
+    const formulaInputChanged = FABRIC_QUANTITY_INPUTS.some((k) => k in patch && patch[k] !== r[k]);
+    if (next.lineType === "fabric" && !("quantity" in patch) && formulaInputChanged) {
       // Reads the ref cache, not the itemUnitsByCard state — a card selection's own async
       // continuation (applyCardSelection's ensureItemUnits().then(...)) calls update() in the
       // same microtask ensureItemUnits populates this cache in, before React has necessarily
       // re-rendered with a fresh itemUnitsByCard closure. The ref is written synchronously the
       // instant units resolve, so it's never one render behind like the state closure could be.
-      const cached = next.fabricInventoryId != null ? itemUnitsCacheRef.current[String(next.fabricInventoryId)] : undefined;
-      const units = Array.isArray(cached) ? cached : [];
-      next.quantity = calcFabricQuantity(next.marketLength, next.marketWidth, next.marketWeight, next.unit, units);
+      const unitsOf = (cardId: number | null) => {
+        const cached = cardId != null ? itemUnitsCacheRef.current[String(cardId)] : undefined;
+        return Array.isArray(cached) ? cached : [];
+      };
+      const suggestedBefore = calcFabricQuantity(r.marketLength, r.marketWidth, r.marketWeight, r.unit, unitsOf(r.fabricInventoryId));
+      // 0.005: a formula value saved through the "quantity" Decimal Parameter rounding still counts.
+      const followsFormula = !r.quantity || Math.abs(r.quantity - suggestedBefore) <= 0.005;
+      if (followsFormula) next.quantity = calcFabricQuantity(next.marketLength, next.marketWidth, next.marketWeight, next.unit, unitsOf(next.fabricInventoryId));
     }
     return next;
   }));
@@ -951,8 +960,8 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       const target = matched || mainUnitOf(units);
       if (!target) return;
       const unitPatch: Partial<BomRow> = { unitId: Number(target.id), unit: target.code || target.name || "" };
-      // Fabric: Quantity is derived (calcFabricQuantity, via update()'s own recompute below) from
-      // Market Length/Width/Weight re-expressed in this newly resolved Unit — never set here
+      // Fabric: Quantity follows the Market formula in this newly resolved Unit via update() — only
+      // while it still holds the formula's value; a typed Quantity is kept. Never set here
       // directly. Trim (no physical formula): preserve the previous numeric Quantity only when
       // the Unit itself was preserved (same real unit); otherwise reset to 0 rather than guess a
       // cross-item conversion with no defined basis (the two cards' UnitFactor/UnitDivisor are
@@ -1001,6 +1010,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             uD_FinishWidth: r.finishWidth || undefined, uD_FinishRoute: r.finishRoute || undefined,
             uD_Revision: r.revision || undefined, uD_Placement: r.placement || undefined, uD_Remarks: r.process || undefined,
             markerWidth: r.marketWidth || undefined, markerLength: r.marketLength || undefined, m2Weight: r.marketWeight || undefined,
+            notForRequirement: r.notForRequirement ? 1 : 0, isFixQuantity: r.useFixQuantity ? 1 : 0,
           }));
           await legacyErpApi.workOrders.upsertBom(workOrder!.workOrderId, lt, linesOfType);
         }
@@ -1419,9 +1429,9 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
               const target = units.find((u: any) => String(u.id) === v);
               if (!target) return;
               const unitPatch: Partial<BomRow> = { unitId: Number(target.id), unit: target.code || target.name || "" };
-              // Fabric: Quantity is derived (calcFabricQuantity, via update()'s own recompute)
-              // fresh from Market Length/Width/Weight re-expressed in the newly picked Unit —
-              // never set here directly, and never a multiply/divide of the old number.
+              // Fabric: update() re-expresses a formula-derived Quantity in the newly picked Unit
+              // (fresh from Market Length/Width/Weight); a typed Quantity is kept as entered.
+              // Never set here directly, and never a multiply/divide of the old number.
               // Trim/other (no physical formula backing Quantity): re-express the row's current
               // Quantity from whichever Unit it's currently in into the newly picked one, via the
               // exact same per-item ratio unit-conversion.util.ts already documents
@@ -1458,9 +1468,9 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           ? <GridInput type="number" align="right" nonNegative value={r.marketWeight} onChange={(v) => update(r.id, { marketWeight: parseFloat(v) || 0 })} />
           : <span className="block px-2 text-right text-xs text-muted-foreground">—</span>;
       case "quantity": {
-        // Fabric rows: Quantity is derived (Market Length/Width/Weight, re-expressed in the
-        // selected Unit) — shown read-only, same convention as the Calculated Qty column just to
-        // its right. Trim/Ornament/Process rows are unaffected: still a plain manually-entered
+        // Fabric rows: editable, like every other line type; Market Length/Width/Weight only
+        // suggest it (see update()), and the tooltip still explains the suggestion and the Yarn
+        // split. Trim/Ornament/Process rows are unaffected: still a plain manually-entered
         // (or, for Trim with a selected card, ratio-converted on Unit change) value.
         if (r.lineType !== "fabric") {
           return <GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />;
@@ -1482,11 +1492,15 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
         const { totalWastePct, finalQty: calculatedQuantity } = applyWaste(r.quantity, r.wastePct, r.dyeWastagePct, r.printWastagePct, r.otherWastagePct);
         const yarnRows = (recipeLines && yarnBreakdownFromRecipe(calculatedQuantity, recipeLines)) || yarnConsumptionBreakdown(calculatedQuantity, card);
         const title = [
-          "Auto-calculated: Area (m²) = Market Width × Market Length / 10,000, then Quantity (g) = Area × Weight/m², converted into the selected Unit using the Fabric Card's configured Item Units.",
+          "Editable. Suggested from Market values: Area (m²) = Market Width × Market Length / 10,000, then Quantity (g) = Area × Weight/m², converted into the selected Unit using the Fabric Card's configured Item Units. A typed Quantity is kept when Market values change.",
           totalWastePct > 0 && `\nTotal Fabric Waste: ${totalWastePct}% (Waste + Dye Wastage + Other Wastage, applied once to Quantity — never compounded) -> Calculated Quantity ${calculatedQuantity} ${r.unit || ""}`.trim(),
           yarnRows && `\nYarn Requirement (${recipeLines?.length ? "Fabric Card's Yarn Recipe" : "Fabric Card's configured Yarn Ratios"}), from Calculated Quantity above (Yarn Waste not applied — future Yarn Requirement screen):\n${yarnRows.map((y) => `${y.label}: ${y.pct}% -> ${y.qty} ${r.unit || ""}`.trim()).join("\n")}`,
         ].filter(Boolean).join("");
-        return <span className="block px-2 text-right font-mono text-xs text-muted-foreground" title={title}>{r.quantity.toFixed(2)}</span>;
+        return (
+          <div title={title}>
+            <GridInput type="number" align="right" nonNegative value={r.quantity} decimalKey="quantity" onChange={(v) => update(r.id, { quantity: parseFloat(v) || 0 })} />
+          </div>
+        );
       }
       case "wastePct":
         return <GridInput type="number" align="right" nonNegative value={r.wastePct} onChange={(v) => update(r.id, { wastePct: parseFloat(v) || 0 })} />;

@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { LookupField } from "@/components/legacy-erp/lookup-field";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
-import { legacyErpApi } from "@/lib/nexuscore-api";
+import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -109,7 +109,7 @@ export default function CustomerDefineTrimsPage() {
   // its own Code field) — no hardcoded Trim Codes, no second/duplicate lookup.
   const [trimCardOptions, setTrimCardOptions] = useState<AutocompleteOption[]>([]);
   useEffect(() => {
-    legacyErpApi.trimInventoryCards.list()
+    fetchAllPages((req) => legacyErpApi.trimInventoryCards.list(undefined, req))
       .then((r: any) => setTrimCardOptions(Array.isArray(r) ? r.map((t: any) => ({ id: String(t.id), code: t.inventoryCode, name: t.inventoryName })) : []))
       .catch(() => {});
   }, []);

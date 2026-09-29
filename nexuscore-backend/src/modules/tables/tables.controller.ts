@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { TablesService } from './tables.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Tables')
+@PermissionModule('collaboration', 'Collaboration')
 @Controller('tables')
 export class TablesController {
   constructor(private readonly svc: TablesService) {}

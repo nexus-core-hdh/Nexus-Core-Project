@@ -1,12 +1,15 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { InventoryReceiptService } from './inventory-receipt.service';
 import { InventoryReceiptAttachmentsService } from './inventory-receipt-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Permissions, PermissionModule } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('Legacy ERP - Inventory Receipts')
+@PermissionModule('inventory-receipts', 'Inventory receipts')
 @Controller('legacy-erp/inventory-receipts')
 export class InventoryReceiptController {
   constructor(
@@ -14,8 +17,8 @@ export class InventoryReceiptController {
     private readonly attachments: InventoryReceiptAttachmentsService,
   ) {}
 
-  @Get() list(@Query('search') search?: string) {
-    return this.svc.list(search);
+  @Get() list(@Query('search') search?: string, @Paging() paging?: ListPaging | null) {
+    return this.svc.list(search, undefined, undefined, paging ?? null);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptNo') receiptNo: string) {
@@ -149,12 +152,8 @@ export class InventoryReceiptController {
     @Param('attId', ParseIntPipe) attId: number,
     @Res() res: Response,
   ) {
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

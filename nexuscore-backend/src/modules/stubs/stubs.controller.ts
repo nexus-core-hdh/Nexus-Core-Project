@@ -1,10 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { AllowAuthenticated, PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
 
 const ok = () => null;
 const empty = () => [];
 const emptyPaged = () => ({ data: [], meta: { total: 0, page: 1, pages: 1, limit: 20 } });
 
 // ── Form Templates ────────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('form-templates')
 export class FormTemplatesController {
   @Get('models') getModels() { return empty(); }
@@ -20,6 +22,7 @@ export class FormTemplatesController {
 }
 
 // ── Form Builder ──────────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('form-sections')
 export class FormSectionsController {
   @Get() findAll() { return empty(); }
@@ -29,6 +32,7 @@ export class FormSectionsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('form-fields')
 export class FormFieldsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -39,6 +43,7 @@ export class FormFieldsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('form-permissions')
 export class FormPermissionsController {
   @Get('sections/:id') getSectionPerms() { return empty(); }
@@ -50,6 +55,7 @@ export class FormPermissionsController {
 }
 
 // ── Notes ─────────────────────────────────────────────────────────
+@PermissionModule('collaboration', 'Collaboration')
 @Controller('notes')
 export class NotesController {
   @Get() findAll() { return empty(); }
@@ -59,6 +65,7 @@ export class NotesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('collaboration', 'Collaboration')
 @Controller('note-labels')
 export class NoteLabelsController {
   @Get() findAll() { return empty(); }
@@ -68,6 +75,7 @@ export class NoteLabelsController {
 }
 
 // ── Todos ─────────────────────────────────────────────────────────
+@PermissionModule('collaboration', 'Collaboration')
 @Controller('todos')
 export class TodosController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -86,6 +94,7 @@ export class TodosController {
 }
 
 // ── CRM Stages ────────────────────────────────────────────────────
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('lead-stages')
 export class LeadStagesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -96,6 +105,7 @@ export class LeadStagesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('document-stages')
 export class DocumentStagesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -106,6 +116,7 @@ export class DocumentStagesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('invoice-stages')
 export class InvoiceStagesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -116,6 +127,7 @@ export class InvoiceStagesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('estimate-stages')
 export class EstimateStagesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -127,6 +139,7 @@ export class EstimateStagesController {
 }
 
 // ── Settings Lookup Tables ────────────────────────────────────────
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('currencies')
 export class CurrenciesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -137,6 +150,7 @@ export class CurrenciesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('locations')
 export class LocationsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -147,6 +161,7 @@ export class LocationsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('taxes')
 export class TaxesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -157,6 +172,7 @@ export class TaxesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('units')
 export class UnitsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -167,6 +183,7 @@ export class UnitsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('product-properties')
 export class ProductPropertiesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -177,6 +194,7 @@ export class ProductPropertiesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('user-roles')
 export class UserRolesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -187,6 +205,7 @@ export class UserRolesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('securities')
 export class SecuritiesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -197,6 +216,7 @@ export class SecuritiesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('custom-fields')
 export class CustomFieldsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -207,6 +227,7 @@ export class CustomFieldsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('analytical-reports')
 export class AnalyticalReportsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -217,6 +238,7 @@ export class AnalyticalReportsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('sources')
 export class SourcesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -227,6 +249,7 @@ export class SourcesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('contact-types')
 export class ContactTypesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -237,6 +260,7 @@ export class ContactTypesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('salutations')
 export class SalutationsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -247,6 +271,7 @@ export class SalutationsController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('call-statuses')
 export class CallStatusesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -257,6 +282,7 @@ export class CallStatusesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('company-types')
 export class CompanyTypesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -267,6 +293,7 @@ export class CompanyTypesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('employees')
 export class EmployeesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -277,6 +304,7 @@ export class EmployeesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('industries')
 export class IndustriesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -287,6 +315,7 @@ export class IndustriesController {
   @Delete(':id') remove() { return ok(); }
 }
 
+@PermissionModule('crm-settings', 'CRM statuses & dropdowns')
 @Controller('deal-types')
 export class DealTypesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -298,6 +327,7 @@ export class DealTypesController {
 }
 
 // ── Deal Pipelines ────────────────────────────────────────────────
+@PermissionModule('crm', 'CRM')
 @Controller('deal-pipelines')
 export class DealPipelinesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -317,9 +347,10 @@ export class DealPipelinesController {
 }
 
 // ── Access Controls ───────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('access-controls')
 export class AccessControlsController {
-  @Post('check-drag-drop') checkDragDrop(@Body() _d: any) { return { allowed: true }; }
+  @AllowAuthenticated() @Post('check-drag-drop') checkDragDrop(@Body() _d: any) { return { allowed: true }; }
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
   @Get() findAll(@Query() _q: any) { return empty(); }
   @Get(':id') findOne() { return null; }
@@ -329,6 +360,7 @@ export class AccessControlsController {
 }
 
 // ── Business Processes ────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('business-processes')
 export class BusinessProcessesController {
   @Get() findAll(@Query() _q: any) { return empty(); }
@@ -340,6 +372,7 @@ export class BusinessProcessesController {
 }
 
 // ── Email Templates ───────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('email-templates')
 export class EmailTemplatesController {
   @Get() findAll(@Query() _q: any) { return empty(); }
@@ -352,6 +385,7 @@ export class EmailTemplatesController {
 }
 
 // ── SMTP Settings ─────────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('smtp-settings')
 export class SmtpSettingsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -365,6 +399,7 @@ export class SmtpSettingsController {
 }
 
 // ── Email Notifications ───────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('email-notifications')
 export class EmailNotificationsController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -378,6 +413,7 @@ export class EmailNotificationsController {
 }
 
 // ── Email Signatures ──────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('email-signatures')
 export class EmailSignaturesController {
   @Post('reorder') reorder(@Body() _d: any) { return ok(); }
@@ -391,6 +427,7 @@ export class EmailSignaturesController {
 }
 
 // ── Mail ──────────────────────────────────────────────────────────
+@PermissionModule('communication', 'Communication')
 @Controller('mail')
 export class MailController {
   @Get('accounts') getAccounts() { return empty(); }
@@ -407,6 +444,7 @@ export class MailController {
 }
 
 // ── Auto Numbering ────────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('auto-numbering')
 export class AutoNumberingController {
   @Get('next/:entity') getNext() { return { nextNumber: 1, formatted: '0001' }; }
@@ -418,6 +456,7 @@ export class AutoNumberingController {
 }
 
 // ── Pricing Plans ─────────────────────────────────────────────────
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('pricing-plans')
 export class PricingPlansController {
   @Get('industry/:industry') byIndustry() { return empty(); }
@@ -439,16 +478,19 @@ export class DriveUsageController {
   @Get() get() { return { used: 0, total: 0, files: 0 }; }
 }
 
+@PermissionModule('settings', 'System settings & report configuration')
 @Controller('system-settings')
 export class SystemSettingsController {
   @Get() get() { return {}; }
   @Put() update(@Body() _d: any) { return ok(); }
 }
 
+@PermissionModule('logs', 'Logs')
 @Controller('exception-logs')
 export class ExceptionLogsController {
-  @Get() findAll(@Query() _q: any) { return emptyPaged(); }
-  @Post() create(@Body() _d: any) { return ok(); }
+  @Permissions({ module: 'logs', action: 'read' }) @Get() findAll(@Query() _q: any) { return emptyPaged(); }
+  // Every signed-in session reports its own client-side errors here (ExceptionLogger).
+  @AllowAuthenticated() @Post() create(@Body() _d: any) { return ok(); }
   @Put(':id') update(@Body() _d: any) { return ok(); }
   @Delete(':id') remove() { return ok(); }
 }

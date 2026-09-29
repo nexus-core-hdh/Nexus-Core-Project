@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -124,12 +125,53 @@ const RECIPE_TYPE_BY_LINE_TYPE: Record<BomLineType, number> = { fabric: 1, trim:
 // Waste % survive a reload exactly; only the 3-way split doesn't). IsMaster maps "Main Fabric",
 // IsCutting maps "Will be Cut". MarkerWidth/MarkerLength/M2Weight back BomTab's Market
 // Width/Length/Weight — real columns here, unlike StyleBomLine which has none for them.
+// NotForRequirement/IsFixQuantity (legacy UdtBool 0/1 columns, like IsCutting/IsMaster) carry the
+// Style Card BOM's "NOT for Requirement"/"Use Fix Quantity" flags. NULL (every legacy row) means
+// "not set": the Work Order follows the Style Card's flag, or off when it has none.
 export const RECIPE_ITEM_COLUMNS = [
   'InventoryId', 'Explanation', 'Variant1', 'Variant2', 'IsCutting', 'IsMaster',
   'UnitId', 'Quantity', 'MarkerWidth', 'MarkerLength', 'M2Weight',
   'UD_Dia', 'UD_Guage', 'UD_FinishWidth', 'UD_FinishRoute', 'UD_Revision', 'UD_Component', 'UD_Placement', 'UD_Remarks',
-  'Price', 'ForexId', 'ColorCardId', 'Wastage',
+  'Price', 'ForexId', 'ColorCardId', 'Wastage', 'NotForRequirement', 'IsFixQuantity',
 ] as const;
+
+// Effective BOM — the Work Order BOM fields a Style Card line supplies (exactly what
+// styleLineToRecipeLine copies, minus the material identity InventoryId/Variant1). Each one is
+// inherited live from the linked Style Card unless the Work Order explicitly changed it; see
+// WorkOrderService.resolveEffectiveBom. Variant2 (Production Color) and the Marker fields have no
+// Style Card counterpart, so they always stay the Work Order's own.
+export const BOM_INHERITED_FIELDS = [
+  'quantity', 'wastage', 'unitId', 'price', 'colorCardId', 'isCutting', 'isMaster', 'explanation',
+  'uD_Component', 'uD_Dia', 'uD_Guage', 'uD_FinishWidth', 'uD_FinishRoute', 'uD_Revision', 'uD_Placement', 'uD_Remarks',
+  'notForRequirement', 'isFixQuantity',
+] as const;
+const BOM_NUMERIC_FIELDS = new Set<string>(['quantity', 'wastage', 'unitId', 'price', 'isCutting', 'isMaster', 'notForRequirement', 'isFixQuantity']);
+// Requirements-only flags: a stored NULL is "not set" (never an override), so a write that does not
+// carry them (a legacy row, a caller that doesn't know them) keeps following the Style Card.
+const BOM_OPTIONAL_FLAG_FIELDS = new Set<string>(['notForRequirement', 'isFixQuantity']);
+// Quantity and Wastage together make a line's Consumption (calculatedBomConsumption), so an
+// override of either keeps both — an explicitly set Consumption never shifts with a later Style
+// Card Quantity or Waste change.
+const BOM_CONSUMPTION_FIELDS = ['quantity', 'wastage'] as const;
+
+// A BOM line's Consumption: its Quantity with the line's total Waste % applied once — the Style
+// Card BOM's own "Calculated Qty" (frontend lib/legacy-erp/waste-calc.ts applyWaste: Quantity x
+// (1 + total Waste % / 100), rounded to 4 decimals). `wastage` is already the line's summed
+// Waste + Dye + Print + Other %.
+export const calculatedBomConsumption = (l: { quantity?: any; wastage?: any }) =>
+  Math.round((Number(l.quantity) || 0) * (1 + (Number(l.wastage) || 0) / 100) * 10000) / 10000;
+const sameBomValue = (field: string, a: any, b: any) =>
+  BOM_NUMERIC_FIELDS.has(field)
+    ? Math.abs((Number(a) || 0) - (Number(b) || 0)) < 1e-6
+    : String(a ?? '').trim() === String(b ?? '').trim();
+// Material identity used to line Work Order lines up with Style Card lines — the same
+// Variant-1-else-card grouping C/S Details, Cutting and Order Manufacturing already use.
+const bomMaterialKey = (l: any) => `${l.inventoryId ?? ''}|${String(l.variant1 ?? '').trim().toLowerCase()}`;
+const groupByMaterial = (lines: any[]) => {
+  const m = new Map<string, any[]>();
+  for (const l of lines) (m.get(bomMaterialKey(l)) ?? m.set(bomMaterialKey(l), []).get(bomMaterialKey(l))!).push(l);
+  return m;
+};
 
 const camel = (col: string) => col[0].toLowerCase() + col.slice(1);
 const HEADER_SELECT = Prisma.raw(['"RecId" as id', ...HEADER_COLUMNS.map((c) => `"${c}" as "${camel(c)}"`)].join(', '));
@@ -187,15 +229,18 @@ export class WorkOrderService {
   // Work Order(s) associated with that Style Card"), reusing this same list() rather than a
   // second method/route. Omitted entirely, existing callers (work-orders-list/page.tsx's own
   // search box) are byte-for-byte unaffected.
-  async list(search?: string, styleCardId?: string) {
+  async list(search?: string, styleCardId?: string, paging: ListPaging | null = null) {
     const searchFilter = search ? Prisma.sql`AND "WorkOrderNo" ILIKE ${`%${search}%`}` : Prisma.sql``;
     const styleFilter = styleCardId ? Prisma.sql`AND "StyleCardId" = ${styleCardId}` : Prisma.sql``;
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "MA_WorkOrder"
-      WHERE "IsDeleted" = 0 ${searchFilter} ${styleFilter}
-      ORDER BY "WorkOrderNo" DESC LIMIT 50
-    `);
-    return sanitizeRawRow(rows);
+    return runLegacyList(this.prisma, {
+      select: HEADER_SELECT,
+      from: Prisma.sql`FROM "MA_WorkOrder" WHERE "IsDeleted" = 0 ${searchFilter} ${styleFilter}`,
+      sortable: {
+        workOrderNo: Prisma.sql`"WorkOrderNo"`, workOrderDate: Prisma.sql`"WorkOrderDate"`,
+        documentNo: Prisma.sql`"DocumentNo"`, status: Prisma.sql`"Status"`,
+      },
+      defaultSortBy: 'workOrderNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number) {
@@ -455,7 +500,16 @@ export class WorkOrderService {
     return rows[0].id as number;
   }
 
+  // The Work Order's EFFECTIVE BOM for one lineType — what every screen and calculation reads
+  // (BOM tab, C/S Details, Requirements, Planning, Cutting, Order Manufacturing, Copy Order).
+  // See resolveEffectiveBom. `[]` still means "the Work Order owns no lines of this type", so
+  // callers keep falling back to the Style Card's live BOM exactly as before.
   async listBom(workOrderId: number, lineType: BomLineType) {
+    return (await this.resolveEffectiveBom(workOrderId, lineType)).lines;
+  }
+
+  // The rows physically stored in MA_RecipeItem, with no Style Card inheritance applied.
+  async listStoredBom(workOrderId: number, lineType: BomLineType) {
     const recipeId = await this.findRecipeHeader(workOrderId, lineType);
     if (!recipeId) return [];
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -464,9 +518,129 @@ export class WorkOrderService {
     return sanitizeRawRow(rows);
   }
 
+  private async styleCardIdOf(workOrderId: number): Promise<string | null> {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "StyleCardId" as "styleCardId" FROM "MA_WorkOrder" WHERE "RecId" = ${workOrderId} AND "IsDeleted" = 0
+    `);
+    return rows[0]?.styleCardId ?? null;
+  }
+
+  // The Style Card's current lines of one type, in Work Order BOM shape (the Transfer mapping),
+  // ordered the same way every transfer copies them.
+  private async styleLinesAsRecipe(styleCardId: string, lineType: BomLineType) {
+    const rows = await this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType }, orderBy: { sortOrder: 'asc' } });
+    // Decimal columns as plain numbers — the same type a stored MA_RecipeItem row carries.
+    return rows.map((l) => {
+      const r: any = this.styleLineToRecipeLine(l);
+      return { id: l.id, ...r, quantity: r.quantity != null ? Number(r.quantity) : undefined, price: r.price != null ? Number(r.price) : undefined };
+    });
+  }
+
+  // Baseline = the Style Card values the Work Order's stored lines were last written against
+  // (captured by upsertBom). A stored value that still equals its baseline was never changed on
+  // the Work Order, so it inherits the Style Card's CURRENT value; one that differs is an explicit
+  // Work Order override. Work Orders written before baselines existed have none recorded — for
+  // those the first saved generation of the Work Order's own BOM (the rows its first transfer/save
+  // wrote, kept as soft-deleted MA_RecipeItem rows once replaced, or the live rows if never
+  // re-saved) stands in for it, so values untouched since then inherit and values edited since
+  // then stay overrides.
+  private async readBomBaseline(workOrderId: number, lineType: BomLineType, styleCardId: string, storedLines: any[]) {
+    const saved = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "styleCardId", "lines" FROM "WorkOrderBomBaseline" WHERE "workOrderId" = ${workOrderId} AND "lineType" = ${lineType} LIMIT 1
+    `);
+    if (saved[0]) return saved[0].styleCardId === styleCardId ? (saved[0].lines as any[]) : null;
+    const recipeId = await this.findRecipeHeader(workOrderId, lineType);
+    if (!recipeId) return null;
+    const firstGeneration = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT ${RECIPE_ITEM_SELECT} FROM "MA_RecipeItem"
+      WHERE "RecipeId" = ${recipeId} AND "IsDeleted" = 1
+        AND "DeletedAt" = (SELECT min("DeletedAt") FROM "MA_RecipeItem" WHERE "RecipeId" = ${recipeId} AND "IsDeleted" = 1)
+      ORDER BY "RecId"
+    `);
+    return firstGeneration.length ? sanitizeRawRow(firstGeneration) : storedLines;
+  }
+
+  private async writeBomBaseline(workOrderId: number, lineType: BomLineType, styleCardId: string | null) {
+    if (!styleCardId) {
+      await this.prisma.$executeRaw(Prisma.sql`DELETE FROM "WorkOrderBomBaseline" WHERE "workOrderId" = ${workOrderId} AND "lineType" = ${lineType}`);
+      return;
+    }
+    const lines = await this.styleLinesAsRecipe(styleCardId, lineType);
+    await this.prisma.$executeRaw(Prisma.sql`
+      INSERT INTO "WorkOrderBomBaseline" ("id", "workOrderId", "lineType", "styleCardId", "lines", "capturedAt")
+      VALUES (gen_random_uuid()::text, ${workOrderId}, ${lineType}, ${styleCardId}, ${JSON.stringify(lines)}::jsonb, now())
+      ON CONFLICT ("workOrderId", "lineType") DO UPDATE SET "styleCardId" = EXCLUDED."styleCardId", "lines" = EXCLUDED."lines", "capturedAt" = now()
+    `);
+  }
+
+  // Effective BOM = linked Style Card's current BOM + this Work Order's explicit overrides.
+  // Decided per material (bomMaterialKey) and per field (BOM_INHERITED_FIELDS), for every lineType:
+  //  - a stored line whose field still equals its baseline takes the Style Card's current value;
+  //    a field that differs is an override and keeps the Work Order's value;
+  //  - a material only on the Work Order (not in its baseline) is a Work Order addition, kept as is;
+  //  - a material in the baseline but no longer stored was removed on the Work Order — stays out;
+  //  - a material added to the Style Card since the baseline is included;
+  //  - a material since removed from the Style Card drops out unless the Work Order overrode it.
+  // Line structure (how many lines, Production Color mapping, Marker fields) stays the Work
+  // Order's own. No Style Card linked, or none stored: the stored lines are returned unchanged.
+  async resolveEffectiveBom(workOrderId: number, lineType: BomLineType) {
+    const stored = await this.listStoredBom(workOrderId, lineType);
+    const styleCardId = stored.length ? await this.styleCardIdOf(workOrderId) : null;
+    const none = { lines: stored as any[], styleCardId, hasOwnLines: stored.length > 0, removedOnWorkOrder: [] as any[], removedFromStyleCard: [] as any[] };
+    if (!styleCardId) return none;
+    const [baseline, style] = await Promise.all([
+      this.readBomBaseline(workOrderId, lineType, styleCardId, stored),
+      this.styleLinesAsRecipe(styleCardId, lineType),
+    ]);
+    if (!baseline) return none;
+    const baseByKey = groupByMaterial(baseline);
+    const styleByKey = groupByMaterial(style);
+    const occurrence = new Map<string, number>();
+    const lines: any[] = [];
+    const removedFromStyleCard: any[] = [];
+    for (const own of stored) {
+      const key = bomMaterialKey(own);
+      const i = occurrence.get(key) ?? 0;
+      occurrence.set(key, i + 1);
+      const baseLines = baseByKey.get(key);
+      if (!baseLines?.length) { lines.push({ ...own, bomSource: 'work-order', overriddenFields: [] }); continue; }
+      // Extra lines the Work Order split a material into (e.g. one per Production Color) compare
+      // against that material's last baseline/Style line.
+      const base = baseLines[Math.min(i, baseLines.length - 1)];
+      const changed = BOM_INHERITED_FIELDS.filter((f) =>
+        !(BOM_OPTIONAL_FLAG_FIELDS.has(f) && own[f] == null) && !sameBomValue(f, own[f], base[f]));
+      const overriddenFields = BOM_INHERITED_FIELDS.filter((f) =>
+        changed.includes(f) || ((BOM_CONSUMPTION_FIELDS as readonly string[]).includes(f) && BOM_CONSUMPTION_FIELDS.some((c) => changed.includes(c))));
+      const styleLines = styleByKey.get(key);
+      if (!styleLines?.length) {
+        if (overriddenFields.length) lines.push({ ...own, bomSource: 'work-order', overriddenFields });
+        else removedFromStyleCard.push(own);
+        continue;
+      }
+      const current = styleLines[Math.min(i, styleLines.length - 1)];
+      const merged: any = { ...own };
+      const styleCardValues: Record<string, any> = {};
+      for (const f of BOM_INHERITED_FIELDS) {
+        styleCardValues[f] = current[f] ?? null;
+        if (!overriddenFields.includes(f)) merged[f] = current[f] ?? null;
+      }
+      lines.push({ ...merged, bomSource: 'style-card', overriddenFields, styleCardValues });
+    }
+    const storedKeys = new Set(stored.map(bomMaterialKey));
+    const added = style.filter((l) => !baseByKey.has(bomMaterialKey(l)) && !storedKeys.has(bomMaterialKey(l)));
+    if (added.length) {
+      const productionColors = await this.resolveProductionColors(workOrderId);
+      for (const l of this.assignProductionColorCycle(added.map((l) => ({ ...l })), productionColors)) {
+        lines.push({ ...l, bomSource: 'style-card', overriddenFields: [], newOnStyleCard: true });
+      }
+    }
+    const removedOnWorkOrder = style.filter((l) => baseByKey.has(bomMaterialKey(l)) && !storedKeys.has(bomMaterialKey(l)));
+    return { lines, styleCardId, hasOwnLines: true, removedOnWorkOrder, removedFromStyleCard };
+  }
+
   async upsertBom(workOrderId: number, lineType: BomLineType, lines: any[], userId: number, currentUserId?: string, companyId?: string) {
     const header = await this.get(workOrderId);
-    const before = currentUserId && companyId ? await this.listBom(workOrderId, lineType) : null;
+    const before = currentUserId && companyId ? await this.listStoredBom(workOrderId, lineType) : null;
     const recipeId = await this.getOrCreateRecipeHeader(workOrderId, lineType, userId);
     const toDb = await this.recipeItemToDb();
     await this.prisma.$executeRaw`UPDATE "MA_RecipeItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecipeId" = ${recipeId} AND "IsDeleted" = 0`;
@@ -487,7 +661,11 @@ export class WorkOrderService {
         INSERT INTO "MA_RecipeItem" (${colList}) VALUES (${recipeId}, ${recipeType}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       `);
     }
-    const after = await this.listBom(workOrderId, lineType);
+    // Every Work Order BOM write (BOM tab, C/S Details, Transfer, Requirements edits, Copy Order)
+    // comes through here, so this is where the baseline for resolveEffectiveBom is recorded: the
+    // lines just written were based on the Style Card as it is now.
+    await this.writeBomBaseline(workOrderId, lineType, header.styleCardId ?? null);
+    const after = await this.listStoredBom(workOrderId, lineType);
     if (currentUserId && companyId && hasRealChanges({ lines: before }, { lines: after })) {
       this.audit.recordSafe({
         userId: currentUserId, companyId, screenKey: WORK_ORDER_SCREEN_KEY,
@@ -496,7 +674,7 @@ export class WorkOrderService {
         before: { [`Work Order BOM ${lineType} (MA_RecipeItem)`]: before }, after: { [`Work Order BOM ${lineType} (MA_RecipeItem)`]: after },
       });
     }
-    return after;
+    return this.listBom(workOrderId, lineType);
   }
 
   // "Transfer from Style Card" — reads the EXISTING StyleBomLine rows for the selected Style
@@ -520,10 +698,10 @@ export class WorkOrderService {
       quantity: l.quantity ?? undefined,
       price: l.unitPrice ?? undefined,
       colorCardId: l.colorCardId ?? undefined,
-      // StyleBomLine's 3-way wastePct/dyeWastagePct/otherWastagePct combine into MA_RecipeItem's
-      // single Wastage column — same non-compound sum this component's own applyWaste() uses
-      // (matches how BomTab's own Work Order save path combines them client-side too).
-      wastage: (Number(l.wastePct) || 0) + (Number(l.dyeWastagePct) || 0) + (Number(l.otherWastagePct) || 0),
+      // StyleBomLine's wastePct/dyeWastagePct/printWastagePct/otherWastagePct combine into
+      // MA_RecipeItem's single Wastage column — the same non-compound sum the Style Card's own
+      // Calculated Qty (applyWaste) and BomTab's Work Order save path use, Print Wastage included.
+      wastage: (Number(l.wastePct) || 0) + (Number(l.dyeWastagePct) || 0) + (Number(l.printWastagePct) || 0) + (Number(l.otherWastagePct) || 0),
       uD_Component: l.component ?? undefined,
       uD_Dia: l.dia ?? undefined,
       uD_Guage: l.gauge ?? undefined,
@@ -532,6 +710,8 @@ export class WorkOrderService {
       uD_Revision: l.revision ?? undefined,
       uD_Placement: l.placement ?? undefined,
       uD_Remarks: l.process ?? undefined, // Process has no free-text column here — see RECIPE_ITEM_COLUMNS' own comment
+      notForRequirement: l.notForRequirement ? 1 : 0,
+      isFixQuantity: l.useFixQuantity ? 1 : 0,
       // MarkerWidth/MarkerLength/M2Weight are NOT transferred — StyleBomLine has no columns
       // for them at all (they're calculator-only inputs in StyleCard mode), so there is
       // nothing to copy; a Work Order user re-enters them directly if needed.

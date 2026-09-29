@@ -1,6 +1,7 @@
 import {
   Body, Controller, Delete, Get, Param, Patch, Post, Put, Query,
 } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { BpmService } from './bpm.service';
 import { CreateProcessDto, CreateStageDto } from './dto/create-process.dto';
@@ -9,6 +10,7 @@ import { MoveStageDto } from './dto/move-stage.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('BPM')
+@PermissionModule('bpm', 'BPM')
 @Controller('bpm')
 export class BpmController {
   constructor(private readonly bpmService: BpmService) {}

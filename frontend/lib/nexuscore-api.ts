@@ -44,6 +44,48 @@ export const api = {
   delete: <T = any>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
+// ── Server-side paging for legacy ERP lists (backend: legacy-erp/list-paging.util.ts) ──────────
+// With a PageRequest the endpoint returns a PagedResponse (search/filters/sort applied in the
+// database before paging); without one it returns the previous plain array (typeahead pickers).
+export interface PageRequest {
+  page: number;
+  pageSize: number;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+}
+export interface PagedResponse<T = any> {
+  rows: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+}
+/**
+ * Every row of a paged list, fetched 500 at a time — for dropdown option lists and client-side
+ * aggregates that genuinely need the complete set (the unpaged response is capped at 50-200 rows).
+ * Stops at `maxRows` as a safety net; very large sets belong in a server-side search/aggregate.
+ */
+export async function fetchAllPages<T = any>(fetchPage: (req: PageRequest) => Promise<any>, maxRows = 20000): Promise<T[]> {
+  const out: T[] = [];
+  for (let page = 1; ; page++) {
+    const r = await fetchPage({ page, pageSize: 500 });
+    const rows: T[] = Array.isArray(r?.rows) ? r.rows : [];
+    out.push(...rows);
+    if (!rows.length || out.length >= Number(r?.total ?? 0) || out.length >= maxRows) break;
+  }
+  return out;
+}
+
+export function withPaging(path: string, p?: PageRequest): string {
+  if (!p) return path;
+  const qs = new URLSearchParams({ page: String(p.page), pageSize: String(p.pageSize) });
+  if (p.sortBy) qs.set('sortBy', p.sortBy);
+  if (p.sortDir) qs.set('sortDir', p.sortDir);
+  return `${path}${path.includes('?') ? '&' : '?'}${qs}`;
+}
+
 // Auth helpers for the login page
 export const nexuscoreAuth = {
   login: (credentials: { email: string; password: string; [key: string]: any }) =>
@@ -391,7 +433,7 @@ export const legacyErpApi = {
     save: (d: any) => api.put('/legacy-erp/warehouse-parameters', d),
   },
   accounts: {
-    list: (search?: string) => api.get(`/legacy-erp/accounts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/accounts${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/accounts/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/accounts/by-code/${encodeURIComponent(code)}`),
     // Preview only — the authoritative code is always (re)generated server-side at create()
@@ -411,7 +453,7 @@ export const legacyErpApi = {
     getAttachmentViewToken: (id: number, attId: number) => api.get(`/legacy-erp/accounts/${id}/attachments/${attId}/view-token`),
   },
   trimCards: {
-    list: (search?: string) => api.get(`/legacy-erp/trim-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/trim-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/trim-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/trim-cards/by-code/${encodeURIComponent(code)}`),
     previewNextCode: () => api.get(`/legacy-erp/trim-cards/next-code`),
@@ -424,7 +466,7 @@ export const legacyErpApi = {
     removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/trim-cards/${id}/items/${itemId}`),
   },
   unitSets: {
-    list: (search?: string) => api.get(`/legacy-erp/unit-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/unit-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/unit-sets/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/unit-sets/by-code/${encodeURIComponent(code)}`),
     previewNextCode: () => api.get(`/legacy-erp/unit-sets/next-code`),
@@ -438,7 +480,7 @@ export const legacyErpApi = {
   },
   // MA_SizeSet/MA_SizeSetItem — same shape as unitSets above (see size-set.service.ts).
   sizeSets: {
-    list: (search?: string) => api.get(`/legacy-erp/size-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/size-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/size-sets/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/size-sets/by-code/${encodeURIComponent(code)}`),
     previewNextCode: () => api.get(`/legacy-erp/size-sets/next-code`),
@@ -451,7 +493,7 @@ export const legacyErpApi = {
     removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/size-sets/${id}/items/${itemId}`),
   },
   yarnCards: {
-    list: (search?: string) => api.get(`/legacy-erp/yarn-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/yarn-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/yarn-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/yarn-cards/by-code/${encodeURIComponent(code)}`),
     previewNextCode: () => api.get(`/legacy-erp/yarn-cards/next-code`),
@@ -558,13 +600,13 @@ export const legacyErpApi = {
   workOrders: {
     // Plain string keeps the existing search-box call site unchanged; the object form adds the
     // optional styleCardId filter (Style Card's own Order Info tab) without a second method.
-    list: (opts?: string | { search?: string; styleCardId?: string }) => {
+    list: (opts?: string | { search?: string; styleCardId?: string }, paging?: PageRequest) => {
       const o = typeof opts === "string" ? { search: opts } : opts || {};
       const qs = new URLSearchParams();
       if (o.search) qs.set("search", o.search);
       if (o.styleCardId) qs.set("styleCardId", o.styleCardId);
       const q = qs.toString();
-      return api.get(`/legacy-erp/work-orders${q ? `?${q}` : ""}`);
+      return api.get(withPaging(`/legacy-erp/work-orders${q ? `?${q}` : ""}`, paging));
     },
     get: (id: number) => api.get(`/legacy-erp/work-orders/${id}`),
     previewNextCode: () => api.get(`/legacy-erp/work-orders/next-code`),
@@ -625,6 +667,11 @@ export const legacyErpApi = {
       // instead of silently falling back to a live BOM/Recipe preview of what was just deleted.
       hasHistory: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/has-history?type=${type}`),
       getManufacturingQuantity: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/manufacturing-quantity`),
+      // Which BOM Calculate uses (the Work Order's own copy or the Style Card's live BOM) and how
+      // it differs from the Style Card's current BOM; refreshBomFromStyleCard replaces the Work
+      // Order's own lines of that type with the Style Card's current ones.
+      getBomSource: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/bom-source?type=${type}`),
+      refreshBomFromStyleCard: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.post(`/legacy-erp/work-orders/${workOrderId}/requirements/refresh-bom-from-style-card?type=${type}`, {}),
       // Multi-Color BOM mapping validation — additive, non-fatal warnings only (see the service's
       // own comment on why Calculate/Save never throw for this).
       getMappingWarnings: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/mapping-warnings?type=${type}`),
@@ -665,7 +712,7 @@ export const legacyErpApi = {
     },
   },
   fabricCards: {
-    list: (search?: string) => api.get(`/legacy-erp/fabric-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/fabric-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/fabric-cards/by-code/${encodeURIComponent(code)}`),
     previewNextCode: () => api.get(`/legacy-erp/fabric-cards/next-code`),
@@ -697,12 +744,12 @@ export const legacyErpApi = {
     getYarnRecipeSummary: (id: number) => api.get(`/legacy-erp/fabric-cards/${id}/yarn-recipe/summary`),
   },
   purchaseOrders: {
-    list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected") => {
+    list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected", paging?: PageRequest) => {
       const qs = new URLSearchParams();
       if (search) qs.set("search", search);
       if (approvalStatus) qs.set("approvalStatus", approvalStatus);
       const query = qs.toString();
-      return api.get(`/legacy-erp/purchase-orders${query ? `?${query}` : ''}`);
+      return api.get(withPaging(`/legacy-erp/purchase-orders${query ? `?${query}` : ''}`, paging));
     },
     get: (id: number) => api.get(`/legacy-erp/purchase-orders/${id}`),
     getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/purchase-orders/by-receipt-no/${encodeURIComponent(receiptNo)}`),
@@ -751,12 +798,12 @@ export const legacyErpApi = {
   orders: (receiptType: number) => {
     const base = `/legacy-erp/orders/${receiptType}`;
     return {
-      list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected") => {
+      list: (search?: string, approvalStatus?: "all" | "approved" | "unapproved" | "rejected", paging?: PageRequest) => {
         const qs = new URLSearchParams();
         if (search) qs.set("search", search);
         if (approvalStatus) qs.set("approvalStatus", approvalStatus);
         const query = qs.toString();
-        return api.get(`${base}${query ? `?${query}` : ''}`);
+        return api.get(withPaging(`${base}${query ? `?${query}` : ''}`, paging));
       },
       get: (id: number) => api.get(`${base}/${id}`),
       getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
@@ -798,7 +845,7 @@ export const legacyErpApi = {
   // IM_OrderReceipt (see inventory-receipt.service.ts's own comment). Same shape as
   // purchaseOrders above minus the variant/explanation endpoints (not part of this screen).
   inventoryReceipts: {
-    list: (search?: string) => api.get(`/legacy-erp/inventory-receipts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/inventory-receipts${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}`),
     getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/inventory-receipts/by-receipt-no/${encodeURIComponent(receiptNo)}`),
     previewNextReceiptNo: () => api.get(`/legacy-erp/inventory-receipts/next-receipt-no`),
@@ -838,7 +885,7 @@ export const legacyErpApi = {
   // Financial Receipt (FI_Receipt) — a genuinely separate legacy entity from IM_Receipt above
   // (see fi-receipt.service.ts's own header comment). Same shape as `inventoryReceipts`.
   financialReceipts: {
-    list: (search?: string) => api.get(`/legacy-erp/financial-receipts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/financial-receipts${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/financial-receipts/${id}`),
     getByReceiptNo: (receiptNo: string) => api.get(`/legacy-erp/financial-receipts/by-receipt-no/${encodeURIComponent(receiptNo)}`),
     previewNextReceiptNo: () => api.get(`/legacy-erp/financial-receipts/next-receipt-no`),
@@ -858,17 +905,18 @@ export const legacyErpApi = {
   // InventoryReceiptLineGrid's `api` prop and AttachmentsTab's `AttachmentsApi`), just hitting
   // receipt-type.controller.ts's generic `/legacy-erp/receipts/:receiptType/...` route instead.
   // Purchase Receipt (type 1) stays on `inventoryReceipts` above — this is for the other 11.
-  receipts: (receiptType: number) => {
-    const base = `/legacy-erp/receipts/${receiptType}`;
+  receipts: (receiptType: number | number[]) => {
+    // A number[] addresses several receipt types at once (list only — e.g. "All types").
+    const base = `/legacy-erp/receipts/${Array.isArray(receiptType) ? receiptType.join(",") : receiptType}`;
     return {
       // `subcontractTypeId` — Subcontract Receipts List's own "Subcontractation" filter
       // dropdown; every other caller omits it and gets the exact same rows as before.
-      list: (search?: string, subcontractTypeId?: number) => {
+      list: (search?: string, subcontractTypeId?: number, paging?: PageRequest) => {
         const params = new URLSearchParams();
         if (search) params.set('search', search);
         if (subcontractTypeId !== undefined) params.set('subcontractTypeId', String(subcontractTypeId));
         const qs = params.toString();
-        return api.get(`${base}${qs ? `?${qs}` : ''}`);
+        return api.get(withPaging(`${base}${qs ? `?${qs}` : ''}`, paging));
       },
       get: (id: number) => api.get(`${base}/${id}`),
       getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
@@ -920,7 +968,7 @@ export const legacyErpApi = {
   contracts: (receiptType: number) => {
     const base = `/legacy-erp/contracts/${receiptType}`;
     return {
-      list: (search?: string) => api.get(`${base}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+      list: (search?: string, paging?: PageRequest) => api.get(withPaging(`${base}${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
       get: (id: number) => api.get(`${base}/${id}`),
       getByReceiptNo: (receiptNo: string) => api.get(`${base}/by-receipt-no/${encodeURIComponent(receiptNo)}`),
       previewNextReceiptNo: () => api.get(`${base}/next-receipt-no`),
@@ -938,7 +986,7 @@ export const legacyErpApi = {
     };
   },
   trimInventoryCards: {
-    list: (search?: string) => api.get(`/legacy-erp/trim-inventory-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/trim-inventory-cards${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/trim-inventory-cards/${id}`),
     getByCode: (code: string) => api.get(`/legacy-erp/trim-inventory-cards/by-code/${encodeURIComponent(code)}`),
     previewNextCode: () => api.get(`/legacy-erp/trim-inventory-cards/next-code`),
@@ -978,13 +1026,14 @@ export const legacyErpApi = {
   // inventory-card.service.ts; never writes, each card type is still created/edited through
   // its own existing screen/API above.
   inventoryCards: {
-    list: (params?: { search?: string; sortBy?: string; sortDir?: "asc" | "desc" }) => {
+    list: (params?: { search?: string; sortBy?: string; sortDir?: "asc" | "desc"; sourceType?: string }, paging?: PageRequest) => {
       const qs = new URLSearchParams();
       if (params?.search) qs.set("search", params.search);
-      if (params?.sortBy) qs.set("sortBy", params.sortBy);
-      if (params?.sortDir) qs.set("sortDir", params.sortDir);
+      if (params?.sourceType) qs.set("sourceType", params.sourceType);
+      if (!paging && params?.sortBy) qs.set("sortBy", params.sortBy);
+      if (!paging && params?.sortDir) qs.set("sortDir", params.sortDir);
       const query = qs.toString();
-      return api.get(`/legacy-erp/inventory-cards${query ? `?${query}` : ''}`);
+      return api.get(withPaging(`/legacy-erp/inventory-cards${query ? `?${query}` : ''}`, paging));
     },
   },
   // Full-CRUD "Master Lookup" management screens (Fab Type Master today; any future master
@@ -1030,7 +1079,7 @@ export const legacyErpApi = {
   // warehouses/masterLookup/accounts.removeTabRow), never this.
   unifiedGrid: {
     meta: () => api.get(`/legacy-erp/unified-grid/meta`),
-    list: (key: string, search?: string) => api.get(`/legacy-erp/unified-grid/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    list: (key: string, search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/unified-grid/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
   },
   // "Customize Worklist" — shared by Receipt & Master Data, Financial Receipt & Master Data,
   // and every per-entity list screen. See worklist-fields.service.ts / worklist-rows.service.ts.
@@ -1043,8 +1092,8 @@ export const legacyErpApi = {
     list: (primary?: string) => api.get(`/legacy-erp/worklist-fields${primary ? `?primary=${encodeURIComponent(primary)}` : ''}`),
     // Server-side relational resolution: primaryTable stays the sole row-identity/search source
     // (unchanged priority), fields are resolved against it via real FK relationships only.
-    resolve: (primaryTable: string, fields: { source: string; key: string }[], search?: string) =>
-      api.post(`/legacy-erp/worklist-fields/resolve`, { primaryTable, fields, search }),
+    resolve: (primaryTable: string, fields: { source: string; key: string }[], search?: string, paging?: PageRequest) =>
+      api.post(withPaging(`/legacy-erp/worklist-fields/resolve`, paging), { primaryTable, fields, search }),
   },
 };
 

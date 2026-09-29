@@ -1,10 +1,12 @@
+import { ListPaging, Paging } from './list-paging.util';
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { sendStoredFile } from '../../common/security/file-safety';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { PurchaseOrderService } from './purchase-order.service';
 import { PurchaseOrderAttachmentsService } from './purchase-order-attachments.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Permissions, PermissionModule } from '../../common/decorators/permissions.decorator';
 import { getOrderTypeConfig } from './order-types.config';
 
 // The generic "other order types" route — mirrors receipt-type.controller.ts route-for-route
@@ -14,6 +16,7 @@ import { getOrderTypeConfig } from './order-types.config';
 // dedicated /purchase-orders route only — kept out of the whitelist here so there is exactly one
 // path per type, no drift risk.
 @ApiTags('Legacy ERP - Orders (generic)')
+@PermissionModule('orders', 'Orders (by order type)')
 @Controller('legacy-erp/orders/:receiptType')
 export class OrderTypeController {
   constructor(
@@ -33,9 +36,10 @@ export class OrderTypeController {
     @Param('receiptType') receiptType: string,
     @Query('search') search?: string,
     @Query('approvalStatus') approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected',
+    @Paging() paging?: ListPaging | null,
   ) {
     const cfg = this.resolve(receiptType);
-    return this.svc.list(search, approvalStatus, cfg.receiptType);
+    return this.svc.list(search, approvalStatus, cfg.receiptType, paging ?? null);
   }
 
   @Get('by-receipt-no/:receiptNo') getByReceiptNo(@Param('receiptType') receiptType: string, @Param('receiptNo') receiptNo: string) {
@@ -243,12 +247,8 @@ export class OrderTypeController {
     @Param('attId', ParseIntPipe) attId: number,
     @Res() res: Response,
   ) {
-    const { fileName, mimeType, buffer } = await this.attachments.content(id, attId);
-    res.set({
-      'Content-Type': mimeType,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
-    });
-    res.send(buffer);
+    const { fileName, buffer } = await this.attachments.content(id, attId);
+    sendStoredFile(res, { fileName, buffer });
   }
 
   @Delete(':id/attachments/:attId') removeAttachment(

@@ -1,3 +1,4 @@
+import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -119,20 +120,16 @@ export class ContractService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, ITEM_TABLE));
   }
 
-  async list(search: string | undefined, receiptType: number) {
-    const rows = search
-      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "SM_Contract"
-          WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
-            AND ("ReceiptNo" ILIKE ${`%${search}%`} OR "DocumentNo" ILIKE ${`%${search}%`})
-          ORDER BY "ReceiptNo" DESC LIMIT 50
-        `)
-      : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${HEADER_SELECT} FROM "SM_Contract"
-          WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
-          ORDER BY "ReceiptNo" DESC LIMIT 50
-        `);
-    return sanitizeRawRow(rows);
+  async list(search: string | undefined, receiptType: number, paging: ListPaging | null = null) {
+    const searchFilter = search
+      ? Prisma.sql`AND ("ReceiptNo" ILIKE ${`%${search}%`} OR "DocumentNo" ILIKE ${`%${search}%`})`
+      : Prisma.sql``;
+    return runLegacyList(this.prisma, {
+      select: HEADER_SELECT,
+      from: Prisma.sql`FROM "SM_Contract" WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} ${searchFilter}`,
+      sortable: { receiptNo: Prisma.sql`"ReceiptNo"`, documentNo: Prisma.sql`"DocumentNo"`, receiptDate: Prisma.sql`"ReceiptDate"` },
+      defaultSortBy: 'receiptNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
+    }, paging, sanitizeRawRow);
   }
 
   async get(id: number, receiptType: number) {

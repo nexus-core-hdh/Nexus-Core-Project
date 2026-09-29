@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CollabService } from './collab.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Collab')
+@PermissionModule('collaboration', 'Collaboration')
 @Controller('collabs')
 export class CollabController {
   constructor(private readonly svc: CollabService) {}
