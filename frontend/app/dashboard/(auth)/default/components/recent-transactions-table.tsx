@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { format } from "date-fns";
 import { Filter, MoreVertical } from "lucide-react";
 
 import {
@@ -13,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Badge, type badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -24,37 +27,87 @@ import {
 } from "@/components/ui/table";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { recentTransactions, type Transaction } from "./dashboard-data";
+import { dashboardApi, type RecentTransaction, type RecentTransactionType } from "@/lib/nexuscore-api";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { VariantProps } from "class-variance-authority";
 
-const TYPE_STYLES: Record<Transaction["type"], string> = {
-  Sale: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400",
-  Purchase: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-400",
-  Payment: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400",
-  Receipt: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400"
+// Real transactions only — GET /dashboard/recent-transactions (dashboard.service.ts), filtered by
+// the selected tab server-side and limited to the latest few rows:
+//   Sales → Finance Orders · Purchases → Purchase Orders · Payments → Customer/Supplier Payments
+//   · Receipts → Financial Receipts. Missing values render "—"; nothing is filled in.
+
+const TYPE_LABEL: Record<RecentTransactionType, string> = {
+  sale: "Sale",
+  purchase: "Purchase",
+  payment: "Payment",
+  receipt: "Receipt"
 };
 
-const STATUS_VARIANT: Record<Transaction["status"], VariantProps<typeof badgeVariants>["variant"]> = {
+const TYPE_STYLES: Record<RecentTransactionType, string> = {
+  sale: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400",
+  purchase: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-400",
+  payment: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400",
+  receipt: "bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400"
+};
+
+// The source records' own status values (Order/Payment status enums, Purchase Order approval
+// status, Financial Receipt approval flag) onto the existing badge colours.
+const STATUS_VARIANT: Record<string, VariantProps<typeof badgeVariants>["variant"]> = {
   Completed: "success",
+  Delivered: "success",
+  Paid: "success",
+  Approved: "success",
   Pending: "warning",
-  Failed: "destructive"
+  Processing: "warning",
+  Unapproved: "warning",
+  Shipped: "info",
+  Failed: "destructive",
+  Cancelled: "destructive",
+  Rejected: "destructive"
 };
 
-const TABS = ["All", "Sales", "Purchases", "Payments", "Receipts"] as const;
+const TABS = [
+  { key: "All", type: "all", empty: "No recent transactions", viewAll: null },
+  { key: "Sales", type: "sale", empty: "No recent sales", viewAll: "/dashboard/pages/orders" },
+  { key: "Purchases", type: "purchase", empty: "No recent purchases", viewAll: "/dashboard/legacy-erp/purchase-orders-list" },
+  { key: "Payments", type: "payment", empty: "No recent payments", viewAll: "/dashboard/payment" },
+  { key: "Receipts", type: "receipt", empty: "No recent receipts", viewAll: "/dashboard/legacy-erp/financial-receipts" }
+] as const satisfies readonly { key: string; type: RecentTransactionType | "all"; empty: string; viewAll: string | null }[];
+
+type TabKey = (typeof TABS)[number]["key"];
+
+// Existing record screens that open one document by id (same URLs their own list pages use).
+// Sales Orders and Payments have no per-record view screen, so their rows have no action.
+const viewHref = (t: RecentTransaction): string | null => {
+  if (t.type === "purchase") return `/dashboard/legacy-erp/purchase-orders?id=${t.recordId}&mode=view`;
+  if (t.type === "receipt") return `/dashboard/legacy-erp/financial-receipts?id=${t.recordId}&mode=view`;
+  return null;
+};
+
+const formatAmount = (t: RecentTransaction) => {
+  if (t.amount == null) return "—";
+  const n = t.amount.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Column is PKR; a record carrying another currency shows its own code rather than being relabelled.
+  return t.currency && t.currency.toUpperCase() !== "PKR" ? `${t.currency} ${n}` : n;
+};
 
 export function RecentTransactionsTable() {
-  const [tab, setTab] = React.useState<(typeof TABS)[number]>("All");
+  const router = useRouter();
+  const [tab, setTab] = React.useState<TabKey>("All");
+  const [rows, setRows] = React.useState<RecentTransaction[] | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  const current = TABS.find((t) => t.key === tab)!;
 
-  const rows = React.useMemo(() => {
-    if (tab === "All") return recentTransactions;
-    const typeMap: Record<string, Transaction["type"]> = {
-      Sales: "Sale",
-      Purchases: "Purchase",
-      Payments: "Payment",
-      Receipts: "Receipt"
-    };
-    return recentTransactions.filter((t) => t.type === typeMap[tab]);
-  }, [tab]);
+  React.useEffect(() => {
+    let active = true;
+    setRows(null);
+    setFailed(false);
+    dashboardApi
+      .recentTransactions(current.type, 8)
+      .then((data) => { if (active) setRows(Array.isArray(data) ? data : []); })
+      .catch(() => { if (active) { setFailed(true); setRows([]); } });
+    return () => { active = false; };
+  }, [current.type]);
 
   return (
     <Card className="py-4">
@@ -63,19 +116,21 @@ export function RecentTransactionsTable() {
           <span className="bg-primary block h-4 w-1 rounded-full" />
           Recent Transactions
         </CardTitle>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)}>
           <TabsList>
             {TABS.map((t) => (
-              <TabsTrigger key={t} value={t}>
-                {t}
+              <TabsTrigger key={t.key} value={t.key}>
+                {t.key}
               </TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
         <CardAction className="flex items-center gap-1.5">
-          <Link href="#" className="text-primary text-sm font-medium hover:underline">
-            View all
-          </Link>
+          {current.viewAll && (
+            <Link href={current.viewAll} className="text-primary text-sm font-medium hover:underline">
+              View all
+            </Link>
+          )}
           <Button variant="ghost" size="icon" className="size-8">
             <Filter className="size-4" />
           </Button>
@@ -107,46 +162,63 @@ export function RecentTransactionsTable() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.length ? (
-                rows.map((t) => (
-                  <TableRow key={t.id}>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
-                          TYPE_STYLES[t.type]
-                        )}>
-                        {t.type}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-primary font-medium">{t.reference}</TableCell>
-                    <TableCell>{t.party}</TableCell>
-                    <TableCell className="text-muted-foreground">{t.date}</TableCell>
-                    <TableCell className="text-right font-medium tabular-nums">
-                      {t.amount.toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={STATUS_VARIANT[t.status]}>{t.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="size-7">
-                            <MoreVertical className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem>View details</DropdownMenuItem>
-                          <DropdownMenuItem>Print</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+              {rows === null ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell colSpan={7}>
+                      <Skeleton className="h-5 w-full" />
                     </TableCell>
                   </TableRow>
                 ))
+              ) : rows.length ? (
+                rows.map((t) => {
+                  const href = viewHref(t);
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell>
+                        <span
+                          title={t.subtype ?? undefined}
+                          className={cn(
+                            "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
+                            TYPE_STYLES[t.type]
+                          )}>
+                          {TYPE_LABEL[t.type]}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-primary font-medium">{t.reference || "—"}</TableCell>
+                      <TableCell>{t.party || "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {t.date ? format(new Date(t.date), "MMM d, yyyy") : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">{formatAmount(t)}</TableCell>
+                      <TableCell>
+                        {t.status ? <Badge variant={STATUS_VARIANT[t.status] ?? "outline"}>{t.status}</Badge> : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {href ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="size-7">
+                                <MoreVertical className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => navigateOrOpenTab(router, href)}>View</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <Button variant="ghost" size="icon" className="size-7" disabled title="No view screen for this record type">
+                            <MoreVertical className="size-4" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               ) : (
                 <TableRow>
                   <TableCell colSpan={7} className="text-muted-foreground h-24 text-center">
-                    No transactions.
+                    {failed ? "Transactions could not be loaded" : current.empty}
                   </TableCell>
                 </TableRow>
               )}

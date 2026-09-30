@@ -8,6 +8,7 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, FileSignature, Lock, BadgeCheck } from "lucide-react";
@@ -104,7 +105,7 @@ export default function ContractPage() {
       receiptDate: r.receiptDate ? String(r.receiptDate).slice(0, 10) : emptyForm.receiptDate,
       startDate: r.startDate ? String(r.startDate).slice(0, 10) : "",
       endDate: r.endDate ? String(r.endDate).slice(0, 10) : "",
-      currentAccountLabel: account ? `${(account as any).code} — ${(account as any).name}` : "",
+      currentAccountLabel: currentAccountLabel(account),
       warehouseLabel: warehouse ? (warehouse as any).warehouseName : "",
     });
   };
@@ -295,9 +296,9 @@ export default function ContractPage() {
               </fieldset>
 
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
-                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
+                <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
+                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
                 </div>
                 <ContractLineGrid ref={lineGridRef} contractId={contractId} readOnly={readOnly} api={client} />
               </div>

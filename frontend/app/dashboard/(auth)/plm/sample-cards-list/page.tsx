@@ -138,7 +138,7 @@ export default function SampleCardMasterListPage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+              <TableRow className="border-b bg-background hover:bg-muted/60">
                 <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("sampleNumber")}>Code</TableHead>
                 <TableHead className="h-10 cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" onClick={() => toggleSort("title")}>Name</TableHead>
                 <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Sample Type</TableHead>

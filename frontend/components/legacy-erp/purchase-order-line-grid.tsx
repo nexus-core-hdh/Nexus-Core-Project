@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi, plmApi, fetchAllPages } from "@/lib/nexuscore-api";
+import { loadSavedInventoryItems } from "@/lib/legacy-erp/saved-line-refs";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
@@ -436,23 +437,18 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     variant: "", // no backend source yet — see the LineRow field comment above
   });
 
-  // Resolve Code/Name for already-persisted lines via the same Inventory Card List
-  // aggregation — its `list()` already returns every Fabric/Yarn/Trim row's code/name/unit,
-  // so a single call resolves every line's display text, no per-line lookup calls.
+  // Resolve Code/Name for already-persisted lines via the shared saved-line resolver
+  // (loadSavedInventoryItems: the Inventory Card List aggregation, then the by-id master lookup
+  // for any id the list doesn't return) — no per-line lookup calls for listed items.
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
-    try {
-      const all: any = await fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req));
-      const byId = new Map<string, any>((Array.isArray(all) ? all : []).map((r: any) => [String(r.id), r]));
-      return list.map((row) => {
-        if (!row.inventoryId) return row;
-        const match = byId.get(String(row.inventoryId));
-        if (!match) return row;
-        return { ...row, code: match.inventoryCode, name: match.inventoryName, sourceType: match.sourceType, unit: row.unit || match.unit || "", stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
-      });
-    } catch {
-      return list;
-    }
+    const byId = await loadSavedInventoryItems(list.map((row) => row.inventoryId));
+    return list.map((row) => {
+      if (!row.inventoryId) return row;
+      const match = byId.get(String(row.inventoryId));
+      if (!match) return row;
+      return { ...row, code: match.inventoryCode, name: match.inventoryName, sourceType: match.sourceType ?? row.sourceType, unit: row.unit || match.unit || "", stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
+    });
   };
 
   const hydrateUnits = async (list: LineRow[]): Promise<LineRow[]> => {
@@ -979,7 +975,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow role="row" className={cn(HEADER_H, "bg-muted hover:bg-muted")}>
+          <TableRow role="row" className={cn(HEADER_H, "bg-background hover:bg-muted/60")}>
             {displayColumnDefs.map((col, colIdx) => {
               const fixed = FIXED_COLS.includes(col.key);
               return (

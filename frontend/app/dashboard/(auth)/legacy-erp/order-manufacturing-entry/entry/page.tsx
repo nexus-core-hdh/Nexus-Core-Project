@@ -197,7 +197,7 @@ export default function ManufacturingEntryPage() {
                 const isBlank = i === rows.length - 1 && r.id == null;
                 const total = data.sizes.reduce((a, s) => a + (Number(r.sizes[s]) || 0), 0);
                 return (
-                  <tr key={r.key} className={isBlank ? "italic opacity-80" : "odd:bg-background even:bg-muted/20"}>
+                  <tr key={r.key} className={isBlank ? "italic opacity-80" : "odd:bg-background even:bg-muted/25"}>
                     <td className={td}>
                       <MasterAutocompleteField
                         label="Factory" compact masterKey="currentAccount" displayValue={r.factoryCode}

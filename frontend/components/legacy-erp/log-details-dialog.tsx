@@ -96,14 +96,14 @@ function ArrayTable({ rows }: { rows: Record<string, any>[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
-        <thead className="bg-muted/50">
+        <thead className="bg-background">
           <tr>{cols.map((c) => (
             <th key={c} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">{formatFieldLabel(c, refCols.has(c))}</th>
           ))}</tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t hover:bg-muted/30">
+            <tr key={i} className="border-t hover:bg-muted/60">
               {cols.map((c) => {
                 const v = r[c];
                 const ref = isDisplayRef(v) ? v : null;
@@ -147,7 +147,7 @@ function ChangedFields({ before, after }: { before: Record<string, any>; after: 
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
-        <thead className="bg-muted/50">
+        <thead className="bg-background">
           <tr>
             <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">Field</th>
             <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">Previous Value</th>

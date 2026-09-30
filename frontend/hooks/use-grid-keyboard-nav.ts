@@ -6,7 +6,7 @@ import { useCallback } from "react";
 // view/edit mode — e.g. the Costing sheet grids). Works purely from the rendered DOM, so it
 // automatically follows the user's current column order / hidden columns (useGridColumns):
 //
-//   <tbody onKeyDown={nav.onKeyDown}> ... <td data-nav="text|number|lookup"><input/></td>
+//   <tbody onKeyDown={nav.onKeyDown}> ... <td data-nav="text|number|lookup|select"><input/></td>
 //
 // Only cells marked data-nav take part; read-only cells (no data-nav) are skipped.
 //   Tab / Shift+Tab   next / previous editable cell (across rows); leaves the grid at either end
@@ -16,10 +16,12 @@ import { useCallback } from "react";
 //                     value is selected, as it is right after moving into a cell)
 // "lookup" cells (searchable pickers such as AutocompleteTextCell) keep Enter and the arrow keys
 // for their own suggestion list; only Tab / Shift+Tab move out of them.
+// "select" cells (a Select dropdown's trigger button) likewise keep Enter / Space / arrows for
+// opening their own list; only Tab / Shift+Tab move out of them.
 // The target cell's input is focused and fully selected, so typing replaces its value.
 export function useGridKeyboardNav() {
   const focusCell = useCallback((td: Element | null | undefined) => {
-    const input = td?.querySelector<HTMLInputElement>("input:not([disabled])");
+    const input = td?.querySelector<HTMLInputElement>("input:not([disabled]), button[role=combobox]:not([disabled])");
     if (!input) return false;
     // After the current key's own handlers (and the re-render they trigger) have run, so a
     // cell committing on blur sees its final value.
@@ -32,10 +34,10 @@ export function useGridKeyboardNav() {
 
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
     const target = e.target as HTMLElement;
-    if (target.tagName !== "INPUT") return;
     const td = target.closest<HTMLElement>("td[data-nav]");
     if (!td || !e.currentTarget.contains(td)) return;
     const kind = td.dataset.nav;
+    if (target.tagName !== "INPUT" && !(kind === "select" && e.key === "Tab")) return;
     const cells = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("td[data-nav]"));
     const idx = cells.indexOf(td);
     const tr = td.parentElement as HTMLElement;

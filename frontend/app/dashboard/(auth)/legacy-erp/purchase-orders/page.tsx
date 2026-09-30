@@ -16,6 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
+import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, ShoppingCart, Lock, Trash2, Plus, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
@@ -202,7 +203,7 @@ export default function PurchaseOrderPage() {
         const f = sanitizeRecord({
           ...r,
           receiptDate: r.receiptDate ? String(r.receiptDate).slice(0, 10) : emptyForm.receiptDate,
-          currentAccountLabel: account ? `${(account as any).code} — ${(account as any).name}` : "",
+          currentAccountLabel: currentAccountLabel(account),
           warehouseLabel: warehouse ? (warehouse as any).warehouseName : "",
         });
         setForm(f);
@@ -228,7 +229,7 @@ export default function PurchaseOrderPage() {
       const f = sanitizeRecord({
         ...r,
         receiptDate: r.receiptDate ? String(r.receiptDate).slice(0, 10) : emptyForm.receiptDate,
-        currentAccountLabel: account ? `${(account as any).code} — ${(account as any).name}` : "",
+        currentAccountLabel: currentAccountLabel(account),
         warehouseLabel: warehouse ? (warehouse as any).warehouseName : "",
       });
       setForm(f);
@@ -511,9 +512,9 @@ export default function PurchaseOrderPage() {
               </fieldset>
 
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
-                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
+                <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
+                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
                 </div>
                 {/* Totals now render inside the grid's own footer (thin top border) — no
                     second card wrapping it here, and no separate totals box duplicating the
@@ -734,7 +735,7 @@ function PurchaseOrderExplanationTab({ orderReceiptId, readOnly }: { orderReceip
       <div className="rounded-xl border shadow-sm overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+            <TableRow className="border-b bg-background hover:bg-muted/60">
               <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
               <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Explanation</TableHead>
               {!readOnly && <TableHead className="h-10 w-10" />}

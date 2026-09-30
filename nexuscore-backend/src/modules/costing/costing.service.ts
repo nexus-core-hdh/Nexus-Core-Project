@@ -2,8 +2,19 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { itemUnitNameLateral } from '../legacy-erp/inventory-card.service';
+import { LegacyMasterLookupService } from '../legacy-erp/legacy-master-lookup.service';
+import { resolveLineUnitId, assertValidItemUnit } from '../legacy-erp/unit-conversion.util';
 
 const num = (v: any): number => (v === null || v === undefined ? 0 : Number(v));
+
+// Unit display text as the Style Card BOM stores it (code, else name), and a Unit matched from an
+// item's configured Units by id or by its Code/Name text (case-insensitive).
+const itemUnitLabel = (u: any): string => u.code || u.name || '';
+function matchItemUnit(units: any[], unitId: any, text: string | null | undefined) {
+  if (unitId != null) return units.find((u) => Number(u.id) === Number(unitId));
+  const t = (text ?? '').trim().toLowerCase();
+  return t ? units.find((u) => [u.code, u.name].some((x) => (x ?? '').trim().toLowerCase() === t)) : undefined;
+}
 
 function computeTotals(sheet: {
   rawMaterialLines: any[];
@@ -76,7 +87,10 @@ function pickHeader(dto: any) {
 
 @Injectable()
 export class CostingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly masterLookupSvc: LegacyMasterLookupService,
+  ) {}
 
   async list(branchId: string, q?: Record<string, string>) {
     const where: any = { branchId };
@@ -142,7 +156,7 @@ export class CostingService {
   }
 
   // Raw Material lines as the screen shows them: a line bound to an Inventory item shows that
-  // item's current code/name/unit. A line saved before the binding existed (text only) is shown
+  // item's current code/name and a Unit valid for that item. A line saved before the binding existed (text only) is shown
   // bound when its code matches exactly one non-deleted item — resolved for display only; the id
   // is stored the next time the sheet is saved. Anything else is returned exactly as stored.
   private async withInventory<T extends { inventoryId: number | null; inventoryCode: string | null; inventoryName: string | null; unit: string | null }>(lines: T[]) {
@@ -158,15 +172,33 @@ export class CostingService {
       for (const r of rows) if (r.n === 1) byCode.set(r.code, Number(r.id));
     }
     const matched = await this.activeInventoryItems(Array.from(byCode.values()));
+    const unitsByItem = await this.itemUnits([...bound.keys(), ...matched.keys()]);
+    // A bound line's Unit is its saved Unit when that is one of the item's configured Units;
+    // otherwise (never set, or no longer configured) the item's Main Unit. unitId is resolved
+    // for the Unit dropdown only — it is not a stored column.
+    const withUnit = <L extends { unit: string | null }>(l: L, id: number, fallback: string) => {
+      const units = unitsByItem.get(id) ?? [];
+      if (!units.length) return { ...l, unit: fallback, unitId: null };
+      const u = matchItemUnit(units, null, l.unit) ?? units[0];
+      return { ...l, unit: itemUnitLabel(u), unitId: Number(u.id) };
+    };
     return lines.map((l) => {
       if (l.inventoryId != null) {
         const item = bound.get(l.inventoryId);
-        return item ? { ...l, inventoryCode: item.code, inventoryName: item.name, unit: item.unit } : l;
+        return item ? withUnit({ ...l, inventoryCode: item.code, inventoryName: item.name }, l.inventoryId, item.unit) : { ...l, unitId: null };
       }
       const id = l.inventoryCode ? byCode.get(l.inventoryCode.trim()) : undefined;
       const item = id != null ? matched.get(id) : undefined;
-      return item ? { ...l, inventoryId: id!, inventoryName: item.name, unit: item.unit } : l;
+      return item ? withUnit({ ...l, inventoryId: id!, inventoryName: item.name }, id!, item.unit) : { ...l, unitId: null };
     });
+  }
+
+  // Each item's configured Units — LegacyMasterLookupService.listItemUnits, the same per-item
+  // Unit source (IM_ItemUnitItemSize, Main Unit first) the Style Card BOM's Unit dropdown uses.
+  private async itemUnits(ids: number[]) {
+    const unique = Array.from(new Set(ids));
+    const lists = await Promise.all(unique.map((id) => this.masterLookupSvc.listItemUnits(id)));
+    return new Map<number, any[]>(unique.map((id, i) => [id, lists[i]]));
   }
 
   async update(id: string, dto: any) {
@@ -183,8 +215,9 @@ export class CostingService {
   async upsertRawMaterialLines(id: string, lines: any[]) {
     await this.findOrThrow(id);
     // inventoryId (IM_Item.RecId) is the source of truth: it must be an existing, non-deleted
-    // Inventory item, and the line's Inventory Code/Name/Unit are taken from that item — never from
-    // the client — so values of two different items can't be saved together. A line with no
+    // Inventory item, and the line's Inventory Code/Name are taken from that item — never from the
+    // client — and its Unit must be one of that item's configured Units (below), so values of two
+    // different items can't be saved together. A line with no
     // inventoryId (saved before the binding existed) keeps its typed text/unit as before. Every line
     // is validated before anything is replaced, and the replace is one transaction.
     const rows = lines || [];
@@ -197,6 +230,22 @@ export class CostingService {
     const items = await this.activeInventoryItems(ids.filter((n): n is number => n != null));
     const missing = ids.filter((n): n is number => n != null && !items.has(n));
     if (missing.length) throw new BadRequestException(`Inventory item ${missing.map((n) => `#${n}`).join(', ')} does not exist or has been deleted.`);
+    // Unit of a bound line: resolved against that item's own configured Units exactly as the Style
+    // Card BOM does (resolveLineUnitId: a Unit not configured for the item falls back to its Main
+    // Unit; then assertValidItemUnit). The client's unitId is used, or else its Unit text matched
+    // to one of the item's Units. An item with no configured Units keeps its listed Unit as before.
+    const unitsByItem = await this.itemUnits(ids.filter((n): n is number => n != null));
+    const units = await Promise.all(rows.map(async (l, i) => {
+      const invId = ids[i];
+      if (invId == null) return l.unit;
+      const configured = unitsByItem.get(invId) ?? [];
+      if (!configured.length) return items.get(invId)!.unit || null;
+      const requested = l.unitId != null && l.unitId !== '' ? l.unitId : matchItemUnit(configured, null, l.unit)?.id ?? null;
+      const unitId = await resolveLineUnitId(this.masterLookupSvc, invId, requested);
+      await assertValidItemUnit(this.prisma, invId, unitId);
+      const u = configured.find((x) => Number(x.id) === Number(unitId));
+      return u ? itemUnitLabel(u) : null;
+    }));
     await this.prisma.$transaction([
       this.prisma.costingRawMaterialLine.deleteMany({ where: { costingSheetId: id } }),
       this.prisma.costingRawMaterialLine.createMany({
@@ -206,7 +255,7 @@ export class CostingService {
             groupCode: l.groupCode, groupName: l.groupName, inventoryId: ids[i],
             inventoryCode: item ? item.code : l.inventoryCode, inventoryName: item ? item.name : l.inventoryName,
             quantity: l.quantity ?? 0, wastePct: l.wastePct ?? 0,
-            unitPrice: l.unitPrice ?? 0, forex: l.forex, unit: item ? item.unit || null : l.unit, explanation: l.explanation,
+            unitPrice: l.unitPrice ?? 0, forex: l.forex, unit: units[i], explanation: l.explanation,
             costDetail: l.costDetail ?? undefined, sortOrder: i, costingSheetId: id,
           };
         }),

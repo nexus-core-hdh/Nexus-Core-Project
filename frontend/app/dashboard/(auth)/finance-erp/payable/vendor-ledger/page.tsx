@@ -63,7 +63,7 @@ export default function VendorLedgerPage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted hover:bg-muted">
+              <TableRow className="bg-background hover:bg-muted/60">
                 <TableHead>Date</TableHead><TableHead>Reference</TableHead><TableHead>Description</TableHead>
                 <TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead><TableHead className="text-right">Balance</TableHead>
               </TableRow>

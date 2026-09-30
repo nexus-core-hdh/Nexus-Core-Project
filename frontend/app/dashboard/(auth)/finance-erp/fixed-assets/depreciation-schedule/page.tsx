@@ -66,7 +66,7 @@ export default function DepreciationSchedulePage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted hover:bg-muted">
+              <TableRow className="bg-background hover:bg-muted/60">
                 <TableHead>Asset</TableHead>
                 <TableHead>Period</TableHead>
                 <TableHead className="text-right">Opening Value</TableHead>

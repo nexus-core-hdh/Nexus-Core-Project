@@ -161,7 +161,7 @@ export default function DemandFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold">Items</div>
+        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Items</div>
         <LineItemsTable
           columns={columns}
           rows={items}

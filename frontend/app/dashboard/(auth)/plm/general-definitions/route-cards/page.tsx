@@ -61,7 +61,7 @@ export default function RouteCardsListPage() {
       <div className="rounded-md border overflow-x-auto">
         <table className="w-full min-w-[700px] table-fixed border-collapse text-[12px]">
           <thead>
-            <tr className="[&>th]:border-r [&>th]:border-b [&>th]:bg-muted/50 [&>th]:px-2 [&>th]:h-8 [&>th]:text-left [&>th]:text-[10.5px] [&>th]:font-semibold [&>th]:uppercase [&>th]:tracking-wide [&>th]:text-muted-foreground/90">
+            <tr className="[&>th]:border-r [&>th]:border-b [&>th]:bg-background [&>th]:px-2 [&>th]:h-8 [&>th]:text-left [&>th]:text-[10.5px] [&>th]:font-semibold [&>th]:uppercase [&>th]:tracking-wide [&>th]:text-muted-foreground/90">
               <th style={{ width: 140 }}>Code</th>
               <th>Name</th>
               <th style={{ width: 120 }}>Service Code</th>

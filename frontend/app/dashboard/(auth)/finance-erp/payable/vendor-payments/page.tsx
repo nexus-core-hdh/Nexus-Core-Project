@@ -138,7 +138,7 @@ export default function VendorPaymentFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold">Invoice Allocation</div>
+        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Invoice Allocation</div>
         {vendorId ? (
           <LineItemsTable
             columns={columns}

@@ -10,6 +10,7 @@ import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, Image as Im
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { FormTextField as FieldText, FormSwitchField as FieldCheck } from "@/components/forms/form-field";
@@ -493,7 +494,7 @@ export default function WorkOrderPage() {
         handoverDate: (wo as any).handoverDate ? String((wo as any).handoverDate).slice(0, 10) : "",
         cuttingApprovedDate: (wo as any).cuttingApprovedDate ? String((wo as any).cuttingApprovedDate).slice(0, 10) : "",
         isClosed: !!(wo as any).isClosed, isSample: !!(wo as any).isSample, isItemDiscount: !!(wo as any).isItemDiscount,
-        currentAccountLabel: acc ? `${(acc as any).code} — ${(acc as any).name}` : "",
+        currentAccountLabel: currentAccountLabel(acc),
       };
       // MA_WorkOrder has many nullable legacy text/numeric columns (customerOrderNo, specialCode,
       // uD_Brands, seasonCode, productionCertificates, ...) — the raw `...wo` spread above passes
@@ -528,10 +529,10 @@ export default function WorkOrderPage() {
         resolveAccount(f.brokerId), resolveLabel("forex", f.cmtForexId),
       ]).then(([wh, fac, ctry, emp, cert, ic, proj, brk, fx]: any[]) => {
         const labels = {
-          warehouseLabel: wh?.name || "", factoryLabel: fac ? `${fac.code} — ${fac.name}` : "",
+          warehouseLabel: wh?.name || "", factoryLabel: currentAccountLabel(fac),
           countryLabel: ctry?.name || "", employeeLabel: emp?.name || "", certificationLabel: cert?.name || "",
           initialCostLabel: ic?.name || "", projectLabel: proj?.name || "",
-          brokerLabel: brk ? `${brk.code} — ${brk.name}` : "", cmtForexLabel: fx?.name || "",
+          brokerLabel: currentAccountLabel(brk), cmtForexLabel: fx?.name || "",
         };
         // Applied to BOTH header and lastSaved — resolving a display label is not a user edit,
         // so it must never flip isDirty (and trigger useWorkspaceDirty's auto-save) on its own.

@@ -34,7 +34,7 @@ export function LineItemsTable<T>({
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow className="bg-muted hover:bg-muted">
+            <TableRow className="bg-background hover:bg-muted/60">
               <TableHead className="w-10 text-center text-[11px]">#</TableHead>
               {columns.map((c) => (
                 <TableHead key={c.key} style={c.width ? { width: c.width } : undefined} className={cn("text-[11px]", c.align === "right" && "text-right", c.align === "center" && "text-center")}>

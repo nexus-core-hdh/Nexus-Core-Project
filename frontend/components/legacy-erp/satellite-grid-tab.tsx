@@ -148,7 +148,7 @@ export function SatelliteGridTab({ itemId, tab, fields, addLabel = "Add Row", re
             {!readOnly && <col style={{ width: DEL_W }} />}
           </colgroup>
           <TableHeader>
-            <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+            <TableRow className="border-b bg-background hover:bg-muted/60">
               {displayFields.map((f) => {
                 const fixed = fixedFieldKeys.includes(f.key);
                 return (

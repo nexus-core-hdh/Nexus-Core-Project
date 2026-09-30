@@ -140,7 +140,7 @@ export default function ReceiptFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold">Items</div>
+        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Items</div>
         <LineItemsTable columns={columns} rows={items} onAddRow={() => setItems((p) => [...p, newReceiptLine()])} onRemoveRow={(i) => setItems((p) => p.filter((_, idx) => idx !== i))}
           footer={<span className="text-sm font-semibold">Total: {formatAmount(totalAmount)}</span>} />
       </div>

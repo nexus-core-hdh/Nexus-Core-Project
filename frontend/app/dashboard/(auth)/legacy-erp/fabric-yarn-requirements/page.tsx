@@ -1084,9 +1084,9 @@ export default function FabricYarnRequirementsPage() {
           no such marker, so a right-click landing on one of THEIR rows always falls back to the
           whole-type action set instead of being misread as a requirement row. */}
       <div data-requirements-grid="true">
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-          Requirements{requirementRowsAreSaved && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(saved — right-click a row to delete it)</span>}
-          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row to see its Transaction Details below</span>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
+          Requirements{requirementRowsAreSaved && <span className="ml-1.5 font-normal normal-case text-white/70">(saved — right-click a row to delete it)</span>}
+          <span className="ml-1.5 font-normal normal-case text-white/70">— click a row to see its Transaction Details below</span>
         </p>
         <ReportGrid
           storageKey={`requirementsGrid-${type}`}
@@ -1100,9 +1100,9 @@ export default function FabricYarnRequirementsPage() {
       </div>
 
       <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
           Total Requirements Table
-          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row to see its Transaction Details below</span>
+          <span className="ml-1.5 font-normal normal-case text-white/70">— click a row to see its Transaction Details below</span>
         </p>
         <ReportGrid
           storageKey="totalRequirementsGrid"
@@ -1120,12 +1120,12 @@ export default function FabricYarnRequirementsPage() {
           above), since that click's whole point is to see that item's own receipts. */}
       {showTransactions && (
         <div>
-          <div className="mb-1 flex items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Transaction Details</p>
+          <div className="mb-1 flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-white">Transaction Details</p>
             {transactionFilter ? (
               <span className="flex items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
                 Showing receipts for <span className="font-medium">{transactionFilter.label}</span>
-                <button type="button" className="text-muted-foreground hover:text-foreground underline" onClick={() => setTransactionFilter(null)}>Clear</button>
+                <button type="button" className="text-white/70 hover:text-white underline" onClick={() => setTransactionFilter(null)}>Clear</button>
               </span>
             ) : (
               <span className="text-[11px] text-muted-foreground/70">(showing every receipt for this Work Order — click a Requirements/Total Requirements row to narrow down)</span>

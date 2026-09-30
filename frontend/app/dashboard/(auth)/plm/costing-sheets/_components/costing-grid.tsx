@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 // section's data and calculations stay entirely in the page — column order/visibility is display
 // only.
 
-type CellNav = "text" | "number" | "lookup";
+type CellNav = "text" | "number" | "lookup" | "select";
 
 export interface CostingColumn<R, K extends string> extends GridColumnDef<K> {
   align?: "left" | "right";

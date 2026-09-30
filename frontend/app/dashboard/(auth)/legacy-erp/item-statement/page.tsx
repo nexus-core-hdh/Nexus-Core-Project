@@ -464,7 +464,7 @@ export default function ItemStatementPage() {
                     </TableHeader>
                     <TableBody>
                       {data.totalsByItem.map((t: any) => (
-                        <TableRow key={t.itemId} className="hover:bg-muted/30">
+                        <TableRow key={t.itemId} className="hover:bg-muted/60">
                           <TableCell className="py-2 text-sm"><span className="font-mono text-xs">{t.itemCode}</span> {t.itemName}</TableCell>
                           <TableCell className="py-2 text-sm">{t.unit || "—"}</TableCell>
                           <TableCell className="py-2 text-right text-sm"><Qty value={t.openingBalance} /></TableCell>
@@ -539,7 +539,7 @@ export default function ItemStatementPage() {
                       ) : (
                         <>
                           {detailedRows.map((row: any, i: number) => (
-                            <TableRow key={i} className="hover:bg-muted/30">
+                            <TableRow key={i} className="hover:bg-muted/60">
                               {dimColor && <TableCell className="py-2 text-sm">{row.colorCode || row.colorName || "—"}</TableCell>}
                               {dimLot && <TableCell className="py-2 text-sm">{row.lotBatch || "—"}</TableCell>}
                               {dimWarehouse && <TableCell className="py-2 text-sm">{row.warehouseCode || "—"}</TableCell>}
@@ -561,7 +561,7 @@ export default function ItemStatementPage() {
             )}
           </div>
           <div className="overflow-hidden rounded-xl border shadow-sm">
-            <div ref={gridRootRef} className="flex items-center justify-between border-b px-4 py-3">
+            <div ref={gridRootRef} className="flex items-center justify-between border-b px-4 py-3 bg-slate-700 dark:bg-slate-800 text-white">
               <div className="text-sm font-semibold">Transaction Details</div>
               <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
                 <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
@@ -667,7 +667,7 @@ export default function ItemStatementPage() {
                       remarks: row.remarks || "—",
                     };
                     return (
-                      <TableRow key={i} className="hover:bg-muted/30">
+                      <TableRow key={i} className="hover:bg-muted/60">
                         {gridColumns.displayColumnDefs.map((c) => (
                           <TableCell key={c.key} className={cn("py-3 text-sm truncate", COLUMN_BY_KEY.get(c.key)!.align === "right" && "text-right")}>
                             {cells[c.key]}

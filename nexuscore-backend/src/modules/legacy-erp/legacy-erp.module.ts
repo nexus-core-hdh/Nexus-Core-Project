@@ -182,7 +182,9 @@ import { AuditModule } from '../audit/audit.module';
   // Order/Purchase Receipt already resolve Unit through (unit-conversion.util.ts's
   // resolveLineUnitId/assertValidItemUnit) — exported so StyleExtrasModule (PLM BOM) can reuse the
   // exact same resolution/validation for its own Fabric/Trim Card -> Unit binding instead of a
-  // second copy of it.
-  exports: [LegacyMasterLookupService],
+  // second copy of it. PurchaseOrderService/FiReceiptService are exported so the Dashboard's
+  // Recent Transactions card reads Purchase Orders / Financial Receipts through their own list()
+  // (same filters, approval status and paging) instead of a second query of those tables.
+  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService],
 })
 export class LegacyErpModule {}

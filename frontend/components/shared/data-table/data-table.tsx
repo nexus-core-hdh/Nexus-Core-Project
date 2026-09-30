@@ -180,7 +180,7 @@ export function DataTable<TData, TValue>({
             {trailingFixed.map((c) => <col key={idOf(c)} style={{ width: (c as any).size ?? 48 }} />)}
           </colgroup>
           <TableHeader>
-            <TableRow className="bg-muted hover:bg-muted">
+            <TableRow className="bg-background hover:bg-muted/60">
               {leadingFixed.map((c, i) => {
                 const header = headerById.get(idOf(c));
                 return (

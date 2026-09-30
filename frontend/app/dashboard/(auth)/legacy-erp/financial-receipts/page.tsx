@@ -326,9 +326,9 @@ export default function FinancialReceiptPage() {
 
               {!receiptId && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
+                  <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
+                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
                   </div>
                   <FinancialReceiptLineGrid ref={lineGridRef} fiReceiptId={receiptId} readOnly={readOnly} api={client} />
                 </div>

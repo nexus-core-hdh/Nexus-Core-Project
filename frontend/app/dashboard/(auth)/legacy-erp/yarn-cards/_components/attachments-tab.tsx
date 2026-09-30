@@ -188,7 +188,7 @@ export function AttachmentsTab({ itemId, readOnly = false }: Props) {
         </div>
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+            <TableRow className="border-b bg-background hover:bg-muted/60">
               <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Name</TableHead>
               <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Type</TableHead>
               <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Upload Date</TableHead>

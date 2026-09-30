@@ -393,8 +393,8 @@ export function WorklistDesignModal({
                 ) : (
                   <div className="overflow-hidden rounded-md border border-border">
                     <Table>
-                      <TableHeader className="sticky top-0 z-10 bg-muted/40">
-                        <TableRow className="hover:bg-muted/40">
+                      <TableHeader className="sticky top-0 z-10 bg-background">
+                        <TableRow className="hover:bg-muted/60">
                           <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">#</TableHead>
                           <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Source</TableHead>
                           <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Field</TableHead>

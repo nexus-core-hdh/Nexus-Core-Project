@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { legacyErpApi, plmApi, fetchAllPages } from "@/lib/nexuscore-api";
+import { loadSavedInventoryItems } from "@/lib/legacy-erp/saved-line-refs";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
@@ -774,18 +775,15 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
-    try {
-      const all: any = await fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req));
-      const byId = new Map<string, any>((Array.isArray(all) ? all : []).map((r: any) => [String(r.id), r]));
-      return list.map((row) => {
-        if (!row.inventoryId) return row;
-        const match = byId.get(String(row.inventoryId));
-        if (!match) return row;
-        return { ...row, code: match.inventoryCode, name: match.inventoryName, stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
-      });
-    } catch {
-      return list;
-    }
+    // Shared saved-line resolver: Inventory Card List, then the by-id master lookup for any id
+    // the list doesn't return (lib/legacy-erp/saved-line-refs.ts).
+    const byId = await loadSavedInventoryItems(list.map((row) => row.inventoryId));
+    return list.map((row) => {
+      if (!row.inventoryId) return row;
+      const match = byId.get(String(row.inventoryId));
+      if (!match) return row;
+      return { ...row, code: match.inventoryCode, name: match.inventoryName, stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
+    });
   };
 
   const hydrateForex = async (list: LineRow[]): Promise<LineRow[]> => {
@@ -1380,7 +1378,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className={cn(HEADER_H, "bg-muted hover:bg-muted")}>
+          <TableRow className={cn(HEADER_H, "bg-background hover:bg-muted/60")}>
             {displayColumnDefs.map((col, i) => {
               const fixed = FIXED_COLS.includes(col.key);
               return (
@@ -1427,7 +1425,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
               const rowBg = idx % 2 === 1 ? "bg-muted/20" : "bg-card";
 
               const rowEl = (
-                <TableRow key={r.clientId} className={cn(ROW_H, "group transition-colors [&>td]:p-0", "hover:bg-muted/30", rowBg)}>
+                <TableRow key={r.clientId} className={cn(ROW_H, "group transition-colors [&>td]:p-0", "hover:bg-muted/60", rowBg)}>
                   {displayColumnDefs.map((col, i) => {
                     const firstBorder = i === 0 ? FIRST_COL_BORDER : undefined;
 

@@ -31,7 +31,9 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // ---------- row types ----------
 // inventoryId = the selected Inventory item (IM_Item.RecId) — the source of truth; inventoryCode/
 // inventoryName are its display values (set together on selection, re-filled by the server).
-type RawRow = { id: string; groupCode: string; groupName: string; inventoryId: number | null; inventoryCode: string; inventoryName: string; quantity: number; wastePct: number; unitPrice: number; forex: string; unit: string; explanation: string };
+// unitId = the selected one of that item's configured Units (legacyErpApi.lookupItemUnits, as in
+// the Style Card BOM); `unit` stays the saved Unit text, the server resolves unitId from it.
+type RawRow = { id: string; groupCode: string; groupName: string; inventoryId: number | null; inventoryCode: string; inventoryName: string; quantity: number; wastePct: number; unitPrice: number; forex: string; unitId: number | null; unit: string; explanation: string };
 type LaborRow = { id: string; groupCode: string; groupName: string; explanation: string; quantity: number; wastePct: number; forex: string; unitPrice: number };
 type OtherRow = { id: string; groupCode: string; groupName: string; explanation: string; quantity: number; forex: string; unitPrice: number };
 
@@ -131,9 +133,11 @@ export default function CostingSheetDetailPage() {
     const raw = (s.rawMaterialLines || []).map((l: any) => ({
       id: l.id, groupCode: l.groupCode || "", groupName: l.groupName || "", inventoryId: l.inventoryId ?? null, inventoryCode: l.inventoryCode || "",
       inventoryName: l.inventoryName || "", quantity: num(l.quantity), wastePct: num(l.wastePct),
-      unitPrice: num(l.unitPrice), forex: l.forex || "", unit: l.unit || "", explanation: l.explanation || "",
+      unitPrice: num(l.unitPrice), forex: l.forex || "", unitId: l.unitId ?? null, unit: l.unit || "", explanation: l.explanation || "",
     }));
     setRawRows(raw);
+    // Populate the Unit dropdown of every reloaded row that already has an Inventory item.
+    raw.forEach((r: RawRow) => { if (r.inventoryId != null) ensureItemUnits(r.inventoryId); });
     setLaborRows((s.laborLines || []).map((l: any) => ({
       id: l.id, groupCode: l.groupCode || "", groupName: l.groupName || "", explanation: l.explanation || "",
       quantity: num(l.quantity), wastePct: num(l.wastePct), forex: l.forex || "", unitPrice: num(l.unitPrice),
@@ -190,21 +194,40 @@ export default function CostingSheetDetailPage() {
   const updateLabor = (rid: string, patch: Partial<LaborRow>) => setLaborRows((rows) => rows.map((r) => (r.id === rid ? { ...r, ...patch } : r)));
   const updateOther = (rid: string, patch: Partial<OtherRow>) => setOtherRows((rows) => rows.map((r) => (r.id === rid ? { ...r, ...patch } : r)));
 
-  const addRaw = () => setRawRows((r) => [...r, { id: uid(), groupCode: "", groupName: "", inventoryId: null, inventoryCode: "", inventoryName: "", quantity: 1, wastePct: 0, unitPrice: 0, forex: "", unit: "", explanation: "" }]);
+  const addRaw = () => setRawRows((r) => [...r, { id: uid(), groupCode: "", groupName: "", inventoryId: null, inventoryCode: "", inventoryName: "", quantity: 1, wastePct: 0, unitPrice: 0, forex: "", unitId: null, unit: "", explanation: "" }]);
+
+  // ---------- Raw Material Unit (per Inventory item) ----------
+  // Same mechanism as the Style Card BOM (bom-tab.tsx ensureItemUnits): legacyErpApi.lookupItemUnits
+  // is the item's own configured Units (IM_ItemUnitItemSize, Main Unit first), cached per item in
+  // state so the Unit dropdown re-renders once they resolve, with a ref cache alongside it so an
+  // item whose Units are loading/loaded is never fetched twice.
+  const [itemUnitsByItem, setItemUnitsByItem] = useState<Record<string, any[]>>({});
+  const itemUnitsCacheRef = useRef<Record<string, any[] | Promise<any[]>>>({});
+  const ensureItemUnits = async (inventoryId: number): Promise<any[]> => {
+    const key = String(inventoryId);
+    const cached = itemUnitsCacheRef.current[key];
+    if (cached) return cached;
+    const promise = legacyErpApi.lookupItemUnits(inventoryId).then((u: any) => (Array.isArray(u) ? u : [])).catch(() => []);
+    itemUnitsCacheRef.current[key] = promise;
+    const units = await promise;
+    itemUnitsCacheRef.current[key] = units;
+    setItemUnitsByItem((prev) => ({ ...prev, [key]: units }));
+    return units;
+  };
+  const mainUnitOf = (units: any[]) => (units.length ? units.find((u) => u.isMainUnit) || units[0] : null);
 
   // ---------- Raw Material Inventory lookup ----------
   // Inventory Code is picked from the Inventory master (legacyErpApi.inventoryCards.list — the
   // Inventory Card list's own search over code/name, non-deleted items) via the shared
   // AutocompleteTextCell (type or click to search) and CardLookupDialog (search icon). Picking an
-  // item sets inventoryId + Code + Name + Unit together (Unit = the list's own `unit`, the item's
-  // Main Unit); typed text alone never binds anything.
-  type InventoryOption = AutocompleteOption & { unit?: string | null };
-  const [inventoryOptions, setInventoryOptions] = useState<InventoryOption[]>([]);
+  // item sets inventoryId + Code + Name together and clears the Unit, which is then resolved from
+  // that item's own configured Units (above); typed text alone never binds anything.
+  const [inventoryOptions, setInventoryOptions] = useState<AutocompleteOption[]>([]);
   const [inventoryQuery, setInventoryQuery] = useState<Record<string, string>>({});
   const [inventoryLookupRowId, setInventoryLookupRowId] = useState<string | null>(null);
   const inventorySearchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const inventorySearchSeq = useRef(0);
-  const fetchInventory = async (term?: string): Promise<(CardLookupRow & { unit?: string | null })[]> => {
+  const fetchInventory = async (term?: string): Promise<CardLookupRow[]> => {
     const res: any = await legacyErpApi.inventoryCards.list(term ? { search: term } : undefined);
     return Array.isArray(res) ? res : res?.data ?? [];
   };
@@ -214,16 +237,29 @@ export default function CostingSheetDetailPage() {
       const seq = ++inventorySearchSeq.current;
       try {
         const rows = await fetchInventory(term.trim() || undefined);
-        if (seq === inventorySearchSeq.current) setInventoryOptions(rows.map((x) => ({ id: String(x.id), code: x.inventoryCode, name: x.inventoryName, unit: x.unit })));
+        if (seq === inventorySearchSeq.current) setInventoryOptions(rows.map((x) => ({ id: String(x.id), code: x.inventoryCode, name: x.inventoryName })));
       } catch { /* keep the previous list */ }
     }, 200);
   };
   useEffect(() => { searchInventory(""); }, []);
   const clearInventoryQuery = (rowId: string) => setInventoryQuery(({ [rowId]: _, ...rest }) => rest);
-  const selectInventory = (rowId: string, item: { id: string | number; code?: string | null; name?: string | null; unit?: string | null }) => {
-    updateRaw(rowId, { inventoryId: Number(item.id), inventoryCode: item.code ?? "", inventoryName: item.name ?? "", unit: item.unit ?? "" });
+  const selectInventory = (rowId: string, item: { id: string | number; code?: string | null; name?: string | null }) => {
+    const inventoryId = Number(item.id);
+    const prevUnitCode = rawRows.find((r) => r.id === rowId)?.unit || null;
+    // Unit is cleared the moment the item changes, so the previous item's Unit is never kept
+    // attached to the new one — then resolved from the new item's own configured Units.
+    updateRaw(rowId, { inventoryId, inventoryCode: item.code ?? "", inventoryName: item.name ?? "", unitId: null, unit: "" });
     clearInventoryQuery(rowId);
     searchInventory("");
+    ensureItemUnits(inventoryId).then((units) => {
+      if (!units.length) return;
+      // Style Card BOM's item-change rule: keep the previous Unit if the new item also has a Unit
+      // of that same code, otherwise the new item's Main Unit. Applied only while the row still
+      // holds this item (it may have been changed again before the Units resolved).
+      const matched = prevUnitCode ? units.find((u: any) => (u.code || u.name || "").toLowerCase() === prevUnitCode.toLowerCase()) : undefined;
+      const target = matched || mainUnitOf(units);
+      setRawRows((rows) => rows.map((r) => (r.id === rowId && r.inventoryId === inventoryId ? { ...r, unitId: Number(target.id), unit: target.code || target.name || "" } : r)));
+    });
   };
   // Leaving the field without picking: cleared text clears the selection; text that is exactly one
   // listed code binds it; anything else is discarded and the row keeps its current selection.
@@ -232,7 +268,7 @@ export default function CostingSheetDetailPage() {
     clearInventoryQuery(row.id);
     searchInventory("");
     if (typed === row.inventoryCode) return;
-    if (!typed) { updateRaw(row.id, { inventoryId: null, inventoryCode: "", inventoryName: "", unit: "" }); return; }
+    if (!typed) { updateRaw(row.id, { inventoryId: null, inventoryCode: "", inventoryName: "", unitId: null, unit: "" }); return; }
     const exact = inventoryOptions.filter((o) => (o.code ?? "").toLowerCase() === typed.toLowerCase());
     if (exact.length === 1) selectInventory(row.id, exact[0]);
     else toast.error("Select an inventory item from the list");
@@ -377,15 +413,34 @@ export default function CostingSheetDetailPage() {
     numberCol("wastePct", "Waste %", 80, "wastePct", updateRaw),
     numberCol("unitPrice", "Unit Price", 100, "unitPrice", updateRaw, "unit-price"),
     textCol("forex", "Forex", 80, "forex", updateRaw),
-    // Unit comes from the selected Inventory item (read-only, like Inventory Name, so it can never
-    // disagree with it); only a line without an Inventory item (typed before the binding existed)
-    // keeps its own editable Unit text.
+    // Once an Inventory item is selected, Unit is a dropdown of exactly that item's own configured
+    // Units (never a global unit list) — the same Select the Style Card BOM's Unit cell uses. Only a
+    // line without an Inventory item (typed before the binding existed) keeps its own Unit text.
     {
       ...textCol<RawRow, RawKey>("unit", "Unit", 70, "unit", updateRaw),
-      nav: (r) => (r.inventoryId != null ? undefined : "text"),
-      render: (r) => r.inventoryId != null
-        ? <span className="block truncate" title={r.unit}>{r.unit || <span className="text-muted-foreground">—</span>}</span>
-        : <SheetCellInput value={r.unit ?? ""} onChange={(v) => updateRaw(r.id, { unit: v })} />,
+      nav: (r) => (r.inventoryId != null ? "select" : "text"),
+      render: (r) => {
+        if (r.inventoryId == null) return <SheetCellInput value={r.unit ?? ""} onChange={(v) => updateRaw(r.id, { unit: v })} />;
+        const units = itemUnitsByItem[String(r.inventoryId)] || [];
+        return (
+          <Select
+            value={r.unitId != null ? String(r.unitId) : ""}
+            onValueChange={(v) => {
+              const target = units.find((u: any) => String(u.id) === v);
+              if (target) updateRaw(r.id, { unitId: Number(target.id), unit: target.code || target.name || "" });
+            }}
+          >
+            <SelectTrigger className="h-7 w-full border-0 bg-transparent px-2 text-xs shadow-none focus:ring-0">
+              <SelectValue placeholder="Select Unit" />
+            </SelectTrigger>
+            <SelectContent>
+              {units.map((u: any) => (
+                <SelectItem key={u.id} value={String(u.id)}>{u.code || u.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      },
     },
     textCol("explanation", "Explanation", 160, "explanation", updateRaw),
     amountCol("forexPrice", "Forex Price", 105, (r) => rawAmount(r) / usdRate, rawTotal / usdRate),
@@ -667,7 +722,7 @@ export default function CostingSheetDetailPage() {
         title="Select Inventory"
         fetchOptions={fetchInventory}
         onSelect={(row) => {
-          if (inventoryLookupRowId) selectInventory(inventoryLookupRowId, { id: row.id, code: row.inventoryCode, name: row.inventoryName, unit: (row as { unit?: string | null }).unit });
+          if (inventoryLookupRowId) selectInventory(inventoryLookupRowId, { id: row.id, code: row.inventoryCode, name: row.inventoryName });
           setInventoryLookupRowId(null);
         }}
       />

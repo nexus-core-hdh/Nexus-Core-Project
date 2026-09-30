@@ -51,7 +51,7 @@ export default function WhtOnPurchasesPage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted hover:bg-muted">
+              <TableRow className="bg-background hover:bg-muted/60">
                 <TableHead>Vendor</TableHead><TableHead>Invoice</TableHead><TableHead>Tax Type</TableHead>
                 <TableHead className="text-right">Rate %</TableHead><TableHead className="text-right">Gross Amount</TableHead>
                 <TableHead className="text-right">WHT Amount</TableHead><TableHead className="text-right">Net Payable</TableHead><TableHead>Status</TableHead>

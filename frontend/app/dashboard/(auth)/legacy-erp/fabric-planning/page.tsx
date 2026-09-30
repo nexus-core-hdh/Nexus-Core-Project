@@ -283,9 +283,9 @@ export default function FabricPlanningPage() {
       </div>
 
       <div>
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
           Requirement Planning
-          <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— click a row for Transaction Details, ctrl/shift-click to multi-select, right-click for receipt actions</span>
+          <span className="ml-1.5 font-normal normal-case text-white/70">— click a row for Transaction Details, ctrl/shift-click to multi-select, right-click for receipt actions</span>
         </p>
         {loading || subcontractTypes === null ? (
           <Skeleton className="h-96 w-full" />
@@ -318,12 +318,12 @@ export default function FabricPlanningPage() {
 
       {showTransactions && (
         <div>
-          <div className="mb-1 flex items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Transaction Details</p>
+          <div className="mb-1 flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-white">Transaction Details</p>
             {selectedRow ? (
               <span className="flex items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]">
                 Showing receipts for <span className="font-medium">{selectedRow.workOrderNo} — {selectedRow.inventoryCode || selectedRow.inventoryName || "this item"}</span>
-                <button type="button" className="text-muted-foreground hover:text-foreground underline" onClick={closeTransactions}>Clear</button>
+                <button type="button" className="text-white/70 hover:text-white underline" onClick={closeTransactions}>Clear</button>
               </span>
             ) : null}
           </div>

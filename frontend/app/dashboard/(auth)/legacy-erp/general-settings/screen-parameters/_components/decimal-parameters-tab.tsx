@@ -115,7 +115,7 @@ export function DecimalParametersTab() {
       <div className="overflow-hidden rounded-xl border shadow-sm">
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+            <TableRow className="border-b bg-background hover:bg-muted/60">
               <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Field</TableHead>
               <TableHead className="h-10 w-40 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Decimal Places</TableHead>
             </TableRow>

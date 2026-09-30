@@ -1192,6 +1192,44 @@ export const auditApi = {
   listEntityTypes: () => api.get<string[]>('/audit/logs/filters/entity-types'),
 };
 
+// Dashboard "Recent Activity" — newest real records (AuditLog events + Finance payments/sales
+// orders), merged and limited server-side (dashboard.service.ts).
+export interface RecentActivityItem {
+  id: string;
+  kind: 'sale' | 'purchase' | 'payment' | 'receipt' | 'item' | 'stock' | 'other';
+  label: string;
+  documentNo: string | null;
+  action: string;
+  amount: number | null;
+  currency: string | null;
+  party: string | null;
+  partyPrefix: 'from' | 'to' | null;
+  userName: string | null;
+  occurredAt: string;
+}
+
+// Dashboard "Recent Transactions" — latest real Sales Orders / Purchase Orders / Payments /
+// Financial Receipts, filtered by type and limited server-side (dashboard.service.ts).
+export type RecentTransactionType = 'sale' | 'purchase' | 'payment' | 'receipt';
+export interface RecentTransaction {
+  id: string;
+  type: RecentTransactionType;
+  subtype: string | null;
+  recordId: string;
+  reference: string | null;
+  party: string | null;
+  date: string | null;
+  amount: number | null;
+  currency: string | null;
+  status: string | null;
+}
+
+export const dashboardApi = {
+  recentActivity: (take = 8) => api.get<RecentActivityItem[]>(`/dashboard/recent-activity?take=${take}`),
+  recentTransactions: (type: RecentTransactionType | 'all' = 'all', take = 8) =>
+    api.get<RecentTransaction[]>(`/dashboard/recent-transactions?type=${type}&take=${take}`),
+};
+
 // Recipe Usage ("Where Used") — one shared endpoint behind Fabric/Yarn/Trim/Inventory Cards' own
 // "Recipe Usage Information" right-click action (see recipe-usage.service.ts's own header
 // comment). Server-side filtered/paginated, same {rows,total,skip,take} shape as auditApi.list.

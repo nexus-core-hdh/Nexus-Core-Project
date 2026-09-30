@@ -1,0 +1,25 @@
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { DashboardService, TRANSACTION_TYPES, type TransactionType } from './dashboard.service';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+
+// Read-only. Scope always comes from the authenticated caller (@CurrentUser), never a query param.
+@ApiTags('Dashboard')
+@Controller('dashboard')
+export class DashboardController {
+  constructor(private readonly svc: DashboardService) {}
+
+  @Get('recent-activity')
+  recentActivity(@CurrentUser() u: any, @Query('take') take?: string) {
+    const n = Math.min(Math.max(Number(take) || 8, 1), 20);
+    return this.svc.recentActivity(u?.companyId, u?.branchId ?? undefined, n);
+  }
+
+  // type = all | sale | purchase | payment | receipt — filtered server-side.
+  @Get('recent-transactions')
+  recentTransactions(@CurrentUser() u: any, @Query('type') type?: string, @Query('take') take?: string) {
+    const t = type && (TRANSACTION_TYPES as string[]).includes(type) ? (type as TransactionType) : 'all';
+    const n = Math.min(Math.max(Number(take) || 8, 1), 20);
+    return this.svc.recentTransactions(u?.companyId, u?.branchId ?? undefined, t, n);
+  }
+}

@@ -190,7 +190,7 @@ export function PendingOrdersDialog({
             <div className="overflow-hidden rounded-lg border border-border">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableRow className="bg-background hover:bg-muted/60">
                     <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{sourceLabel}</TableHead>
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
@@ -208,7 +208,7 @@ export function PendingOrdersDialog({
                     const state = poSelectionState(po);
                     return (
                       <Fragment key={po.id}>
-                        <TableRow className="cursor-pointer bg-muted/20 hover:bg-muted/30" onClick={() => togglePo(po)}>
+                        <TableRow className="cursor-pointer bg-muted/20 hover:bg-muted/60" onClick={() => togglePo(po)}>
                           <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                               checked={state === "all" ? true : state === "some" ? "indeterminate" : false}
@@ -223,7 +223,7 @@ export function PendingOrdersDialog({
                           </TableCell>
                         </TableRow>
                         {po.lines.map((l) => (
-                          <TableRow key={`line-${l.orderReceiptItemId}`} className="cursor-pointer hover:bg-muted/20" onClick={() => toggleLine(l.orderReceiptItemId)}>
+                          <TableRow key={`line-${l.orderReceiptItemId}`} className="cursor-pointer hover:bg-muted/60" onClick={() => toggleLine(l.orderReceiptItemId)}>
                             <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
                               <Checkbox
                                 checked={selected.has(l.orderReceiptItemId)}

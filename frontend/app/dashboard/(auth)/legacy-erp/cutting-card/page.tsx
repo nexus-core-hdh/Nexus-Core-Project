@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
@@ -78,7 +79,7 @@ export default function CuttingCardPage() {
       }
       if (wo?.currentAccountId) {
         legacyErpApi.accounts.get(wo.currentAccountId)
-          .then((acc: any) => setCustomerLabel(acc ? `${acc.code} — ${acc.name}` : ""))
+          .then((acc: any) => setCustomerLabel(currentAccountLabel(acc)))
           .catch(() => setCustomerLabel(""));
       }
     } catch (e: any) {
@@ -178,8 +179,8 @@ export default function CuttingCardPage() {
       ) : (
         <>
           <div>
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-              Production Colors{!!matrix.extraCuttingPercent && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(Will Be Cut — Extra Cutting {matrix.extraCuttingPercent}% applied, rounded up per size)</span>}
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
+              Production Colors{!!matrix.extraCuttingPercent && <span className="ml-1.5 font-normal normal-case text-white/70">(Will Be Cut — Extra Cutting {matrix.extraCuttingPercent}% applied, rounded up per size)</span>}
             </p>
             <div className="rounded-md border overflow-x-auto">
               <table className="w-full min-w-[700px] table-fixed border-collapse text-[11.5px]">
@@ -221,7 +222,7 @@ export default function CuttingCardPage() {
 
           {selectedRow && selectedSummary && (
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
                 {selectedRow.color} — Cutting Summary{loadingCutTotals && <span className="ml-1.5 font-normal normal-case">(loading Cut totals...)</span>}
               </p>
               <div className="rounded-md border overflow-x-auto">

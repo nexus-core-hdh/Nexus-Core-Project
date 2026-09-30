@@ -563,7 +563,7 @@ export default function CustomerDefineTrimsPage() {
                   <col style={{ width: DEL_W }} />
                 </colgroup>
                 <TableHeader>
-                  <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+                  <TableRow className="border-b bg-background hover:bg-muted/60">
                     {displayColumnDefs.map((col) => {
                       const fixed = FIXED_COLS.includes(col.key);
                       return (

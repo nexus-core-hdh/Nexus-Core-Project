@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
+import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
@@ -296,7 +297,7 @@ export default function InventoryReceiptPage() {
       ...r,
       receiptDate: r.receiptDate ? String(r.receiptDate).slice(0, 10) : emptyForm.receiptDate,
       shipmentDate: r.shipmentDate ? String(r.shipmentDate).slice(0, 10) : "",
-      currentAccountLabel: account ? `${(account as any).code} — ${(account as any).name}` : "",
+      currentAccountLabel: currentAccountLabel(account),
       warehouseLabel: warehouse ? (warehouse as any).warehouseName : "",
       // get() already resolves these via a LEFT JOIN server-side (see inventory-receipt.service.ts)
       // — no second round-trip needed, unlike Current Account/Warehouse above. Deliberately not
@@ -694,9 +695,9 @@ export default function InventoryReceiptPage() {
                   shows it pre-save; Detail owns it afterward. */}
               {!receiptId && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
+                  <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
+                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
                   </div>
                   <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
                 </div>

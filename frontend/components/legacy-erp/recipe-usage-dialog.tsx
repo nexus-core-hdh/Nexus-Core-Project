@@ -189,7 +189,7 @@ export function RecipeUsageDialog({ open, onOpenChange, inventoryId, itemLabel }
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableRow className="bg-background hover:bg-muted/60">
                   <TableHead className="h-8 w-24 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Type</TableHead>
                   <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Code</TableHead>
                   <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Name</TableHead>

@@ -166,7 +166,7 @@ export default function UsersRolesPage() {
           </div>
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
-              <thead className="bg-muted">
+              <thead className="bg-background">
                 <tr>
                   <th className="p-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Module</th>
                   {PERMISSION_ACTIONS.map((a) => <th key={a} className="p-2.5 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">{a}</th>)}

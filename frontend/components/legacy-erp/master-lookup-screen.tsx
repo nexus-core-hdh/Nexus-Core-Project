@@ -295,7 +295,7 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
         <div className="max-h-[60vh] overflow-y-auto">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+              <TableRow className="border-b bg-background hover:bg-muted/60">
                 <SortableHead sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
                 <SortableHead sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
                 <TableHead className="h-10 w-28 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>

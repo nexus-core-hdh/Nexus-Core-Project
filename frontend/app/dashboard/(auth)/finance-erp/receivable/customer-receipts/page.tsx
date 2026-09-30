@@ -115,7 +115,7 @@ export default function CustomerReceiptFormPage() {
       </div>
 
       <div className="overflow-hidden rounded-lg border">
-        <div className="border-b bg-muted/10 px-4 py-2 text-sm font-semibold">Invoice Allocation</div>
+        <div className="border-b bg-slate-700 dark:bg-slate-800 text-white px-4 py-2 text-sm font-semibold">Invoice Allocation</div>
         <Table>
           <TableHeader><TableRow><TableHead>Invoice #</TableHead><TableHead className="text-right">Outstanding</TableHead><TableHead className="text-right w-40">Allocate</TableHead></TableRow></TableHeader>
           <TableBody>

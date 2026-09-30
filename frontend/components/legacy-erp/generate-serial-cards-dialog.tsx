@@ -445,7 +445,7 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
             ) : (
               <Table className="min-w-[1900px]">
                 <TableHeader>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableRow className="bg-background hover:bg-muted/60">
                     {[
                       "Serial No", "Explanation", "Party No", "Quality Type", "Resource", "Employee", "Man. C/A", "Manufacturer Serial",
                       "Product Date", "Quantity", "Miktar II", "3.Miktar", "Width", "GSM", "Raw Width", "Raw Weight", "Raw Length", "Product Length",

@@ -342,8 +342,8 @@ export default function CuttingEntryPage() {
                 Summary's own "Cut" row below is always the live SUM of these, never a second
                 editable number. */}
             <div>
-              <div className="mb-1 flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Cutting Entries</p>
+              <div className="mb-1 flex items-center justify-between bg-slate-700 dark:bg-slate-800 text-white">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-white">Cutting Entries</p>
                 <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={addEntry} disabled={addingEntry}>
                   <Plus className="h-3 w-3 mr-1" />{addingEntry ? "Adding..." : "Add Cutting Entry"}
                 </Button>
@@ -409,8 +409,8 @@ export default function CuttingEntryPage() {
             </div>
 
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                Cutting Summary{!!card && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(Extra Cutting {card.extraCuttingPercent}% applied, rounded up per size — Cut is the sum of the Cutting Entries above)</span>}
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
+                Cutting Summary{!!card && <span className="ml-1.5 font-normal normal-case text-white/70">(Extra Cutting {card.extraCuttingPercent}% applied, rounded up per size — Cut is the sum of the Cutting Entries above)</span>}
               </p>
               <div className="rounded-md border overflow-x-auto">
                 <table className="w-full min-w-[700px] table-fixed border-collapse text-[11.5px]">
