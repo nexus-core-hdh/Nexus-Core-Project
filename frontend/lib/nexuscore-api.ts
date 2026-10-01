@@ -1209,7 +1209,7 @@ export interface RecentActivityItem {
 }
 
 // Dashboard "Recent Transactions" — latest real Sales Orders / Purchase Orders / Payments /
-// Financial Receipts, filtered by type and limited server-side (dashboard.service.ts).
+// Financial + inventory Receipts, filtered by type and limited server-side (dashboard.service.ts).
 export type RecentTransactionType = 'sale' | 'purchase' | 'payment' | 'receipt';
 export interface RecentTransaction {
   id: string;
@@ -1222,6 +1222,9 @@ export interface RecentTransaction {
   amount: number | null;
   currency: string | null;
   status: string | null;
+  // Inventory receipts only: selects that receipt type's View screen and display label.
+  receiptType?: number;
+  subcontractType?: string | null;
 }
 
 export const dashboardApi = {

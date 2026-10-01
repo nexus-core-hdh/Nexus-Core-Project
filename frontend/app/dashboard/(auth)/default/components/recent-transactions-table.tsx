@@ -28,13 +28,15 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { dashboardApi, type RecentTransaction, type RecentTransactionType } from "@/lib/nexuscore-api";
+import { getReceiptTypeLabel } from "@/lib/legacy-erp/receipt-types";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { VariantProps } from "class-variance-authority";
 
 // Real transactions only — GET /dashboard/recent-transactions (dashboard.service.ts), filtered by
 // the selected tab server-side and limited to the latest few rows:
 //   Sales → Finance Orders · Purchases → Purchase Orders · Payments → Customer/Supplier Payments
-//   · Receipts → Financial Receipts. Missing values render "—"; nothing is filled in.
+//   · Receipts → Financial Receipts + inventory receipts (Purchase, Subcontract, ...; the badge
+//   names the receipt type, its tooltip the full type). Missing values render "—"; nothing is filled in.
 
 const TYPE_LABEL: Record<RecentTransactionType, string> = {
   sale: "Sale",
@@ -42,6 +44,14 @@ const TYPE_LABEL: Record<RecentTransactionType, string> = {
   payment: "Payment",
   receipt: "Receipt"
 };
+
+// Inventory receipts name their own receipt type with the ERP's shared resolver — "Purchase
+// Receipt", "Purchase Return", and for Subcontract rows "<Process> Send" / "<Process> Receive"
+// (e.g. "Dyeing Send"), so an outbound Outside Process Sent never reads as goods received.
+const typeLabel = (t: RecentTransaction) =>
+  t.type === "receipt" && t.receiptType != null
+    ? getReceiptTypeLabel(t.receiptType, t.subcontractType)
+    : TYPE_LABEL[t.type];
 
 const TYPE_STYLES: Record<RecentTransactionType, string> = {
   sale: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400",
@@ -80,6 +90,10 @@ type TabKey = (typeof TABS)[number]["key"];
 // Sales Orders and Payments have no per-record view screen, so their rows have no action.
 const viewHref = (t: RecentTransaction): string | null => {
   if (t.type === "purchase") return `/dashboard/legacy-erp/purchase-orders?id=${t.recordId}&mode=view`;
+  // Inventory receipts (Purchase, Subcontract, ...) open the same screen their own lists open.
+  if (t.type === "receipt" && t.receiptType != null) {
+    return `/dashboard/legacy-erp/inventory-receipts?id=${t.recordId}&mode=view&receiptType=${t.receiptType}`;
+  }
   if (t.type === "receipt") return `/dashboard/legacy-erp/financial-receipts?id=${t.recordId}&mode=view`;
   return null;
 };
@@ -179,10 +193,10 @@ export function RecentTransactionsTable() {
                         <span
                           title={t.subtype ?? undefined}
                           className={cn(
-                            "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
+                            "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap",
                             TYPE_STYLES[t.type]
                           )}>
-                          {TYPE_LABEL[t.type]}
+                          {typeLabel(t)}
                         </span>
                       </TableCell>
                       <TableCell className="text-primary font-medium">{t.reference || "—"}</TableCell>

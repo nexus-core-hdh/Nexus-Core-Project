@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PurchaseOrderService } from '../legacy-erp/purchase-order.service';
 import { FiReceiptService } from '../legacy-erp/fi-receipt.service';
+import { InventoryReceiptService } from '../legacy-erp/inventory-receipt.service';
+import { getReceiptTypeConfig, RECEIPT_TYPES } from '../legacy-erp/receipt-types.config';
 
 // Dashboard "Recent Activity" — a read-only merge of records that already exist; no activity
 // table of its own and nothing is ever written here.
@@ -71,10 +73,21 @@ function humanize(entityType: string): string {
 //               and the same approval status the Purchase Orders list shows.
 //  - Payment  → Payment module (Payment → Customer / Supplier Payments): CustomerPayment and
 //               SupplierPayment — paymentNumber, customer/supplier, paymentDate, amount, status.
-//  - Receipt  → Financial Receipt (FI_Receipt) via FiReceiptService.list() — ReceiptNo, the
-//               account(s) on its lines (FI_ReceiptItem → FI_Account), ReceiptDate, header amount,
-//               Approved/Unapproved.
-// Every source is limited to `take` rows server-side, newest first; lookups are batched.
+//  - Receipt  → both receipt documents the ERP has:
+//               · Financial Receipt (FI_Receipt) via FiReceiptService.list() — ReceiptNo, the
+//                 account(s) on its lines (FI_ReceiptItem → FI_Account), ReceiptDate, header
+//                 amount, Approved/Unapproved.
+//               · Inventory receipts (IM_Receipt, every type in RECEIPT_TYPES — Purchase Receipt,
+//                 Purchase Return, the Subcontract/Outside Process receipts, ...) via
+//                 InventoryReceiptService.list(), the same query their list screens use —
+//                 ReceiptNo, Current Account, ReceiptDate, the list's own Receipt Total,
+//                 Approved/Unapproved; subtype = the receipt type's configured label. Outside
+//                 Process Sent (134) is outbound (DIRECTION_CLASS: OUT, "<Type> Send") yet is a
+//                 receipt document in this ERP — it is listed on the Subcontract Receipts screen
+//                 with 11/12/133, just as outbound Purchase Return sits with Purchase Receipt — so
+//                 it stays here and is told apart by its own type label, not moved to a category.
+// Every source is limited to `take` rows server-side, newest first; lookups are batched. Sources
+// are merged and sorted by date before the final `take`, so no source can crowd out another.
 export type TransactionType = 'sale' | 'purchase' | 'payment' | 'receipt';
 export const TRANSACTION_TYPES: TransactionType[] = ['sale', 'purchase', 'payment', 'receipt'];
 
@@ -89,6 +102,10 @@ export interface RecentTransaction {
   amount: number | null;
   currency: string | null; // null = the record carries no currency (base currency)
   status: string | null;
+  // IM_Receipt rows only: the receipt type (picks its own View screen and display label) and, for
+  // the Subcontract / Outside Process types, the MD_SubcontractType name the receipt references.
+  receiptType?: number;
+  subcontractType?: string | null;
 }
 
 const toNum = (v: any): number | null => (v === null || v === undefined || v === '' ? null : Number(v));
@@ -101,6 +118,7 @@ export class DashboardService {
     private readonly prisma: PrismaService,
     private readonly purchaseOrders: PurchaseOrderService,
     private readonly fiReceipts: FiReceiptService,
+    private readonly inventoryReceipts: InventoryReceiptService,
   ) {}
 
   async recentTransactions(companyId: string, branchId: string | undefined, type: TransactionType | 'all', take: number): Promise<RecentTransaction[]> {
@@ -111,7 +129,7 @@ export class DashboardService {
         case 'sale': return companyId ? this.sales(financeScope, take) : [];
         case 'purchase': return this.purchases(take);
         case 'payment': return companyId ? this.payments(financeScope, take) : [];
-        case 'receipt': return this.receipts(take);
+        case 'receipt': return Promise.all([this.receipts(take), this.imReceipts(take)]).then((r) => r.flat());
       }
     }));
     return lists
@@ -202,6 +220,25 @@ export class DashboardService {
         date: toDate(r.receiptDate), amount: debit ? debit : toNum(r.credit),
         currency: r.forexId != null ? forex.get(Number(r.forexId)) ?? null : null,
         status: r.isApproved == null ? null : Number(r.isApproved) === 1 || r.isApproved === true ? 'Approved' : 'Unapproved',
+      };
+    });
+  }
+
+  private async imReceipts(take: number): Promise<RecentTransaction[]> {
+    const types = RECEIPT_TYPES.map((t) => t.receiptType);
+    const page: any = await this.inventoryReceipts.list(undefined, types, undefined, { page: 1, pageSize: take, sortBy: 'receiptDate', sortDir: 'desc' });
+    const rows: any[] = page?.rows ?? [];
+    return rows.map((r) => {
+      const receiptType = Number(r.receiptType);
+      const label = getReceiptTypeConfig(receiptType)?.label ?? 'Inventory Receipt';
+      return {
+        id: `inventory-receipt:${r.id}`, type: 'receipt' as const,
+        subtype: r.subcontractTypeName ? `${label} (${r.subcontractTypeName})` : label,
+        recordId: String(r.id), reference: r.receiptNo ?? null, party: r.currentAccountName ?? null,
+        // Receipt Total has no header currency (ForexId is per line), so it is the base currency.
+        date: toDate(r.receiptDate), amount: toNum(r.receiptTotal), currency: null,
+        status: r.isApproved == null ? null : Number(r.isApproved) === 1 || r.isApproved === true ? 'Approved' : 'Unapproved',
+        receiptType, subcontractType: r.subcontractTypeName ?? null,
       };
     });
   }
