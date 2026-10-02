@@ -877,7 +877,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     extra: r,
   });
 
+  // Only the newest load may write rows: on a first Save this grid stays mounted while its id
+  // changes, so the id-change load and commitDrafts()'s own reload overlap — an earlier, staler
+  // response must not land last.
+  const loadSeqRef = useRef(0);
   const load = async (idOverride?: number | null) => {
+    const seq = ++loadSeqRef.current;
     const id = idOverride ?? inventoryReceiptId;
     if (!id) {
       // Don't stomp a Planning-row prefill that the lazy useState initializer (or the safety-net
@@ -895,6 +900,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
       const withUnits = await hydrateUnits(withForex);
       const withColors = await hydrateColors(withUnits);
       const withVariants = await hydrateVariants(withColors);
+      if (seq !== loadSeqRef.current) return;
       setRows(withVariants.length ? withVariants : [emptyLine()]);
       // Prefetch each distinct item's own valid units so the Unit cell's dropdown is ready the
       // moment a saved line is opened for edit — same prefetch purchase-order-line-grid.tsx's
@@ -902,10 +908,11 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
       Array.from(new Set(withUnits.map((r) => r.inventoryId).filter((id): id is number => id != null)))
         .forEach((id) => ensureItemUnitsLoaded(id));
     } catch (e: any) {
+      if (seq !== loadSeqRef.current) return;
       toast.error(e.message || "Failed to load purchase receipt lines");
       setRows([emptyLine()]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
