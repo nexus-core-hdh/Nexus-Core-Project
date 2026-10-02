@@ -1227,8 +1227,21 @@ export interface RecentTransaction {
   subcontractType?: string | null;
 }
 
+// Dashboard order KPIs — Work Orders counted server-side for one date range (dashboard.service.ts).
+export interface OrderKpiCounts { total: number; running: number; completed: number; pending: number; cancelled: number }
+export interface OrderKpisResponse {
+  from: string; to: string; previousFrom: string; previousTo: string;
+  current: OrderKpiCounts;
+  previous: OrderKpiCounts;
+  delayed: number;
+  spark: Record<keyof OrderKpiCounts, number[]>;
+}
+
 export const dashboardApi = {
   recentActivity: (take = 8) => api.get<RecentActivityItem[]>(`/dashboard/recent-activity?take=${take}`),
+  // from/to are exact instants: the caller's local start of the first day / end of the last day.
+  orderKpis: (from: Date, to: Date) =>
+    api.get<OrderKpisResponse>(`/dashboard/order-kpis?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`),
   recentTransactions: (type: RecentTransactionType | 'all' = 'all', take = 8) =>
     api.get<RecentTransaction[]>(`/dashboard/recent-transactions?type=${type}&take=${take}`),
 };

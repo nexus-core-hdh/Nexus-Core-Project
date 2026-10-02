@@ -18,7 +18,8 @@ import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { fetchOrderKpis, type OrderKpi, type OrderKpiKey } from "./order-kpi-data";
+import { useDashboardDateRange } from "./dashboard-date-range";
+import { fetchOrderKpis, toDayBounds, type OrderKpi, type OrderKpiKey } from "./order-kpi-data";
 import { TruncatedTitle } from "./truncated-title";
 
 const ICONS: Record<OrderKpiKey, LucideIcon> = {
@@ -73,10 +74,10 @@ function OrderKpiCard({ kpi }: { kpi: OrderKpi }) {
               )}>
               {trendUp ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />}
               {Math.abs(kpi.trendPct!)}%
-              <span className="text-muted-foreground font-normal">&nbsp;from last month</span>
+              <span className="text-muted-foreground font-normal">&nbsp;vs previous period</span>
             </span>
           ) : (
-            <span className="text-muted-foreground text-[11px]">No prior-month data</span>
+            <span className="text-muted-foreground text-[11px]">No prior-period data</span>
           )}
 
           {!unsupported && sparkData.length > 0 && (
@@ -108,17 +109,24 @@ function OrderKpiCard({ kpi }: { kpi: OrderKpi }) {
 }
 
 export function OrderKpiRow() {
+  const { range } = useDashboardDateRange();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(false);
   const [kpis, setKpis] = React.useState<OrderKpi[]>([]);
 
+  // Whole local days of the selected range; a range being picked (no end yet) counts its one day.
+  const bounds = toDayBounds(range);
+  const fromMs = bounds?.from.getTime();
+  const toMs = bounds?.to.getTime();
+
   React.useEffect(() => {
+    if (fromMs === undefined || toMs === undefined) return; // range cleared — keep the last result
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(false);
       try {
-        const res = await fetchOrderKpis();
+        const res = await fetchOrderKpis(new Date(fromMs), new Date(toMs));
         if (!cancelled) setKpis(res);
       } catch (e: any) {
         if (!cancelled) {
@@ -132,7 +140,7 @@ export function OrderKpiRow() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fromMs, toMs]);
 
   if (loading) {
     return (

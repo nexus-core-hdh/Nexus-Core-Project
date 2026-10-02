@@ -41,18 +41,32 @@ const dateFilterPresets = [
   { name: "This Year", value: "thisYear" }
 ];
 
-export default function CalendarDateRangePicker({
-  className
-}: React.HTMLAttributes<HTMLDivElement>) {
-  const isMobile = useIsMobile();
+/** The picker's default selection: "Last 28 Days" (27 days ago through the end of today). */
+export function defaultDateRange(): DateRange {
   const today = new Date();
-  const twentyEightDaysAgo = startOfDay(subDays(today, 27));
+  return { from: startOfDay(subDays(today, 27)), to: endOfDay(today) };
+}
 
-  // Initialize with "Last 28 days" as default
-  const [date, setDate] = React.useState<DateRange | undefined>({
-    from: twentyEightDaysAgo,
-    to: endOfDay(today)
-  });
+type CalendarDateRangePickerProps = Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> & {
+  /** Controlled selection; when omitted the picker keeps its own state (starting at defaultDateRange()). */
+  value?: DateRange;
+  /** Called with every new selection (preset or calendar). */
+  onChange?: (range: DateRange | undefined) => void;
+};
+
+export default function CalendarDateRangePicker({
+  className,
+  value,
+  onChange
+}: CalendarDateRangePickerProps) {
+  const isMobile = useIsMobile();
+
+  const [internalDate, setInternalDate] = React.useState<DateRange | undefined>(defaultDateRange);
+  const date = value !== undefined ? value : internalDate;
+  const setDate = (range: DateRange | undefined) => {
+    setInternalDate(range);
+    onChange?.(range);
+  };
   const [open, setOpen] = React.useState(false);
   const [currentMonth, setCurrentMonth] = React.useState<Date>(new Date());
 

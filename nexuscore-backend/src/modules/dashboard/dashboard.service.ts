@@ -108,6 +108,31 @@ export interface RecentTransaction {
   subcontractType?: string | null;
 }
 
+// Dashboard order KPIs — Work Orders (MA_WorkOrder, the real orders the Work Orders screen lists:
+// same "IsDeleted" = 0 rule) counted in SQL for the dashboard's selected date range, by their own
+// business date "WorkOrderDate". Status buckets follow the Work Order screen's STATUS_OPTIONS for
+// that smallint (no lookup table exists): 0 Open → pending, 1 Planned / 2 In Production → running,
+// 3 Completed, 4 Cancelled; a row with no Status counts toward total only. The comparison period
+// is the same-length span immediately before `from`; the sparkline splits the selected range into
+// equal slices. Delayed stays a live snapshot (DeliveryDate already past, not Completed/Cancelled,
+// any WorkOrderDate) — an order overdue since before the range is still overdue today.
+export interface OrderKpiCounts { total: number; running: number; completed: number; pending: number; cancelled: number }
+export interface OrderKpis {
+  from: Date; to: Date; previousFrom: Date; previousTo: Date;
+  current: OrderKpiCounts;
+  previous: OrderKpiCounts;
+  delayed: number;
+  spark: Record<keyof OrderKpiCounts, number[]>; // oldest → newest slice of the selected range
+}
+const SPARK_SLICES = 6;
+const emptyCounts = (): OrderKpiCounts => ({ total: 0, running: 0, completed: 0, pending: 0, cancelled: 0 });
+const bucketOf = (status: number | null): Exclude<keyof OrderKpiCounts, 'total'> | null =>
+  status === 0 ? 'pending' : status === 1 || status === 2 ? 'running' : status === 3 ? 'completed' : status === 4 ? 'cancelled' : null;
+// Legacy timestamp-without-time-zone columns hold UTC wall-clock values (how Prisma reads and
+// writes them), so an instant is compared as its UTC wall-clock — independent of the DB session's
+// TimeZone setting.
+const utc = (d: Date) => Prisma.sql`(${d.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
+
 const toNum = (v: any): number | null => (v === null || v === undefined || v === '' ? null : Number(v));
 const toDate = (v: any): Date | null => (v ? new Date(v) : null);
 const titleCase = (s: string) => s.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -120,6 +145,46 @@ export class DashboardService {
     private readonly fiReceipts: FiReceiptService,
     private readonly inventoryReceipts: InventoryReceiptService,
   ) {}
+
+  async orderKpis(from: Date, to: Date): Promise<OrderKpis> {
+    const span = to.getTime() - from.getTime() + 1; // inclusive of `to`
+    const previousTo = new Date(from.getTime() - 1);
+    const previousFrom = new Date(from.getTime() - span);
+    const sliceMs = span / SPARK_SLICES;
+    const [inRange, inPrevious, delayedRows] = await Promise.all([
+      this.prisma.$queryRaw<{ slice: number; status: number | null; n: number }[]>(Prisma.sql`
+        SELECT LEAST(FLOOR(EXTRACT(EPOCH FROM ("WorkOrderDate" - ${utc(from)})) * 1000 / ${sliceMs}), ${SPARK_SLICES - 1})::int AS slice,
+               "Status"::int AS status, COUNT(*)::int AS n
+        FROM "MA_WorkOrder"
+        WHERE "IsDeleted" = 0 AND "WorkOrderDate" >= ${utc(from)} AND "WorkOrderDate" <= ${utc(to)}
+        GROUP BY 1, 2`),
+      this.prisma.$queryRaw<{ status: number | null; n: number }[]>(Prisma.sql`
+        SELECT "Status"::int AS status, COUNT(*)::int AS n
+        FROM "MA_WorkOrder"
+        WHERE "IsDeleted" = 0 AND "WorkOrderDate" >= ${utc(previousFrom)} AND "WorkOrderDate" <= ${utc(previousTo)}
+        GROUP BY 1`),
+      this.prisma.$queryRaw<{ n: number }[]>(Prisma.sql`
+        SELECT COUNT(*)::int AS n
+        FROM "MA_WorkOrder"
+        WHERE "IsDeleted" = 0 AND "DeliveryDate" < ${utc(new Date())} AND ("Status" IS NULL OR "Status" NOT IN (3, 4))`),
+    ]);
+
+    const current = emptyCounts();
+    const spark = Object.fromEntries(Object.keys(current).map((k) => [k, Array(SPARK_SLICES).fill(0)])) as OrderKpis['spark'];
+    for (const r of inRange) {
+      const b = bucketOf(r.status);
+      current.total += r.n;
+      spark.total[r.slice] += r.n;
+      if (b) (current[b] += r.n), (spark[b][r.slice] += r.n);
+    }
+    const previous = emptyCounts();
+    for (const r of inPrevious) {
+      const b = bucketOf(r.status);
+      previous.total += r.n;
+      if (b) previous[b] += r.n;
+    }
+    return { from, to, previousFrom, previousTo, current, previous, delayed: delayedRows[0]?.n ?? 0, spark };
+  }
 
   async recentTransactions(companyId: string, branchId: string | undefined, type: TransactionType | 'all', take: number): Promise<RecentTransaction[]> {
     const types = type === 'all' ? TRANSACTION_TYPES : [type];
