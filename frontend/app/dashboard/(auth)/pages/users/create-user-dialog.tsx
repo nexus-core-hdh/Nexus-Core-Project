@@ -35,7 +35,8 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { companiesApi, branchesApi, usersApi, userRolesApi } from "@/lib/api";
+import { companiesApi, branchesApi, usersApi, rolesApi } from "@/lib/api";
+import { useAsyncOptions, type AsyncOptionsStatus } from "@/hooks/use-async-options";
 
 // Form schema for user creation
 const userFormSchema = z.object({
@@ -62,6 +63,14 @@ interface CreateUserDialogProps {
 
 type InviteMethod = "link" | "email" | "sms" | "manual";
 
+// 14 characters from an unambiguous alphabet, drawn with the browser's CSPRNG.
+function generateTemporaryPassword() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789@#$%";
+  const bytes = new Uint32Array(14);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
+
 // User limits per plan
 const PLAN_USER_LIMITS: Record<string, number | null> = {
   Free: 3,
@@ -79,11 +88,8 @@ export function CreateUserDialog({
   const [inviteLink, setInviteLink] = React.useState("");
   const [linkCopied, setLinkCopied] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [companies, setCompanies] = React.useState<Array<{ id: number; name: string }>>([]);
-  const [branches, setBranches] = React.useState<Array<{ id: number; name: string; companyId: number }>>([]);
+  const [companies, setCompanies] = React.useState<Array<{ id: string; name: string }>>([]);
   const [selectedCompanyId, setSelectedCompanyId] = React.useState<string>("");
-  const [selectedBranchId, setSelectedBranchId] = React.useState<string>("");
-  const [roles, setRoles] = React.useState<Array<{ id: number; name: string; isActive: boolean }>>([]);
   const [userQuota, setUserQuota] = React.useState<{ current: number; max: number | null; plan: string } | null>(null);
 
   const form = useForm<UserFormValues>({
@@ -103,51 +109,23 @@ export function CreateUserDialog({
     },
   });
 
-  // Load logged-in user's company and set defaults when dialog opens
+  // Default the company to the logged-in user's own company when the dialog opens; reset on close.
   React.useEffect(() => {
     if (open) {
-      const loadUserCompany = async () => {
-        try {
-          // Get current user from localStorage
-          const userStr = typeof window !== "undefined" ? localStorage.getItem("user") : null;
-          if (userStr) {
-            const currentUser = JSON.parse(userStr);
-            if (currentUser.companyId) {
-              // Set company as default
-              const companyIdStr = currentUser.companyId.toString();
-              form.setValue("companyId", companyIdStr);
-              setSelectedCompanyId(companyIdStr);
-              
-              // Load branches for the company
-              try {
-                const branchesData = await branchesApi.getBranches();
-                const companyBranches = branchesData.filter((b: any) => b.companyId === currentUser.companyId);
-                setBranches(companyBranches);
-              } catch (error) {
-                console.error("Failed to load branches:", error);
-              }
-
-              // Load roles for the company
-              try {
-                const rolesData = await userRolesApi.getUserRoles(currentUser.companyId, currentUser.branchId || undefined);
-                const activeRoles = rolesData.filter((r: any) => r.isActive !== false);
-                setRoles(activeRoles);
-              } catch (error) {
-                console.error("Failed to load roles:", error);
-              }
-            }
-          }
-        } catch (error) {
-          console.error("Failed to load user company:", error);
+      try {
+        const userStr = typeof window !== "undefined" ? localStorage.getItem("user") : null;
+        const companyId = userStr ? JSON.parse(userStr)?.companyId : null;
+        if (companyId) {
+          form.setValue("companyId", String(companyId));
+          setSelectedCompanyId(String(companyId));
         }
-      };
-      loadUserCompany();
+      } catch (error) {
+        console.error("Failed to read the signed-in user's company:", error);
+      }
     } else {
       form.reset();
       setSelectedCompanyId("");
-      setSelectedBranchId("");
       setInviteLink("");
-      setRoles([]);
     }
   }, [open, form]);
 
@@ -168,7 +146,7 @@ export function CreateUserDialog({
         const company = await companiesApi.getCompany(currentUser.companyId);
         const plan = company.plan || "Free";
         const maxUsers = PLAN_USER_LIMITS[plan] ?? null;
-        const currentUsers = company.users?.length || 0;
+        const currentUsers = company._count?.users ?? company.users?.length ?? 0;
 
         setUserQuota({
           current: currentUsers,
@@ -198,43 +176,34 @@ export function CreateUserDialog({
     }
   }, [open]);
 
-  // Load branches and roles when company/branch is selected
-  React.useEffect(() => {
-    if (selectedCompanyId) {
-      const loadBranches = async () => {
-        try {
-          const branchesData = await branchesApi.getBranches();
-          const companyBranches = branchesData.filter((b: any) => b.companyId === parseInt(selectedCompanyId));
-          setBranches(companyBranches);
-        } catch (error) {
-          console.error("Failed to load branches:", error);
-        }
-      };
-      loadBranches();
-    } else {
-      setBranches([]);
-    }
-  }, [selectedCompanyId]);
+  // Branches of the selected company (ids are strings — compared as such, never parseInt'd).
+  // Changing company reloads them; a slower response for the previous company is discarded.
+  const branchOptions = useAsyncOptions<{ id: string; name: string }>(
+    open && selectedCompanyId ? () => branchesApi.getBranches(selectedCompanyId) : null,
+    [open, selectedCompanyId],
+  );
 
-  // Load roles when company or branch changes
+  // Access-control roles. Roles are ERP-wide (not per company/branch), so they load once per opening.
+  const roleOptions = useAsyncOptions<{ id: string; name: string }>(
+    open ? () => rolesApi.getRoles() : null,
+    [open],
+  );
+
+  // Changing company: drop the previous company's branch so no stale selection survives.
+  const changeCompany = (companyId: string) => {
+    form.setValue("companyId", companyId);
+    form.setValue("branchId", "");
+    setSelectedCompanyId(companyId);
+  };
+
+  // A role that is no longer offered (reload returned a different list) must not stay selected.
   React.useEffect(() => {
-    if (selectedCompanyId) {
-      const loadRoles = async () => {
-        try {
-          const companyId = parseInt(selectedCompanyId);
-          const branchId = selectedBranchId ? parseInt(selectedBranchId) : undefined;
-          const rolesData = await userRolesApi.getUserRoles(companyId, branchId);
-          const activeRoles = rolesData.filter((r: any) => r.isActive !== false);
-          setRoles(activeRoles);
-        } catch (error) {
-          console.error("Failed to load roles:", error);
-        }
-      };
-      loadRoles();
-    } else {
-      setRoles([]);
-    }
-  }, [selectedCompanyId, selectedBranchId]);
+    const role = form.getValues("role");
+    if (role && roleOptions.status !== "loading" && !roleOptions.items.some((r) => r.id === role)) form.setValue("role", "");
+  }, [roleOptions.items, roleOptions.status, form]);
+
+  const loadingRequiredData = activeMethod === "manual" && (roleOptions.isLoading || branchOptions.isLoading);
+  const rolesUnavailable = roleOptions.status === "error" || roleOptions.status === "empty";
 
   // Generate invite link
   const generateInviteLink = () => {
@@ -348,21 +317,26 @@ export function CreateUserDialog({
 
     setIsSubmitting(true);
     try {
+      // Matches the backend's CreateUserDto (unknown fields are rejected). The account gets a
+      // generated temporary password; the backend forces a change on first login.
+      const status = (data.status || "active") as "active" | "inactive" | "pending";
+      const temporaryPassword = generateTemporaryPassword();
       const userData = {
-        name: data.name,
-        email: data.email,
-        country: data.country || "US",
-        role: "employee" as any, // Default enum role
-        roleId: data.role ? parseInt(data.role) : null, // Custom role ID from Role table
-        image: "/images/avatars/default.png",
-        status: (data.status || "active") as any,
-        plan_name: (data.plan_name || "Basic") as any,
-        companyId: data.companyId ? parseInt(data.companyId) : null,
-        branchId: data.branchId ? parseInt(data.branchId) : null,
+        name: data.name.trim(),
+        email: data.email.trim(),
+        password: temporaryPassword,
+        companyId: data.companyId,
+        roleId: data.role,
+        userStatus: status,
+        isActive: status !== "inactive",
+        ...(data.branchId ? { branchId: data.branchId } : {}),
+        ...(data.phone?.trim() ? { phone: data.phone.trim() } : {}),
+        ...(data.department?.trim() ? { department: data.department.trim() } : {}),
       };
-      
-      const response = await usersApi.createUser(userData);
-      
+
+      await usersApi.createUser(userData);
+      const response = { temporaryPassword };
+
       // Reload quota after successful creation
       const userStr = typeof window !== "undefined" ? localStorage.getItem("user") : null;
       if (userStr) {
@@ -372,7 +346,7 @@ export function CreateUserDialog({
             const company = await companiesApi.getCompany(currentUser.companyId);
             const plan = company.plan || "Free";
             const maxUsers = PLAN_USER_LIMITS[plan] ?? null;
-            const currentUsers = company.users?.length || 0;
+            const currentUsers = company._count?.users ?? company.users?.length ?? 0;
             setUserQuota({
               current: currentUsers,
               max: maxUsers,
@@ -523,11 +497,11 @@ export function CreateUserDialog({
                               <FormLabel>Company</FormLabel>
                                 <Select 
                                   onValueChange={(value) => {
-                                    field.onChange(value);
-                                    setSelectedCompanyId(value);
+                                    if (value !== field.value) changeCompany(value);
                                   }} 
                   value={field.value || undefined}
-                  disabled={true}>
+                  // Users are created in the signed-in user's own company (enforced by the backend).
+                  disabled={companies.length <= 1}>
                                   <FormControl>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select company" />
@@ -535,7 +509,7 @@ export function CreateUserDialog({
                                   </FormControl>
                                   <SelectContent>
                                     {companies.map((company) => (
-                                      <SelectItem key={company.id} value={company.id.toString()}>
+                                      <SelectItem key={company.id} value={String(company.id)}>
                                         {company.name}
                                       </SelectItem>
                                     ))}
@@ -556,18 +530,17 @@ export function CreateUserDialog({
                                 <Select 
                     onValueChange={(value) => {
                       field.onChange(value);
-                      setSelectedBranchId(value);
                     }} 
                                   value={field.value || undefined}
-                    disabled={branches.length === 0}>
+                    disabled={branchOptions.status !== "ready"}>
                                   <FormControl>
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder={branches.length === 0 ? "No branches available" : "Select branch (optional)"} />
+                        <SelectValue placeholder={optionsPlaceholder(branchOptions.status, "branches", "Select branch (optional)", "Select a company first")} />
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
-                                    {branches.map((branch) => (
-                                      <SelectItem key={branch.id} value={branch.id.toString()}>
+                                    {branchOptions.items.map((branch) => (
+                                      <SelectItem key={branch.id} value={String(branch.id)}>
                                         {branch.name}
                                       </SelectItem>
                                     ))}
@@ -578,15 +551,13 @@ export function CreateUserDialog({
                                     type="button"
                                     variant="ghost"
                                     size="icon"
-                      onClick={() => {
-                        field.onChange("");
-                        setSelectedBranchId("");
-                      }}
+                      onClick={() => field.onChange("")}
                       className="h-10 w-10 shrink-0">
                                     <X className="h-4 w-4" />
                                   </Button>
                                 )}
                               </div>
+                              <OptionsLoadError status={branchOptions.status} what="branches" onRetry={branchOptions.retry} />
                               <FormMessage />
                             </FormItem>
                           )}
@@ -604,24 +575,21 @@ export function CreateUserDialog({
                           render={({ field }) => (
               <FormItem className="space-y-2">
                               <FormLabel>Role *</FormLabel>
-                <Select onValueChange={field.onChange} value={field.value} disabled={roles.length === 0}>
+                <Select onValueChange={field.onChange} value={field.value || undefined} disabled={roleOptions.status !== "ready"}>
                                 <FormControl>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder={roles.length === 0 ? "Loading roles..." : "Select role"} />
+                      <SelectValue placeholder={optionsPlaceholder(roleOptions.status, "roles", "Select role")} />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                    {roles.length > 0 ? (
-                      roles.map((role) => (
-                        <SelectItem key={role.id} value={role.id.toString()}>
-                          {role.name}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__no_roles__" disabled>No roles available</SelectItem>
-                    )}
+                    {roleOptions.items.map((role) => (
+                      <SelectItem key={role.id} value={String(role.id)}>
+                        {role.name}
+                      </SelectItem>
+                    ))}
                                 </SelectContent>
                               </Select>
+                              <OptionsLoadError status={roleOptions.status} what="roles" onRetry={roleOptions.retry} />
                               <FormMessage />
                             </FormItem>
                           )}
@@ -669,6 +637,10 @@ export function CreateUserDialog({
                         key={item.id}
                                     variant="ghost"
                         onClick={() => setActiveMethod(item.id)}
+                        // Invitations have no backend yet (nothing is emailed/texted, links lead
+                        // nowhere) — only manual creation is real.
+                        disabled={item.id !== "manual"}
+                        title={item.id !== "manual" ? "Not available yet — no invitation service is configured" : undefined}
                         className={cn(
                           "w-full justify-start h-auto py-3 px-3 hover:bg-muted",
                           isActive && "bg-muted hover:bg-muted"
@@ -815,27 +787,6 @@ export function CreateUserDialog({
                           </div>
                         </div>
 
-                        {/* Notes Section */}
-                        <div className="space-y-4">
-                          <h3 className="text-lg font-semibold border-b pb-2">Additional Information</h3>
-                        <FormField
-                          control={form.control}
-                            name="notes"
-                          render={({ field }) => (
-                              <FormItem className="space-y-2">
-                                <FormLabel>Notes</FormLabel>
-                                <FormControl>
-                                  <Textarea
-                                    placeholder="Additional notes about this user..."
-                                    className="min-h-24"
-                                    {...field}
-                                  />
-                                </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
                       </>
                     )}
 
@@ -944,7 +895,16 @@ export function CreateUserDialog({
         </div>
 
         {/* Footer Actions */}
-          <DialogFooter className="px-6 py-4 border-t bg-background flex-shrink-0">
+          <DialogFooter className="px-6 py-4 border-t bg-background flex-shrink-0 sm:items-center">
+          {activeMethod === "manual" && (loadingRequiredData || rolesUnavailable) && (
+            <p className="mr-auto text-xs text-muted-foreground">
+              {loadingRequiredData
+                ? "Create User is available once roles and branches have loaded."
+                : roleOptions.status === "empty"
+                  ? "A role is required, and no roles exist yet. Create one in Roles & Permissions first."
+                  : "A role is required, but roles could not be loaded. Use Try again under Role."}
+            </p>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -957,6 +917,7 @@ export function CreateUserDialog({
               form="create-user-form"
               disabled={
                 isSubmitting ||
+                (activeMethod === "manual" && (loadingRequiredData || rolesUnavailable)) ||
                 !!(
                   activeMethod === "manual" &&
                   userQuota &&
@@ -1039,5 +1000,25 @@ export function CreateUserDialog({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function optionsPlaceholder(status: AsyncOptionsStatus, what: string, ready: string, idle = `No ${what} available`) {
+  switch (status) {
+    case "loading": return `Loading ${what}...`;
+    case "empty": return `No ${what} available`;
+    case "error": return `Unable to load ${what}`;
+    case "idle": return idle;
+    default: return ready;
+  }
+}
+
+function OptionsLoadError({ status, what, onRetry }: { status: AsyncOptionsStatus; what: string; onRetry: () => void }) {
+  if (status !== "error") return null;
+  return (
+    <p className="text-xs text-destructive">
+      Unable to load {what}.{" "}
+      <button type="button" className="font-medium underline underline-offset-2" onClick={onRetry}>Try again.</button>
+    </p>
   );
 }

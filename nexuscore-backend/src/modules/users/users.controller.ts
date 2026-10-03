@@ -3,7 +3,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import { CreateUserDto } from './dto/create-user.dto';
+import { CreateUserWithRoleDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -17,8 +17,8 @@ export class UsersController {
   @Permissions({ module: 'users', action: 'create' })
   @Post()
   @ApiOperation({ summary: 'Create user' })
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  create(@Body() dto: CreateUserWithRoleDto, @CurrentUser() actor: { id: string; companyId: string }) {
+    return this.usersService.create(dto, actor);
   }
 
   @Get()

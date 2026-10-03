@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateUserDto } from './dto/create-user.dto';
+import { CreateUserWithRoleDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 const SAFE_SELECT = {
@@ -31,21 +31,43 @@ export class UsersService {
     if (actorId === targetId) return;
     const targetIsSystem = await this.prisma.userRole.findFirst({ where: { userId: targetId, role: { isSystem: true } }, select: { roleId: true } });
     if (!targetIsSystem) return;
-    const actorCanManageRoles = await this.prisma.rolePermission.findFirst({
+    if (!(await this.canManageRoles(actorId))) throw new ForbiddenException('Only users who can manage roles may change an administrator account');
+  }
+
+  private async canManageRoles(actorId: string) {
+    const grant = await this.prisma.rolePermission.findFirst({
       where: { permission: { module: 'roles', action: 'manage' }, role: { userRoles: { some: { userId: actorId } } } },
       select: { roleId: true },
     });
-    if (!actorCanManageRoles) throw new ForbiddenException('Only users who can manage roles may change an administrator account');
+    return !!grant;
   }
 
-  async create(dto: CreateUserDto) {
-    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
+  /**
+   * Users are created inside the creator's own company, optionally in one of its branches. A role
+   * in the request is granted in the same transaction — and, like POST /users/:id/assign-role,
+   * only when the creator holds roles:manage — so a failed grant never leaves a role-less account.
+   */
+  async create(dto: CreateUserWithRoleDto, actor: { id: string; companyId: string }) {
+    const { roleId, ...data } = dto;
+    if (data.companyId !== actor.companyId) throw new ForbiddenException('Users can only be created in your own company');
+    if (data.branchId) {
+      const branch = await this.prisma.branch.findFirst({ where: { id: data.branchId, companyId: data.companyId }, select: { id: true } });
+      if (!branch) throw new BadRequestException('Branch does not belong to this company');
+    }
+    if (roleId) {
+      if (!(await this.canManageRoles(actor.id))) throw new ForbiddenException('Assigning a role requires the roles:manage permission');
+      const role = await this.prisma.role.findUnique({ where: { id: roleId }, select: { id: true } });
+      if (!role) throw new BadRequestException('Role not found');
+    }
+
+    const exists = await this.prisma.user.findUnique({ where: { email: data.email } });
     if (exists) throw new ConflictException('Email already registered');
 
-    const hash = await bcrypt.hash(dto.password, 10);
-    const user = await this.prisma.user.create({
-      data: { ...dto, password: hash },
-      select: SAFE_SELECT,
+    const hash = await bcrypt.hash(data.password, 10);
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({ data: { ...data, password: hash }, select: { id: true } });
+      if (roleId) await tx.userRole.create({ data: { userId: created.id, roleId, assignedBy: actor.id } });
+      return tx.user.findUniqueOrThrow({ where: { id: created.id }, select: SAFE_SELECT });
     });
     return { data: user, message: 'User created' };
   }
