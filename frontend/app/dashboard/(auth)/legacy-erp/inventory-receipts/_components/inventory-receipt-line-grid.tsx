@@ -22,8 +22,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { Search, Plus, Trash2, ListOrdered, Layers, X } from "lucide-react";
-import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
 import { InventoryCardsLookupDialog } from "@/components/legacy-erp/inventory-cards-lookup-dialog";
+import { WorkOrdersLookupDialog } from "@/components/legacy-erp/work-orders-lookup";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -254,8 +254,8 @@ const COLUMNS: ColumnDef[] = [
   // is. Original "manufacturingOrderNo" key, so saved layouts keep their own setting for it.
   ro("manufacturingOrderNo", "Manufacturing Order", "text", "manufacturingOrderNo"),
   // Work Order — the line's real order link, IM_ReceiptItem.WorkOrderReceiptItemId (see
-  // LineRow.workOrderReceiptItemId), picked through the same "manufacturing-order" LookupDialog
-  // Purchase Order's grid uses. Special-cased in render: shows LineRow.workOrderNo (display text,
+  // LineRow.workOrderReceiptItemId), picked through the Work Orders List popup
+  // (WorkOrdersLookupDialog) Purchase Order's grid also uses. Special-cased in render: shows LineRow.workOrderNo (display text,
   // set on pick/prefill/import or resolved server-side on load), never the raw line id. Keeps the
   // old "workOrderNo" key so saved layouts keep this column's position and width.
   { key: "workOrderNo", label: "Work Order", align: "left", editable: true, kind: "text" },
@@ -1310,7 +1310,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     setCursor({ clientId: row.clientId, col });
     const def = COLUMN_BY_KEY.get(col);
     if (!def?.editable) return;
-    // Work Order is purely a picker (no typable value) — open its LookupDialog, as Purchase
+    // Work Order is purely a picker (no typable value) — open the Work Orders List popup, as Purchase
     // Order's grid does for its own Manufacturing Order cell.
     if (col === "workOrderNo") { setWoLookupClientId(row.clientId); return; }
     // Name (the item) is picked through the Inventory Cards List lookup dialog.
@@ -1319,14 +1319,11 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     setEditing(true);
   }, [readOnly]);
 
-  // Work Order lookup — the existing "manufacturing-order" lookup (MA_WorkOrder, non-deleted,
-  // searched by WorkOrderNo), the same source Purchase Order's grid picks from. The chosen Work
-  // Order is stored as its current live line (resolveWorkOrderLink), through updateRow's normal
-  // commit: persisted at once on a saved receipt, sent with the drafts on first Save otherwise.
-  const fetchWorkOrderOptions = async (search: string) => {
-    const r: any = await legacyErpApi.lookupTable("manufacturing-order", search || undefined);
-    return Array.isArray(r) ? r : [];
-  };
+  // Work Order lookup — the Work Orders List popup (WorkOrdersLookupDialog: MA_WorkOrder via the
+  // Work Orders List screen's own workOrders.list(), non-deleted, searched by Order No), the same
+  // picker Purchase Order's grid uses. The chosen Work Order is stored as its current live line
+  // (resolveWorkOrderLink), through updateRow's normal commit: persisted at once on a saved
+  // receipt, sent with the drafts on first Save otherwise.
   const selectWorkOrder = async (clientId: string, workOrder: { id: number | string; name: string }) => {
     try {
       const link = await resolveWorkOrderLink(Number(workOrder.id), workOrder.name);
@@ -1528,7 +1525,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       );
                     }
 
-                    // WORK ORDER — lookup cell: click / Enter / F2 opens the Work Order LookupDialog
+                    // WORK ORDER — lookup cell: click / Enter / F2 opens the Work Orders List popup
                     // (see activateCell); the × clears the link. Read-only screens show the number only.
                     if (col.key === "workOrderNo") {
                       return (
@@ -1963,14 +1960,10 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         onSelect={(card) => { if (inventoryLookupClientId) selectInventoryCard(inventoryLookupClientId, card); }}
       />
 
-      <LookupDialog
+      <WorkOrdersLookupDialog
         open={woLookupClientId !== null}
         onOpenChange={(open) => !open && setWoLookupClientId(null)}
-        title="Select Manufacturing Order"
-        fetchOptions={fetchWorkOrderOptions}
-        getLabel={(w: any) => w.name}
-        getValue={(w: any) => w.id}
-        onSelect={(w: any) => { if (woLookupClientId) void selectWorkOrder(woLookupClientId, w); }}
+        onSelect={(w: any) => { if (woLookupClientId) void selectWorkOrder(woLookupClientId, { id: w.id, name: w.workOrderNo }); }}
       />
 
       <GenerateSerialCardsDialog

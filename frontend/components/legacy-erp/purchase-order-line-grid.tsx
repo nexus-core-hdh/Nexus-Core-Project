@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
+import { WorkOrdersLookupDialog } from "@/components/legacy-erp/work-orders-lookup";
 import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
@@ -701,12 +702,8 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   };
   const activeServiceRow = rows.find((r) => r.clientId === serviceLookupClientId);
 
-  // Manufacturing Order — same reused LookupDialog architecture, backed by MA_WorkOrder via
-  // the generic lookup-table endpoint's "manufacturing-order" entry.
-  const fetchManufacturingOrderOptions = async (search: string) => {
-    const r: any = await legacyErpApi.lookupTable("manufacturing-order", search || undefined);
-    return Array.isArray(r) ? r : [];
-  };
+  // Manufacturing Order — an MA_WorkOrder header, picked in the Work Orders List popup
+  // (WorkOrdersLookupDialog, the same picker the receipt grid's Work Order cell uses).
   const activeMoRow = rows.find((r) => r.clientId === moLookupClientId);
 
   // Changing Type clears every field that depended on the previous type (Code/Name/Color/
@@ -1597,15 +1594,11 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
         description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
       />
 
-      <LookupDialog
+      <WorkOrdersLookupDialog
         open={moLookupClientId !== null}
         onOpenChange={(open) => !open && setMoLookupClientId(null)}
-        title="Select Manufacturing Order"
-        fetchOptions={fetchManufacturingOrderOptions}
-        getLabel={(w: any) => w.name}
-        getValue={(w: any) => w.id}
         onSelect={(w: any) => {
-          if (activeMoRow) updateRow(activeMoRow.clientId, { manufacturingOrderId: Number(w.id), manufacturingOrderNo: w.name }, true);
+          if (activeMoRow) updateRow(activeMoRow.clientId, { manufacturingOrderId: Number(w.id), manufacturingOrderNo: w.workOrderNo }, true);
         }}
       />
     </div>

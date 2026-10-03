@@ -14,9 +14,14 @@ import {
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
-import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight } from "lucide-react";
-import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight, MousePointerClick, XCircle } from "lucide-react";
+import { WorklistTable } from "@/components/legacy-erp/worklist-table";
+import { workOrderListColumns } from "@/components/legacy-erp/work-orders-lookup";
 import { useRowSelection } from "@/hooks/use-row-selection";
+import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceStore } from "@/lib/store/workspace-store";
+import { useWorkspaceLookupStore } from "@/lib/store/workspace-lookup-store";
+import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
 import { ListPager } from "@/components/legacy-erp/list-pager";
 import type { PageRequest } from "@/lib/nexuscore-api";
@@ -28,8 +33,38 @@ import type { PageRequest } from "@/lib/nexuscore-api";
 // registered for this brand-new screen yet — deferred, see final report.
 type SortKey = "workOrderNo" | "workOrderDate";
 
+const WORK_ORDERS_LIST_PATH = "/dashboard/legacy-erp/work-orders-list";
+
 export default function WorkOrderListPage() {
   const router = useRouter();
+  // Lookup mode (mode=lookup&requestId=&returnTab=) — the full-screen Work Order lookup that
+  // MasterAutocompleteField's F2/search icon opens for masterKey "manufacturing-order" (Cutting
+  // Card, Fabric/Yarn Requirements, Order Manufacturing Entry). Returns the picked Work Order the
+  // same way inventory-cards-list / yarn-cards-list do, as { id, code, name } = its WorkOrderNo,
+  // matching that master key's own lookupTable("manufacturing-order") options.
+  const params = useWorkspaceSearchParams();
+  const mode = params.get("mode") === "lookup" ? "lookup" : "manage";
+  const requestId = params.get("requestId") || undefined;
+  const returnTab = params.get("returnTab") ? decodeURIComponent(params.get("returnTab")!) : undefined;
+  const tabCtx = useWorkspaceTabContext();
+  const closeTab = useWorkspaceStore((s) => s.closeTab);
+  const activateTab = useWorkspaceStore((s) => s.activateTab);
+  const resolveLookup = useWorkspaceLookupStore((s) => s.resolve);
+  const closeSelf = () => {
+    closeTab(tabCtx?.tabKey ?? WORK_ORDERS_LIST_PATH);
+    if (returnTab) {
+      activateTab(returnTab.split("?")[0]);
+      router.replace(returnTab, { scroll: false });
+    } else {
+      router.back();
+    }
+  };
+  const returnAndClose = (row: any) => {
+    if (mode !== "lookup" || !requestId) return;
+    resolveLookup(requestId, { id: row.id, code: row.workOrderNo, name: row.workOrderNo });
+    closeSelf();
+  };
+
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,32 +93,8 @@ export default function WorkOrderListPage() {
   const doSearch = () => load(search.trim() || undefined, paging.firstPage());
   const refresh = () => { setSearch(""); load(undefined, paging.firstPage()); };
 
-  // filterable — shared header-filter implementation (hooks/use-column-filters.ts), picked
-  // per-column by actual data shape: identifying/enum columns get the default checkbox "select"
-  // filter, the real date/numeric columns get a range filter instead.
-  const columns: WorklistTableColumn<any>[] = [
-    {
-      key: "workOrderNo", label: "Order No", sortable: true,
-      render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.workOrderNo}</span>,
-      filterable: true, filterValue: (row) => row.workOrderNo,
-    },
-    {
-      key: "workOrderDate", label: "Date", sortable: true,
-      render: (row: any) => (row.workOrderDate ? new Date(row.workOrderDate).toLocaleDateString() : "—"),
-      filterable: true, filterType: "date", filterValue: (row) => row.workOrderDate,
-    },
-    { key: "uD_Brands", label: "Brand", render: (row: any) => row.uD_Brands || <span className="text-muted-foreground">—</span>, filterable: true, filterValue: (row) => row.uD_Brands },
-    { key: "quantity", label: "Quantity", render: (row: any) => (row.quantity != null ? Number(row.quantity).toLocaleString() : "—"), filterable: true, filterType: "number", filterValue: (row) => row.quantity },
-    {
-      key: "isClosed", label: "Status",
-      render: (row: any) => (
-        <Badge variant={row.isClosed ? "secondary" : "default"} className={row.isClosed ? "text-[11px] font-normal" : "text-[11px] font-normal bg-emerald-600 hover:bg-emerald-600/90 dark:bg-emerald-500"}>
-          {row.isClosed ? "Closed" : "Open"}
-        </Badge>
-      ),
-      filterable: true, filterValue: (row) => (row.isClosed ? "Closed" : "Open"),
-    },
-  ];
+  // Shared with the Work Orders List lookup popup (components/legacy-erp/work-orders-lookup.tsx).
+  const columns = workOrderListColumns;
 
   const getRowActions = (row: any): RowAction[] => [
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
@@ -134,7 +145,9 @@ export default function WorkOrderListPage() {
           <div>
             <h1 className="text-[22px] font-semibold leading-tight tracking-tight">Work Orders</h1>
             <div className="mt-0.5 flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">Manufacturing work orders</p>
+              <p className="text-xs text-muted-foreground">
+                {mode === "lookup" ? "Double-click or click Select to choose a work order" : "Manufacturing work orders"}
+              </p>
               {!loading && (
                 <Badge variant="secondary" className="h-5 text-[11px] font-normal">
                   {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
@@ -163,17 +176,19 @@ export default function WorkOrderListPage() {
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/fabric-planning")}>
-            <ClipboardList className="h-3.5 w-3.5 mr-2" />Fabric Planning
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/trim-planning")}>
-            <ClipboardList className="h-3.5 w-3.5 mr-2" />Trim Planning
-          </Button>
-          <Button size="sm" onClick={createNew}>
-            <Plus className="h-3.5 w-3.5 mr-2" />Create New
-          </Button>
-        </div>
+        {mode !== "lookup" && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/fabric-planning")}>
+              <ClipboardList className="h-3.5 w-3.5 mr-2" />Fabric Planning
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => navigateOrOpenTab(router, "/dashboard/legacy-erp/trim-planning")}>
+              <ClipboardList className="h-3.5 w-3.5 mr-2" />Trim Planning
+            </Button>
+            <Button size="sm" onClick={createNew}>
+              <Plus className="h-3.5 w-3.5 mr-2" />Create New
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-xl border shadow-sm">
@@ -186,14 +201,20 @@ export default function WorkOrderListPage() {
           sortKey={paging.sortBy}
           sortDir={paging.sortDir}
           onSort={(key) => paging.toggleSort(key)}
-          onRowDoubleClick={(row) => view(row.id)}
+          onRowDoubleClick={(row) => (mode === "lookup" ? returnAndClose(row) : view(row.id))}
           selectedIds={selectedIds}
           onRowClick={selectRow}
           onRowContextMenu={handleRowContextMenu}
           renderRowActions={(row) => (
-            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+            mode === "lookup" ? (
+              <Button size="sm" className="h-8" onClick={(e) => { e.stopPropagation(); returnAndClose(row); }}>
+                <MousePointerClick className="h-3.5 w-3.5 mr-1.5" />Select
+              </Button>
+            ) : (
+              <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+            )
           )}
-          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          wrapRow={(row, el) => (mode === "lookup" ? el : <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>)}
           emptyState={
             <Empty>
               <EmptyHeader>
@@ -203,14 +224,22 @@ export default function WorkOrderListPage() {
                   {searched ? "You can create a new Work Order." : 'Click "Create New" to add your first Work Order.'}
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent>
-                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
-              </EmptyContent>
+              {mode !== "lookup" && (
+                <EmptyContent>
+                  <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+                </EmptyContent>
+              )}
             </Empty>
           }
         />
         <ListPager paging={paging} loading={loading} />
       </div>
+
+      {mode === "lookup" && (
+        <div className="flex items-center justify-end gap-2 border-t pt-4">
+          <Button variant="outline" size="sm" onClick={closeSelf}><XCircle className="h-3.5 w-3.5 mr-2" />Close</Button>
+        </div>
+      )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

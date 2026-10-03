@@ -1,6 +1,6 @@
 "use client";
 
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ListLookupDialogShell } from "@/components/legacy-erp/entity-list-lookup-dialog";
 import { InventoryCardsListView } from "@/components/legacy-erp/inventory-cards-list-view";
 
 interface InventoryCardsLookupDialogProps {
@@ -13,31 +13,26 @@ interface InventoryCardsLookupDialogProps {
   sourceTypeFilter?: string;
 }
 
-// The Inventory Card List as a modal lookup — the very same InventoryCardsListView the Workspace
+// The Inventory Cards List as a modal lookup — the very same InventoryCardsListView the Workspace
 // screen renders (same API, search, server paging, columns, worklists, keyboard: ↑/↓ highlight,
-// Enter / double-click / Select picks), floating above the calling screen so a grid cell's lookup
-// is never clipped by its grid. Mounted only while open, so every opening starts from a fresh
-// list with an empty search (no stale results from a previous row).
+// Enter / double-click / Select picks), inside the shared ListLookupDialogShell every "[Entity]
+// List" lookup popup uses (same size, header and body as e.g. the Work Orders List), floating
+// above the calling screen so a grid cell's lookup is never clipped by its grid.
 export function InventoryCardsLookupDialog({ open, onOpenChange, onSelect, sourceTypeFilter }: InventoryCardsLookupDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] w-[min(1100px,calc(100vw-2rem))] max-w-none flex-col gap-0 p-0 sm:max-w-none">
-        <DialogHeader className="shrink-0 border-b border-border px-5 py-3">
-          <DialogTitle>Inventory Cards List</DialogTitle>
-          <DialogDescription>Search by code or name, then double-click, press Enter or click Select.</DialogDescription>
-        </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {open && (
-            <InventoryCardsListView
-              variant="dialog"
-              mode="lookup"
-              sourceTypeFilter={sourceTypeFilter}
-              onSelect={(row) => { onSelect(row); onOpenChange(false); }}
-              onClose={() => onOpenChange(false)}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+    <ListLookupDialogShell
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Inventory Cards List"
+      description="Search by code or name, then double-click, press Enter or click Select."
+    >
+      <InventoryCardsListView
+        variant="dialog"
+        mode="lookup"
+        sourceTypeFilter={sourceTypeFilter}
+        onSelect={(row) => { onSelect(row); onOpenChange(false); }}
+        onClose={() => onOpenChange(false)}
+      />
+    </ListLookupDialogShell>
   );
 }
