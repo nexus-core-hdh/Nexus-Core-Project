@@ -7,7 +7,6 @@ import { loadSavedInventoryItems } from "@/lib/legacy-erp/saved-line-refs";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
-import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
@@ -24,6 +23,7 @@ import {
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { Search, Plus, Trash2, ListOrdered, Layers, X } from "lucide-react";
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
+import { InventoryCardsLookupDialog } from "@/components/legacy-erp/inventory-cards-lookup-dialog";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -329,8 +329,6 @@ const FIRST_COL_BORDER = "border-l border-border";
 const EDITOR_CONTROL = "h-full! w-full min-w-0 rounded-none border-0 bg-background px-3.5 text-[13px] font-medium shadow-none focus-visible:ring-0";
 const EDITOR_WRAP = "flex h-12 items-stretch";
 const DEL_W = 44;
-
-const INVENTORY_CARDS_LIST_PATH = "/dashboard/legacy-erp/inventory-cards-list";
 
 // Same "no lookup/enum table for item type" situation as Purchase Order's own grid — Inventory
 // only, matching the reference screenshot (no Service/Fixed Asset rows shown there).
@@ -760,17 +758,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     plmApi.colors.list().then((r: any) => setColorOptions(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
 
-  // IM_Item.InventoryCode/InventoryName via the same inventoryCards.list() aggregation Code's
-  // lookup dialog and hydrateCodesNames already read from — no separate Inventory Card table,
-  // no duplicated data. Every row is Type=Inventory on this grid (no Fixed Asset/Service split
-  // here, unlike Purchase Order), so unlike PO's own inventoryCodeOptions this isn't filtered
-  // by sourceType.
-  const inventoryCodeOptions = useMemo(
-    () => inventoryOptions.map((o) => ({ id: String(o.id), code: o.inventoryCode, name: o.inventoryName })),
-    [inventoryOptions],
-  );
-  // Resolves a picked suggestion's id back to the full record (stockOnHand/lastPurchasePrice
-  // etc.) — same purpose as purchase-order-line-grid.tsx's own inventoryById.
+  // Resolves an inventory id back to its Inventory Card List record (sourceType etc.) — same
+  // purpose as purchase-order-line-grid.tsx's own inventoryById.
   const inventoryById = useMemo(() => new Map(inventoryOptions.map((o) => [String(o.id), o])), [inventoryOptions]);
 
   // Right-click menu — "Generate Serial Card" (Fabric receipt lines only; see
@@ -1235,21 +1224,17 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     fetchItemVariantOptions(itemPatch.inventoryId);
   }, [updateRow, fetchItemUnits, fetchItemVariantOptions]);
 
-  const { openFullScreen: openInventoryLookup } = useMasterLookupField(
-    "inventory",
-    (selection) => {
-      if (!pendingClientIdRef.current) return;
-      selectItemOnRow(pendingClientIdRef.current, {
-        inventoryId: Number(selection.id),
-        code: selection.code,
-        name: selection.name,
-      });
-      pendingClientIdRef.current = null;
-    },
-    INVENTORY_CARDS_LIST_PATH,
-  );
-  const pendingClientIdRef = useMemo(() => ({ current: null as string | null }), []);
-  const openLookupForRow = (clientId: string) => { pendingClientIdRef.current = clientId; openInventoryLookup(); };
+  // Item lookup — the Inventory Card List (same view, API, search, paging and worklists as its
+  // Workspace screen) in a modal, so it floats above this grid instead of being a cell-sized
+  // dropdown. The picked row feeds the same selectItemOnRow every item pick goes through.
+  const [inventoryLookupClientId, setInventoryLookupClientId] = useState<string | null>(null);
+  const selectInventoryCard = (clientId: string, card: any) => {
+    selectItemOnRow(clientId, {
+      inventoryId: Number(card.id), code: card.inventoryCode ?? "", name: card.inventoryName ?? "",
+      stockOnHand: typeof card.stockOnHand === "number" ? card.stockOnHand : null,
+      lastPurchasePrice: typeof card.lastPurchasePrice === "number" ? card.lastPurchasePrice : null,
+    });
+  };
 
   const visibleRows = useMemo(
     () => rows.filter((r) => isBlankLine(r) || !searchTerm.trim() ||
@@ -1328,6 +1313,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // Work Order is purely a picker (no typable value) — open its LookupDialog, as Purchase
     // Order's grid does for its own Manufacturing Order cell.
     if (col === "workOrderNo") { setWoLookupClientId(row.clientId); return; }
+    // Name (the item) is picked through the Inventory Cards List lookup dialog.
+    if (col === "name") { setInventoryLookupClientId(row.clientId); return; }
     preEditSnapshotRef.current = row;
     setEditing(true);
   }, [readOnly]);
@@ -1576,51 +1563,19 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       );
                     }
 
-                    // NAME — smart-search autocomplete relocated here from Code, per spec:
-                    // search/select by Name, Code auto-fills read-only. Same shared
-                    // AutocompleteTextCell + Inventory Card List datasource Code used to search
-                    // (client-side CONTAINS match over inventoryCardsList(), now matching Name
-                    // text too — see autocomplete-text-cell.tsx). Selecting a suggestion
-                    // resolves inventoryId + code + name + stockOnHand + lastPurchasePrice
-                    // together; free-typed text with nothing picked just saves the typed Name
-                    // and leaves inventoryId/Code untouched.
+                    // NAME — the item: click / Enter / F2 opens the Inventory Cards List lookup
+                    // dialog (see activateCell); picking a card fills inventoryId + Code + Name
+                    // (+ Stock On Hand / Last Purchase Price) through selectItemOnRow. Code stays
+                    // read-only, auto-filled from the pick.
                     if (col.key === "name") {
                       return (
                         <TableCell key={col.key} className={cellCls(r.clientId, "name", firstBorder)}>
-                          {isActive(r.clientId, "name") && editing ? (
-                            <div className={cn(EDITOR_WRAP, "gap-0")}>
-                              <AutocompleteTextCell
-                                autoFocus
-                                value={r.name}
-                                options={inventoryCodeOptions}
-                                disabled={readOnly}
-                                showDropdownIcon
-                                // Wider/taller than the cell so "Code - Name" items stay readable —
-                                // same sizing as the Costing Sheet's own item lookup.
-                                popoverClassName="min-w-[460px] max-h-72"
-                                onChange={(v) => updateRow(r.clientId, { name: v })}
-                                onCancel={() => cancelEdit(r.clientId)}
-                                onDoubleClick={() => !readOnly && openLookupForRow(r.clientId)}
-                                onSelectOption={(o) => {
-                                  const match = inventoryById.get(o.id);
-                                  setEditing(false);
-                                  selectItemOnRow(r.clientId, {
-                                    inventoryId: Number(o.id), code: o.code ?? "", name: o.name ?? "",
-                                    stockOnHand: typeof match?.stockOnHand === "number" ? match.stockOnHand : null,
-                                    lastPurchasePrice: typeof match?.lastPurchasePrice === "number" ? match.lastPurchasePrice : null,
-                                  });
-                                }}
-                                onCommit={(finalValue) => {
-                                  setEditing(false);
-                                  updateRow(r.clientId, { name: finalValue }, true);
-                                }}
-                              />
-                              <Button variant="ghost" size="icon" className="h-full w-8 shrink-0 rounded-none border-l border-border"
-                                title="Search Inventory" onMouseDown={(e) => e.preventDefault()} onClick={() => openLookupForRow(r.clientId)}>
-                                <Search className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          ) : <div {...staticCellProps(r, "name", r.name || "—", "left", !r.name)} />}
+                          <div
+                            {...staticCellProps(r, "name", r.name || "", "left", !r.name)}
+                            title={r.name || (readOnly ? undefined : "Select Inventory")}>
+                            {!readOnly && <Search className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                            <span data-col="name" className="min-w-0 flex-1 truncate">{r.name || (readOnly ? "—" : "")}</span>
+                          </div>
                         </TableCell>
                       );
                     }
@@ -2000,6 +1955,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         fixedColumns={FIXED_COLS}
         columns={gridColumnDefs}
         description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
+      />
+
+      <InventoryCardsLookupDialog
+        open={inventoryLookupClientId !== null}
+        onOpenChange={(open) => !open && setInventoryLookupClientId(null)}
+        onSelect={(card) => { if (inventoryLookupClientId) selectInventoryCard(inventoryLookupClientId, card); }}
       />
 
       <LookupDialog
