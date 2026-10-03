@@ -124,6 +124,14 @@ const entities = (path: string, q?: Record<string, string>) => {
 
 export const entitiesApi = {
   getCustomFields: (entity: string) => api.get(entities('/custom-fields', { entity })),
+  // Administration > User Defined Fields — every field (active or not) with its value count, and the
+  // definition writes (settings:create/update/delete; scope/immutability/delete-safety enforced
+  // server-side by custom-fields.service.ts).
+  listCustomFieldsAdmin: (entity?: string) => api.get(entities('/custom-fields', entity ? { entity, admin: '1' } : { admin: '1' })),
+  createCustomField: (d: any) => api.post(entities('/custom-fields'), d),
+  updateCustomField: (id: string, d: any) => api.patch(entities(`/custom-fields/${id}`), d),
+  reorderCustomFields: (entity: string, ids: string[]) => api.post(entities('/custom-fields/reorder'), { entity, ids }),
+  deleteCustomField: (id: string) => api.delete(entities(`/custom-fields/${id}`)),
   getCustomFieldValues: (entity: string, entityId: string) => api.get(entities('/custom-field-values', { entity, entityId })),
   upsertCustomFieldValues: (entity: string, entityId: string, values: any[]) =>
     api.put(entities('/custom-field-values'), { entity, entityId, values }),

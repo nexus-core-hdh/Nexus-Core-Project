@@ -7,10 +7,10 @@ import { IdCard, BarChart3, FileText, FileCheck } from "lucide-react";
 const options = [
   {
     id: "custom-fields",
-    title: "Custom Fields",
+    title: "User Defined Fields",
     icon: IdCard,
-    href: "/dashboard/pages/custom-fields",
-    description: "Create your custom fields for any CRM entity. Select the fields to include in analytical reports."
+    href: "/dashboard/administration/user-defined-fields",
+    description: "Create and manage custom fields for ERP screens and business entities (Administration > User Defined Fields)."
   },
   {
     id: "analytical-reports",

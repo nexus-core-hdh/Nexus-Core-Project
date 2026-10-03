@@ -7,6 +7,7 @@ import type { WorkspaceModule } from "./registry";
 
 export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/dashboard/administration/log-tracking", Component: dynamic(() => import("@/app/dashboard/(auth)/administration/log-tracking/page"), { ssr: false }) },
+  { path: "/dashboard/administration/user-defined-fields", Component: dynamic(() => import("@/app/dashboard/(auth)/administration/user-defined-fields/page"), { ssr: false }) },
   { path: "/dashboard/apps/chat", Component: dynamic(() => import("@/app/dashboard/(auth)/apps/chat/page"), { ssr: false }) },
   { path: "/dashboard/apps/mail", Component: dynamic(() => import("@/app/dashboard/(auth)/apps/mail/page"), { ssr: false }) },
   { path: "/dashboard/apps/pos-system", Component: dynamic(() => import("@/app/dashboard/(auth)/apps/pos-system/page"), { ssr: false }) },

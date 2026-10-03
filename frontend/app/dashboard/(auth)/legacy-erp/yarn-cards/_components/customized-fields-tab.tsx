@@ -34,6 +34,9 @@ export function CustomizedFieldsTab({ itemId, readOnly = false }: { itemId: stri
       setFields(defList);
       const valMap: Record<string, any> = {};
       (Array.isArray(vals) ? vals : []).forEach((v: any) => { valMap[v.customFieldId] = v.value; });
+      // Default Value (Administration > User Defined Fields): shown for a field this record has no
+      // saved value for yet, and stored by the usual Save.
+      defList.forEach((f: any) => { if (!(f.id in valMap) && f.defaultValue != null) valMap[f.id] = f.defaultValue; });
       setValues(valMap);
     } catch (e: any) {
       toast.error(e.message || "Failed to load custom fields");

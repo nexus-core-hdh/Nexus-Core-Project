@@ -1,14 +1,18 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { PermissionModule } from '../../common/decorators/permissions.decorator';
+import { PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { EntitiesService } from './entities.service';
+import { CustomFieldsService } from './custom-fields.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Entities')
 @PermissionModule('crm', 'CRM')
 @Controller('entities')
 export class EntitiesController {
-  constructor(private readonly entitiesService: EntitiesService) {}
+  constructor(
+    private readonly entitiesService: EntitiesService,
+    private readonly customFields: CustomFieldsService,
+  ) {}
 
   // ── Custom Entity Pages ────────────────────────────────────────────────────
 
@@ -134,28 +138,44 @@ export class EntitiesController {
 
   // ── Custom Fields ──────────────────────────────────────────────────────────
 
+  // Definitions (Administration > User Defined Fields) — administration permissions live in the
+  // existing "settings" module (explicit @Permissions wins over this controller's "crm" module);
+  // all scoping/immutability/delete-safety rules are enforced in CustomFieldsService.
+  // GET stays open to any signed-in user: the screens' Customized Fields tabs read it.
   @Get('custom-fields')
-  @ApiOperation({ summary: 'Get custom fields' })
-  getCustomFields(@CurrentUser() user: any, @Query('entity') entity?: string) {
-    return this.entitiesService.getCustomFields(user.companyId, user.branchId, entity);
+  @ApiOperation({ summary: 'Get custom fields (runtime: active only; admin=1: all, with value counts)' })
+  getCustomFields(@CurrentUser() user: any, @Query('entity') entity?: string, @Query('admin') admin?: string) {
+    return admin === '1' || admin === 'true'
+      ? this.customFields.listForAdmin(user, entity)
+      : this.customFields.listForRuntime(user, entity);
   }
 
   @Post('custom-fields')
+  @Permissions({ module: 'settings', action: 'create' })
   @ApiOperation({ summary: 'Create custom field' })
   createCustomField(@Body() dto: any, @CurrentUser() user: any) {
-    return this.entitiesService.createCustomField(dto, user.companyId, user.branchId);
+    return this.customFields.create(user, dto);
+  }
+
+  @Post('custom-fields/reorder')
+  @Permissions({ module: 'settings', action: 'update' })
+  @ApiOperation({ summary: 'Reorder an entity\'s custom fields' })
+  reorderCustomFields(@Body() body: { entity: string; ids: string[] }, @CurrentUser() user: any) {
+    return this.customFields.reorder(user, body?.entity, body?.ids);
   }
 
   @Patch('custom-fields/:id')
+  @Permissions({ module: 'settings', action: 'update' })
   @ApiOperation({ summary: 'Update custom field' })
   updateCustomField(@Param('id') id: string, @Body() dto: any, @CurrentUser() user: any) {
-    return this.entitiesService.updateCustomField(id, dto, user.companyId);
+    return this.customFields.update(user, id, dto);
   }
 
   @Delete('custom-fields/:id')
-  @ApiOperation({ summary: 'Delete custom field' })
+  @Permissions({ module: 'settings', action: 'delete' })
+  @ApiOperation({ summary: 'Delete custom field (refused once it holds values — deactivate instead)' })
   deleteCustomField(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.entitiesService.deleteCustomField(id, user.companyId);
+    return this.customFields.remove(user, id);
   }
 
   // ── Custom Field Values ──────────────────────────────────────────────────────
@@ -163,13 +183,13 @@ export class EntitiesController {
   @Get('custom-field-values')
   @ApiOperation({ summary: 'Get custom field values for an entity record' })
   getCustomFieldValues(@Query('entity') entity: string, @Query('entityId') entityId: string) {
-    return this.entitiesService.getCustomFieldValues(entity, entityId);
+    return this.customFields.getValues(entity, entityId);
   }
 
   @Put('custom-field-values')
   @ApiOperation({ summary: 'Replace custom field values for an entity record' })
   upsertCustomFieldValues(@Body() body: { entity: string; entityId: string; values: any[] }) {
-    return this.entitiesService.upsertCustomFieldValues(body.entity, body.entityId, body.values);
+    return this.customFields.upsertValues(body.entity, body.entityId, body.values);
   }
 
   // ── Form Sections ──────────────────────────────────────────────────────────

@@ -1100,12 +1100,31 @@ model Security {
 
 model CustomField {
   id               String   @id @default(uuid())
+  // User Defined Fields administration (Administration > User Defined Fields):
+  //  - code: stable field code (e.g. UD_FabricType), set on creation and never changed after.
+  //  - name: the caption shown on screens; `type` stays the runtime renderer's own type
+  //    (text | textarea | select | checkbox | date | number | email) and `options` stays the
+  //    runtime's list of option labels, so the existing Customized Fields tabs keep working.
+  //  - controlType: the administration screen's control choice behind `type`.
+  //  - config: administration-only option metadata ({ options: [{ code, label, isActive }] });
+  //    the runtime reads `options` (active labels), never config.
+  //  - Scope: companyId NULL + branchId NULL = global, companyId only = company, both = branch.
+  //    Codes are unique per entity + exact scope (NULLS NOT DISTINCT index, see migration
+  //    20261003000000_add_custom_field_administration); overlapping scopes are checked by
+  //    custom-fields.service.ts.
+  code             String
   name             String
+  description      String?
   type             String
+  controlType      String?
   entity           String
   required         Boolean  @default(false)
+  isActive         Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  defaultValue     Json?
   includeInReports Boolean  @default(false)
   options          Json?
+  config           Json?
   companyId        String?
   branchId         String?
   company          Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -1115,9 +1134,11 @@ model CustomField {
 
   values CustomFieldValue[]
 
+  @@unique([entity, code, companyId, branchId])
   @@index([companyId])
   @@index([branchId])
   @@index([entity])
+  @@index([entity, sortOrder])
 }
 
 model CustomFieldValue {
