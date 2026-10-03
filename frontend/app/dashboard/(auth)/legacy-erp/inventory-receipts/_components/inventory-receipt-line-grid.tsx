@@ -69,7 +69,7 @@ import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-seri
 
 type ColKey =
   | "itemOrderNo" | "type" | "itemId" | "code" | "name" | "color" | "stockOnHand" | "lastPurchasePrice" | "specialCode" | "explanation"
-  | "legacyManufacturingOrderNo" | "partyNo" | "accountCode" | "accountName" | "hsCode" | "hsDescription"
+  | "manufacturingOrderNo" | "partyNo" | "accountCode" | "accountName" | "hsCode" | "hsDescription"
   | "c" | "lotCode" | "assortmentExplanation" | "lotQuantity"
   | "variant1" | "variant2" | "variant3" | "variant4" | "variant5"
   | "variant1Name" | "variant2Name" | "variant3Name" | "variant4Name" | "variant5Name"
@@ -139,11 +139,6 @@ const COLUMNS: ColumnDef[] = [
   ro("lastPurchasePrice", "Last Purchase Price", "number"),
   { key: "specialCode", label: "Special Code", align: "left", editable: true, kind: "text" },
   { key: "explanation", label: "Explanation", align: "left", editable: true, kind: "text" },
-  // Legacy free-text IM_ReceiptItem.ManufacturingOrderNo (no FK, never written by this screen).
-  // Hidden by default; the Work Order column below is the line's real order link. The "legacy"
-  // key (not the old "manufacturingOrderNo") makes it a new column to saved layouts, so
-  // LEGACY_HIDDEN_COLS hides it for existing users too; it stays available in Manage Columns.
-  ro("legacyManufacturingOrderNo", "Manufacturing Order No", "text", "manufacturingOrderNo"),
   ro("partyNo", "Party (Lot No)", "text", "partyNo"),
   ro("accountCode", "Account Code", "text"),
   ro("accountName", "Account Name", "text"),
@@ -250,8 +245,14 @@ const COLUMNS: ColumnDef[] = [
   ro("packageNo", "Package No", "number", "packageNo"),
   ro("packageCode", "Package Code", "text"),
   ro("manProductCode", "Man.Product Code", "text"),
-  // No IM_ReceiptItem column backs this (always "—"); hidden by default, same as above.
-  ro("legacyManufacturingOrder", "Manufacturing Order", "text"),
+  // No IM_ReceiptItem column backs this (always "—"); hidden by default (LEGACY_HIDDEN_COLS), and
+  // labelled apart from the real Manufacturing Order column below.
+  ro("legacyManufacturingOrder", "Manufacturing Order (no data)", "text"),
+  // Manufacturing Order — the legacy free-text reference IM_ReceiptItem.ManufacturingOrderNo,
+  // shown read-only exactly as stored. Independent of the Work Order link next to it: this screen
+  // never sends it (buildDto has no such field), so picking or clearing a Work Order leaves it as
+  // is. Original "manufacturingOrderNo" key, so saved layouts keep their own setting for it.
+  ro("manufacturingOrderNo", "Manufacturing Order", "text", "manufacturingOrderNo"),
   // Work Order — the line's real order link, IM_ReceiptItem.WorkOrderReceiptItemId (see
   // LineRow.workOrderReceiptItemId), picked through the same "manufacturing-order" LookupDialog
   // Purchase Order's grid uses. Special-cased in render: shows LineRow.workOrderNo (display text,
@@ -281,9 +282,9 @@ const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 // FIXED_COLS (purchase-order-line-grid.tsx), applied here to the same three columns.
 const FIXED_COLS: ColKey[] = ["type", "code", "name"];
 
-// Superseded by the Work Order lookup column: hidden by default, for existing saved layouts too
+// The data-less Manufacturing Order placeholder: hidden by default, for existing saved layouts too
 // (useGridColumns hideNewDefaultHiddenColumns), still available through Manage Columns.
-const LEGACY_HIDDEN_COLS: ColKey[] = ["legacyManufacturingOrderNo", "legacyManufacturingOrder"];
+const LEGACY_HIDDEN_COLS: ColKey[] = ["legacyManufacturingOrder"];
 
 // Column resize/reorder/hide/persist mechanics now live in the shared useGridColumns hook
 // (hooks/use-grid-columns.ts). storageKey "irLineGrid" below reproduces the exact
