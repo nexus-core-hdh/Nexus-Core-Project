@@ -15,8 +15,13 @@ import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight, MousePointerClick, XCircle } from "lucide-react";
-import { WorklistTable } from "@/components/legacy-erp/worklist-table";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 import { workOrderListColumns } from "@/components/legacy-erp/work-orders-lookup";
+import { formatCell } from "@/lib/legacy-erp/humanize";
+import { type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
+import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
+import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { useRowSelection } from "@/hooks/use-row-selection";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
@@ -93,8 +98,27 @@ export default function WorkOrderListPage() {
   const doSearch = () => load(search.trim() || undefined, paging.firstPage());
   const refresh = () => { setSearch(""); load(undefined, paging.firstPage()); };
 
-  // Shared with the Work Orders List lookup popup (components/legacy-erp/work-orders-lookup.tsx).
-  const columns = workOrderListColumns;
+  // Customize Worklist — the shared worklist mechanism (useWorklist + WorklistBar +
+  // WorklistDesignModal), same wiring as Inventory Card List: this screen's list() rows already
+  // carry every MA_WorkOrder header column the "work-order" field source offers
+  // (worklist-fields.service.ts), so a custom worklist is a client-side projection/reorder of the
+  // loaded rows — no resolve() round-trip, no refetch on switch/save. Worklist field keys are the
+  // raw PascalCase column names ("work-order:WorkOrderNo"); list() rows use their camelCase form.
+  const wl = useWorklist({ storageKey: "workOrdersListWorklists" });
+  const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+  const rowKeyOf = (fieldKey: string) => {
+    const raw = fieldKey.slice(fieldKey.indexOf(":") + 1);
+    return raw.charAt(0).toLowerCase() + raw.slice(1);
+  };
+  // Standard = the shared Work Order columns (also used by the Work Orders List lookup popup,
+  // components/legacy-erp/work-orders-lookup.tsx).
+  const columns: WorklistTableColumn<any>[] = useMemo(
+    () => (activeColumns
+      ? activeColumns.map((c) => ({ key: c, label: wl.columnLabel(c), render: (row: any) => formatCell(row[rowKeyOf(c)]) }))
+      : workOrderListColumns),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeColumns],
+  );
 
   const getRowActions = (row: any): RowAction[] => [
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
@@ -234,6 +258,24 @@ export default function WorkOrderListPage() {
         />
         <ListPager paging={paging} loading={loading} />
       </div>
+
+      <WorklistBar
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        onActiveWorklistChange={wl.setActiveWorklistId}
+        onDesignOpen={() => wl.setDesignOpen(true)}
+      />
+
+      <WorklistDesignModal
+        open={wl.designOpen}
+        onOpenChange={wl.setDesignOpen}
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        activeTableSource="work-order"
+        primaryScope="work-order-list"
+        gridLabel="the Work Orders List grid"
+        onSave={async (next: Worklist[]) => { await wl.saveWorklists(next); }}
+      />
 
       {mode === "lookup" && (
         <div className="flex items-center justify-end gap-2 border-t pt-4">
