@@ -29,6 +29,7 @@ import type { ImportedPendingLine } from "./inventory-receipt-line-grid";
 interface PendingLine {
   orderReceiptItemId: number; inventoryId: number; code: string; name: string;
   explanation: string | null; unitId: number | null; unitPrice: number | null; colorCardId: string | null;
+  manufacturingOrderId: number | null; // the order line's own Work Order (MA_WorkOrder), if any
   orderQty: number; receivedQty: number; pendingQty: number;
   // Base Unit + Unit Conversion (spec Section 9) — additive display fields from
   // purchase-order.service.ts's listPending(). `pendingQty`/`unitId` above stay expressed in the
@@ -155,6 +156,7 @@ export function PendingOrdersDialog({
           unitId: l.unitId, unit: "", unitPrice: l.unitPrice,
           orderReceiptItemId: l.orderReceiptItemId, poReceiptNo: po.receiptNo,
           colorCardId: l.colorCardId,
+          manufacturingOrderId: l.manufacturingOrderId != null ? Number(l.manufacturingOrderId) : null,
           variants: l.variants.map((v) => ({
             inventoryVariantId: v.inventoryVariantId, quantity: v.quantity, netUnitPrice: v.netUnitPrice,
             orderReceiptItemVariantId: v.id,
