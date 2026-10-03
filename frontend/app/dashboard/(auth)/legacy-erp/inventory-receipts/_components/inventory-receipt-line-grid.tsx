@@ -293,9 +293,13 @@ const LEGACY_HIDDEN_COLS: ColKey[] = ["legacyManufacturingOrder"];
 
 const DEFAULT_WIDTHS: Record<ColKey, number> = Object.fromEntries(
   COLUMNS.map((c) => {
+    // Shared columns follow purchase-order-line-grid.tsx's own DEFAULT_WIDTHS (Type/Code/Name/
+    // Gross Quantity/Color/Rate; its Manufacturing Order lookup cell's 180 for the two order
+    // columns, whose Work Order cell carries a search icon and a clear button).
     const overrides: Partial<Record<ColKey, number>> = {
-      type: 110, code: 140, name: 260, explanation: 200, specialCode: 130,
+      type: 116, code: 148, name: 280, explanation: 200, specialCode: 130,
       quantity: 100, unit: 90, price: 110, forex: 100, itemOrderNo: 96, itemId: 96,
+      grossQuantity: 120, color: 120, rate: 100, manufacturingOrderNo: 180, workOrderNo: 180,
     };
     return [c.key, overrides[c.key] ?? (c.align === "right" ? 110 : 150)];
   }),
@@ -306,9 +310,12 @@ const DEFAULT_WIDTHS: Record<ColKey, number> = Object.fromEntries(
 // handful of overrides for the columns that actually get typed into or carry long labels.
 const MIN_WIDTHS: Record<ColKey, number> = Object.fromEntries(
   COLUMNS.map((c) => {
+    // Also enforced over saved widths (useGridColumns clamps restored widths to minWidth), so a
+    // layout saved when Work Order was a narrow text column still fits its lookup cell.
     const overrides: Partial<Record<ColKey, number>> = {
       type: 96, code: 104, name: 150, explanation: 130, specialCode: 100,
       quantity: 82, unit: 70, price: 90, forex: 76, itemOrderNo: 80, itemId: 80,
+      grossQuantity: 96, color: 90, rate: 80, manufacturingOrderNo: 150, workOrderNo: 150,
     };
     return [c.key, overrides[c.key] ?? (c.align === "right" ? 70 : 90)];
   }),
@@ -1588,6 +1595,9 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                                 options={inventoryCodeOptions}
                                 disabled={readOnly}
                                 showDropdownIcon
+                                // Wider/taller than the cell so "Code - Name" items stay readable —
+                                // same sizing as the Costing Sheet's own item lookup.
+                                popoverClassName="min-w-[460px] max-h-72"
                                 onChange={(v) => updateRow(r.clientId, { name: v })}
                                 onCancel={() => cancelEdit(r.clientId)}
                                 onDoubleClick={() => !readOnly && openLookupForRow(r.clientId)}
