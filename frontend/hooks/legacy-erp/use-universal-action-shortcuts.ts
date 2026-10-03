@@ -30,6 +30,8 @@ const KEY_MAP: Record<string, string> = {
 };
 
 function comboFor(e: KeyboardEvent): string | null {
+  // Browser autofill (picking a saved email/password) dispatches a keydown with no `key`.
+  if (typeof e.key !== "string" || !e.key) return null;
   const key = e.key.toLowerCase();
   if (["control", "alt", "shift", "meta"].includes(key)) return null;
   const parts: string[] = [];
