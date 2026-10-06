@@ -1,7 +1,9 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { resolveUdfRecord } from './custom-field-records';
 
 // User Defined Fields — the CustomField (definition) + CustomFieldValue (per-record value) engine
 // behind Administration > User Defined Fields and every screen's "Customized Fields" tab.
@@ -57,6 +59,61 @@ export function visibleScopeWhere(companyId?: string | null, branchId?: string |
 }
 
 const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TEXT_LIMIT: Record<string, number> = { text: 2000, email: 320, textarea: 10000 };
+
+/** Order-insensitive JSON equality for stored vs. sent values (both plain JSON). */
+const jsonEqual = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** Long text is cut down in the audit trail (the full value stays in CustomFieldValue). */
+const auditValue = (v: Prisma.JsonValue | null) => (typeof v === 'string' && v.length > 500 ? `${v.slice(0, 500)}…` : v);
+
+const isRealDate = (s: string) => {
+  if (!DATE_PATTERN.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+
+/**
+ * A value for one field, checked against its runtime type — never coerced: a value of the wrong
+ * shape is refused with a message naming the field. Blank (null, undefined, '') clears the value.
+ * Exported for the test suite.
+ */
+export function validateFieldValue(
+  def: { name: string; type: string; options: Prisma.JsonValue | null },
+  raw: unknown,
+): { value: Prisma.JsonValue | null } | { error: string } {
+  if (isBlank(raw)) return { value: null };
+  const field = `"${def.name}"`;
+  switch (def.type) {
+    case 'text':
+    case 'textarea':
+    case 'email': {
+      if (typeof raw !== 'string') return { error: `${field} must be text.` };
+      if (raw.length > TEXT_LIMIT[def.type]) return { error: `${field} is too long (${TEXT_LIMIT[def.type]} characters max).` };
+      if (def.type === 'email' && !EMAIL_PATTERN.test(raw.trim())) return { error: `${field} must be a valid email address.` };
+      return { value: def.type === 'email' ? raw.trim() : raw };
+    }
+    case 'number':
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) return { error: `${field} must be a number.` };
+      return { value: raw };
+    case 'date':
+      if (typeof raw !== 'string' || !isRealDate(raw)) return { error: `${field} must be a date (YYYY-MM-DD).` };
+      return { value: raw };
+    case 'checkbox':
+      if (typeof raw !== 'boolean') return { error: `${field} must be Yes or No.` };
+      return { value: raw };
+    case 'select': {
+      const options = Array.isArray(def.options) ? def.options.filter((o): o is string => typeof o === 'string') : [];
+      if (typeof raw !== 'string' || !options.includes(raw)) return { error: `${field} must be one of its active options.` };
+      return { value: raw };
+    }
+    default:
+      return { error: `${field} has an unsupported type.` };
+  }
+}
 
 @Injectable()
 export class CustomFieldsService {
@@ -194,31 +251,126 @@ export class CustomFieldsService {
   }
 
   // ── Values (the runtime Customized Fields tabs) ─────────────────────────────────────────────
+  //
+  // Authorization is resolved here, server-side, from the record itself (custom-field-records.ts):
+  // the record must exist and be within the caller's reach, a write needs the OWNING screen's
+  // `<module>:update` permission, and only values of fields visible to the caller's company/branch
+  // are ever read or written. Nothing about scope is taken from the request.
 
-  async getValues(entity: string, entityId: string) {
-    return this.prisma.customFieldValue.findMany({ where: { entity, entityId }, include: { customField: true } });
+  /** The values of one record, limited to the fields the caller can see. */
+  async getValues(user: ActingUser, entity: string, entityId: string) {
+    await this.requireRecord(user, entity, entityId);
+    return this.readValues(user, entity, entityId);
   }
 
   /**
-   * Replaces the values of the fields sent for one record. Only those fields' values are replaced —
-   * values of fields not in the payload (e.g. a deactivated field the screen no longer shows) are
-   * kept. A required, active field must have a value (a Yes/No field always has one).
+   * Sets the values of the fields sent for one record (blank = clear). Values of fields not in the
+   * payload — e.g. a deactivated field the screen no longer shows — are kept untouched. Every sent
+   * value is validated against its field's control type; a value equal to the one already stored
+   * is accepted as-is, so re-saving a record never fails on (or rewrites) a value that was valid
+   * when it was saved (e.g. a dropdown option deactivated since). Every active, required field the
+   * caller can see must end up with a value, whether it was sent or already stored. Only real
+   * changes are written and audited.
    */
-  async upsertValues(entity: string, entityId: string, values: any[]) {
-    const rows = (values || []).filter((v) => v?.customFieldId);
-    const ids = Array.from(new Set(rows.map((v) => String(v.customFieldId))));
-    const defs = ids.length ? await this.prisma.customField.findMany({ where: { id: { in: ids }, entity } }) : [];
+  async upsertValues(user: ActingUser, entity: string, entityId: string, values: unknown) {
+    const record = await this.requireRecord(user, entity, entityId);
+    if (!(await this.userHasPermission(user.id, record.permissionModule, 'update'))) {
+      throw new ForbiddenException('Insufficient permissions');
+    }
+    if (!Array.isArray(values)) throw new BadRequestException('values must be a list of { customFieldId, value }.');
+    const sent = new Map<string, unknown>();
+    for (const v of values) {
+      if (!v || typeof v !== 'object' || typeof (v as any).customFieldId !== 'string' || !(v as any).customFieldId) {
+        throw new BadRequestException('Every value needs a customFieldId.');
+      }
+      const id = (v as any).customFieldId as string;
+      if (sent.has(id)) throw new BadRequestException('A field is listed more than once.');
+      sent.set(id, (v as any).value);
+    }
+
+    // Every active field of this entity the caller can see (for the required check), plus any
+    // sent field — unknown, other-entity or out-of-scope ids find no definition and are refused.
+    const defs = await this.prisma.customField.findMany({
+      where: { entity, AND: [visibleScopeWhere(user.companyId, user.branchId), { OR: [{ isActive: true }, { id: { in: [...sent.keys()] } }] }] },
+    });
     const defById = new Map(defs.map((d) => [d.id, d]));
-    const missing = defs.filter((d) => d.isActive && d.required && d.type !== 'checkbox' && isBlank(rows.find((r) => r.customFieldId === d.id)?.value));
-    if (missing.length) throw new BadRequestException(`${missing.map((d) => `"${d.name}"`).join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`);
-    const known = rows.filter((r) => defById.has(String(r.customFieldId)));
-    await this.prisma.$transaction([
-      this.prisma.customFieldValue.deleteMany({ where: { entity, entityId, customFieldId: { in: known.map((r) => String(r.customFieldId)) } } }),
-      this.prisma.customFieldValue.createMany({
-        data: known.map((v) => ({ customFieldId: String(v.customFieldId), entity, entityId, value: v.value ?? undefined })),
-      }),
-    ]);
-    return this.getValues(entity, entityId);
+    const unknown = [...sent.keys()].filter((id) => !defById.has(id));
+    if (unknown.length) throw new BadRequestException(`${unknown.length === 1 ? 'A field does' : `${unknown.length} fields do`} not exist for this record.`);
+    const inactive = [...sent.keys()].map((id) => defById.get(id)!).filter((d) => !d.isActive);
+    if (inactive.length) throw new BadRequestException(`${inactive.map((d) => `"${d.name}"`).join(', ')} ${inactive.length === 1 ? 'is' : 'are'} inactive and cannot be changed.`);
+
+    const stored = await this.prisma.customFieldValue.findMany({ where: { entity, entityId, customFieldId: { in: defs.map((d) => d.id) } } });
+    const storedById = new Map<string, Prisma.JsonValue>();
+    for (const s of stored) if (!storedById.has(s.customFieldId)) storedById.set(s.customFieldId, s.value);
+
+    const errors: string[] = [];
+    const next = new Map<string, Prisma.JsonValue | null>(); // normalized value per sent field; null = clear
+    for (const [id, raw] of sent) {
+      const def = defById.get(id)!;
+      const before = storedById.has(id) ? storedById.get(id)! : null;
+      if (!isBlank(raw) && jsonEqual(raw, before)) { next.set(id, before); continue; }
+      const checked = validateFieldValue(def, raw);
+      if ('error' in checked) errors.push(checked.error);
+      else next.set(id, checked.value);
+    }
+    for (const def of defs) {
+      if (!def.isActive || !def.required || def.type === 'checkbox') continue;
+      const finalValue = next.has(def.id) ? next.get(def.id) : storedById.get(def.id) ?? null;
+      if (isBlank(finalValue)) errors.push(`"${def.name}" is required.`);
+    }
+    if (errors.length) throw new BadRequestException(errors.join(' '));
+
+    const changes: { def: (typeof defs)[number]; before: Prisma.JsonValue | null; after: Prisma.JsonValue | null }[] = [];
+    for (const [id, after] of next) {
+      const before = storedById.has(id) ? storedById.get(id)! : null;
+      if (!jsonEqual(before, after)) changes.push({ def: defById.get(id)!, before, after });
+    }
+    if (changes.length) {
+      await this.prisma.$transaction(async (tx) => {
+        for (const c of changes) {
+          const where = { entity, entityId, customFieldId: c.def.id };
+          if (c.after === null) await tx.customFieldValue.deleteMany({ where });
+          else if (c.before === null) await tx.customFieldValue.create({ data: { ...where, value: c.after as Prisma.InputJsonValue } });
+          else await tx.customFieldValue.updateMany({ where, data: { value: c.after as Prisma.InputJsonValue } });
+        }
+      });
+      const correlationId = randomUUID();
+      for (const c of changes) {
+        const action = c.before === null ? AUDIT_ACTIONS.CREATE : c.after === null ? AUDIT_ACTIONS.DELETE : AUDIT_ACTIONS.UPDATE;
+        const shape = (value: Prisma.JsonValue | null) => ({ field: c.def.code, caption: c.def.name, value: auditValue(value) });
+        await this.audit.recordSafe({
+          userId: user.id, companyId: user.companyId, screenKey: record.screenKey,
+          entityType: 'CustomFieldValue', entityId: c.def.id, action,
+          before: c.before === null ? undefined : shape(c.before),
+          after: c.after === null ? undefined : shape(c.after),
+          documentNo: c.def.code,
+          parentEntityType: entity, parentEntityId: entityId, parentDocumentNo: record.documentNo,
+          correlationId,
+        });
+      }
+    }
+    return this.readValues(user, entity, entityId);
+  }
+
+  private async readValues(user: ActingUser, entity: string, entityId: string) {
+    return this.prisma.customFieldValue.findMany({
+      where: { entity, entityId, customField: { entity, ...visibleScopeWhere(user.companyId, user.branchId) } },
+      include: { customField: true },
+    });
+  }
+
+  private async requireRecord(user: ActingUser, entity: string, entityId: string) {
+    const record = await resolveUdfRecord(this.prisma, entity, entityId, user);
+    if (!record) throw new NotFoundException('Record not found.');
+    return record;
+  }
+
+  /** Same Role -> RolePermission -> Permission(module, action) check RolesGuard applies to a route. */
+  private async userHasPermission(userId: string, module: string, action: string) {
+    const count = await this.prisma.userRole.count({
+      where: { userId, role: { permissions: { some: { permission: { module, action } } } } },
+    });
+    return count > 0;
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────────────────────

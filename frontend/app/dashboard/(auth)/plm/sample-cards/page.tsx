@@ -983,7 +983,7 @@ export default function SampleCardDetailPage() {
               <PictureGalleryTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} />
             </TabsContent>
             <TabsContent value="Customized Fields" className="pt-4">
-              <CustomizedFieldsTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} />
+              <CustomizedFieldsTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} readOnly={readOnly} />
             </TabsContent>
           </>
         )}

@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
+import { AllowAuthenticated, PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { EntitiesService } from './entities.service';
 import { CustomFieldsService } from './custom-fields.service';
@@ -180,16 +180,22 @@ export class EntitiesController {
 
   // ── Custom Field Values ──────────────────────────────────────────────────────
 
+  // Values belong to a business record, so their permission is the OWNING screen's, not this
+  // controller's "crm" module: which module that is depends on the record (e.g. a receipt's type),
+  // so CustomFieldsService resolves the record and checks `<owning module>:update` itself (see
+  // custom-field-records.ts). The route therefore only requires a signed-in user.
   @Get('custom-field-values')
-  @ApiOperation({ summary: 'Get custom field values for an entity record' })
-  getCustomFieldValues(@Query('entity') entity: string, @Query('entityId') entityId: string) {
-    return this.customFields.getValues(entity, entityId);
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Get custom field values for an entity record (record reach + field scope enforced)' })
+  getCustomFieldValues(@Query('entity') entity: string, @Query('entityId') entityId: string, @CurrentUser() user: any) {
+    return this.customFields.getValues(user, entity, entityId);
   }
 
   @Put('custom-field-values')
-  @ApiOperation({ summary: 'Replace custom field values for an entity record' })
-  upsertCustomFieldValues(@Body() body: { entity: string; entityId: string; values: any[] }) {
-    return this.customFields.upsertValues(body.entity, body.entityId, body.values);
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Set custom field values for an entity record (owning module update permission, validated)' })
+  upsertCustomFieldValues(@Body() body: { entity: string; entityId: string; values: unknown }, @CurrentUser() user: any) {
+    return this.customFields.upsertValues(user, body?.entity, body?.entityId, body?.values);
   }
 
   // ── Form Sections ──────────────────────────────────────────────────────────
