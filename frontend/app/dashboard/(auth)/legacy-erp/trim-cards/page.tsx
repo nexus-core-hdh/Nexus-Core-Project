@@ -25,6 +25,7 @@ import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { cn } from "@/lib/utils";
 import { GridInput, uid } from "./_components/grid-input";
+import { InventoryCardsLookupDialog } from "@/components/legacy-erp/inventory-cards-lookup-dialog";
 
 interface TrimLine {
   id: string; // local uid for new rows, or the real numeric id (as string) once persisted
@@ -141,6 +142,11 @@ export default function CustomerDefineTrimsPage() {
   // the user actually activates the cell, matching every other lookup cell's closed-at-rest
   // behavior in the app (see autocomplete-text-cell.tsx's own startOpen comment).
   const [activeAutocomplete, setActiveAutocomplete] = useState<{ lineId: string; field: "trimCode" | "unit" } | null>(null);
+
+  // Which row's Trim Name lookup is open — the full Inventory Cards List narrowed to Trim (the same
+  // IM_Item AccessCode='TRIM', IsDeleted=0 records trimCardOptions above lists, keyed by the same
+  // RecId), as the Receipt detail grid's own Name cell opens it (inventory-receipt-line-grid.tsx).
+  const [trimLookupLineId, setTrimLookupLineId] = useState<string | null>(null);
 
   // Shows the code the next Save will get, before Save is ever pressed — a preview only (see
   // trim-card.controller.ts's next-code route). Mirrors yarn-cards/page.tsx's own
@@ -403,7 +409,24 @@ export default function CustomerDefineTrimsPage() {
           />
         );
       case "trimName":
-        return <EditableGridInput value={line.trimName} onChange={() => {}} disabled placeholder="Auto-filled from Trim Code" />;
+        return (
+          <InputGroup className="h-9">
+            <InputGroupInput
+              value={line.trimName}
+              readOnly
+              title={line.trimName || undefined}
+              placeholder="Select Trim..."
+              onClick={() => setTrimLookupLineId(line.id)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); setTrimLookupLineId(line.id); } }}
+              className="cursor-pointer text-sm"
+            />
+            <InputGroupAddon align="inline-end">
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setTrimLookupLineId(line.id)} title="Search Trim Cards" aria-label="Search Trim Cards">
+                <Search className="h-3.5 w-3.5" />
+              </Button>
+            </InputGroupAddon>
+          </InputGroup>
+        );
       case "explanation":
         return <GridInput value={line.explanation} onChange={(v) => updateLine(line.id, { explanation: v })} />;
       case "orderQuantity":
@@ -646,6 +669,15 @@ export default function CustomerDefineTrimsPage() {
         </TabsContent>
         </div>
       </Tabs>
+
+      <InventoryCardsLookupDialog
+        open={trimLookupLineId !== null}
+        onOpenChange={(open) => !open && setTrimLookupLineId(null)}
+        sourceTypeFilter="trim"
+        onSelect={(row) => {
+          if (trimLookupLineId) handleTrimCodeSelect(trimLookupLineId, { id: String(row.id), code: row.inventoryCode, name: row.inventoryName });
+        }}
+      />
 
       <ManageColumnsModal
         state={gridColumns.manageColumns}
