@@ -9,13 +9,21 @@ import ts from "typescript";
 const FRONTEND_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const STUBS = {
-  "@/lib/api": "export const settingsApi = { getCurrentSettings: async () => ({}), updateCurrentSettings: async () => ({}) };",
+  // Tests set globalThis.__workspaceSettings to simulate what the backend has persisted.
+  "@/lib/api": "export const settingsApi = { getCurrentSettings: async () => globalThis.__workspaceSettings ?? {}, updateCurrentSettings: async () => ({}) };",
   "next/navigation": "export const usePathname = () => null; export const useSearchParams = () => new URLSearchParams();",
   // Same shape as the real generated file; record routes mirror real app routes.
   "./registry.generated": `export const GENERATED_WORKSPACE_MODULES = [
     { path: "/dashboard/plm/style-cards", Component: () => null },
     { path: "/dashboard/plm/costing-sheets", Component: () => null },
     { path: "/dashboard/legacy-erp/inventory-cards-list", Component: () => null },
+    { path: "/dashboard/legacy-erp/inventory-receipts", Component: () => null },
+    { path: "/dashboard/legacy-erp/inventory-receipts-list", Component: () => null },
+    { path: "/dashboard/legacy-erp/purchase-orders", Component: () => null },
+    { path: "/dashboard/legacy-erp/purchase-orders-list", Component: () => null },
+    { path: "/dashboard/legacy-erp/work-orders", Component: () => null },
+    { path: "/dashboard/legacy-erp/work-orders-list", Component: () => null },
+    { path: "/dashboard/legacy-erp/cutting-card/entry", Component: () => null },
     { path: "/dashboard/crm/deals/dashboards/create", Component: () => null },
   ];
   export const GENERATED_RECORD_ROUTES = [

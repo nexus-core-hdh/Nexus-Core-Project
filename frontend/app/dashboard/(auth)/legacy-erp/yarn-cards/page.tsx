@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Search, Save, FilePlus2, Layers, Lock } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { cn } from "@/lib/utils";
@@ -129,6 +130,7 @@ export default function YarnCardPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [itemId, setItemId] = useState<number | null>(null);
+  useWorkspaceRecordId(itemId);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);

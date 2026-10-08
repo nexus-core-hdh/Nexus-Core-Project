@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { settingsApi } from "@/lib/api";
+import { tabKeyForHref } from "@/lib/workspace/registry";
 
 export interface WorkspaceTab {
   key: string;
@@ -23,6 +24,11 @@ export interface WorkspaceTab {
    *  undefined on a create route falls through to the existing "New {Screen}"
    *  resolution. */
   recordLabel?: string;
+  /** The key/href this tab's screen instance was mounted with, kept when the tab is re-keyed in
+   *  place (replaceTab — a create form saving as a real record) so WorkspaceContentStack doesn't
+   *  remount a screen mid-save. Cleared whenever the tab is re-pointed (openTab/updateTabHref),
+   *  which is a deliberate remount. Never persisted: a reload mounts fresh from `href`. */
+  mount?: { key: string; href: string };
 }
 
 interface OpenTabInput {
@@ -123,12 +129,20 @@ const backendStorage: PersistStorage<WorkspacePersisted> = {
   },
 };
 
-// Single global store for the Workspace Tab Bar — every "screen" opened from the
-// sidebar/search becomes an entry here. One tab per registered module (see
-// lib/workspace/registry.tsx), reused across records: opening a different record
-// from a list updates the existing tab's href instead of creating a new one.
-// Record pages (dynamic `[id]` routes) are the exception: one tab per opened record,
-// keyed by its own pathname (see hooks/use-record-tab-sync.ts).
+// A fresh screen instance for a tab (re)pointed at `href`. Normally none is needed (the stack keys
+// the instance by the tab's own key), unless another tab re-keyed by replaceTab still holds that key
+// as its instance key — then this one gets a distinct instance key so the two never collide.
+let instanceCounter = 0;
+function freshMount(key: string, href: string, others: WorkspaceTab[]): WorkspaceTab["mount"] {
+  return others.some((t) => (t.mount?.key ?? t.key) === key) ? { key: `${key}#${++instanceCounter}`, href } : undefined;
+}
+
+// Single global store for the Workspace Tab Bar — every screen or record opened from the
+// sidebar/search/a list/a related-record link becomes an entry here, keyed by
+// tabKeyForHref (lib/workspace/registry.tsx): one tab per list screen, one per opened
+// record (`form?id=6`, or a dynamic `[id]` route's own pathname), so opening another
+// record of the same entity adds a tab instead of re-pointing the current one.
+// A tab's key is always the canonical key of its href — every action below keeps it so.
 // Persisted to the database (not sessionStorage) so tabs and My Menu restore after
 // logout/login and aren't lost when the browser tab closes.
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -147,37 +161,59 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             // already had (e.g. one set by useWorkspaceTabTitle) rather than
             // wiping it back to "resolve automatically".
             tabs: get().tabs.map((t) =>
-              t.key === tab.key ? { ...t, href: tab.href, title: tab.title ?? t.title } : t
+              t.key === tab.key
+                ? {
+                    ...t,
+                    href: tab.href,
+                    title: tab.title ?? t.title,
+                    mount: t.href === tab.href ? t.mount : freshMount(t.key, tab.href, get().tabs.filter((o) => o !== t)),
+                  }
+                : t
             ),
             activeKey: tab.key,
           });
           return;
         }
         set({
-          tabs: [...get().tabs, { ...tab, dirty: false }],
+          tabs: [...get().tabs, { ...tab, dirty: false, mount: freshMount(tab.key, tab.href, get().tabs) }],
           activeKey: tab.key,
         });
       },
 
-      // Patches one tab's own href IN PLACE — unlike openTab, never touches activeKey. For a
+      // Patches one tab's own href IN PLACE — unlike openTab, never activates a tab. For a
       // background/inactive tab that self-corrects its own stale state (e.g. a "New Work Order"
       // tab dropping a styleCardId that no longer resolves), this must not steal focus or touch
-      // the live browser URL, which openTab's "reopen" branch does as a side effect.
+      // the live browser URL, which openTab's "reopen" branch does as a side effect. When the new
+      // href names a different record the tab is re-keyed to match (staying active if it was);
+      // if that record already has its own tab, this one folds into it.
       updateTabHref: (key, href) =>
         set((state) => {
           const current = state.tabs.find((t) => t.key === key);
           if (!current || current.href === href) return state;
-          return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, href } : t)) };
+          const nextKey = tabKeyForHref(href) ?? key;
+          const activeKey = state.activeKey === key ? nextKey : state.activeKey;
+          if (nextKey !== key && state.tabs.some((t) => t.key === nextKey)) {
+            return { tabs: state.tabs.filter((t) => t.key !== key), activeKey };
+          }
+          const mount = freshMount(nextKey, href, state.tabs.filter((t) => t !== current));
+          const repointed = nextKey === key
+            ? { ...current, href, mount }
+            : { ...current, key: nextKey, href, mount, title: undefined, recordLabel: undefined };
+          return { tabs: state.tabs.map((t) => (t.key === key ? repointed : t)), activeKey };
         }),
 
-      // Re-keys one tab in place (same position) and activates it — for a record tab whose identity
-      // changes under it, e.g. a "New" record form whose save swaps its URL for the created record's.
+      // Re-keys one tab in place (same position) WITHOUT remounting its screen — for a tab whose
+      // record identity is established under it: a create form saving as a real record (by URL, or
+      // reported via useWorkspaceRecordId). Stays active if it was. Drops any other tab already
+      // holding the new key, so a record never ends up with two tabs.
       replaceTab: (oldKey, tab) =>
         set((state) => ({
           tabs: state.tabs
             .filter((t) => t.key === oldKey || t.key !== tab.key)
-            .map((t) => (t.key === oldKey ? { ...tab, dirty: false } : t)),
-          activeKey: tab.key,
+            .map((t) => (t.key === oldKey
+              ? { ...t, key: tab.key, href: tab.href, title: tab.title ?? t.title, mount: t.mount ?? { key: t.key, href: t.href } }
+              : t)),
+          activeKey: state.activeKey === oldKey ? tab.key : state.activeKey,
         })),
 
       closeTab: (key) => {
@@ -264,7 +300,25 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: "nexuscore-workspace-tabs",
       storage: backendStorage,
-      partialize: (state) => ({ tabs: state.tabs, activeKey: state.activeKey, myMenu: state.myMenu }),
+      partialize: (state) => ({
+        tabs: state.tabs.map(({ mount: _mount, ...tab }) => tab),
+        activeKey: state.activeKey,
+        myMenu: state.myMenu,
+      }),
+      // Tabs saved before records got their own tabs were keyed by bare path (`form` showing
+      // `form?id=6`) — re-key them to their canonical record key, dropping duplicates.
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<WorkspacePersisted>;
+        const renamed = new Map<string, string>();
+        const tabs: WorkspaceTab[] = [];
+        for (const tab of saved.tabs ?? []) {
+          const key = tabKeyForHref(tab.href) ?? tab.key;
+          renamed.set(tab.key, key);
+          if (!tabs.some((t) => t.key === key)) tabs.push({ ...tab, key });
+        }
+        const activeKey = saved.activeKey ? renamed.get(saved.activeKey) ?? saved.activeKey : null;
+        return { ...current, ...saved, tabs, activeKey };
+      },
     }
   )
 );

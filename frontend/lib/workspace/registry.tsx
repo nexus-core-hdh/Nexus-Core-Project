@@ -52,9 +52,9 @@ export function isNewRecordPath(pathname: string): boolean {
 
 const MODULES_BY_PATH = new Map(WORKSPACE_MODULES.map((m) => [m.path, m]));
 
-/** Resolves the workspace module that owns a given pathname (ignoring query string), if any. Also doubles as the by-key lookup, since a tab's key is always its module's path — tolerant of a
- *  `path?param=value` composite key too (see MULTI_KEY_ROUTES/resolveTabKey below), which is why
- *  the `?`-suffix is stripped before the lookup even though ordinary keys never contain one. */
+/** Resolves the workspace module that owns a given pathname (ignoring query string), if any. Also doubles as the by-key lookup, since a tab's key is always its module's path, or a
+ *  `path?param=value` composite key for a record (see resolveTabKey below), which is why
+ *  the `?`-suffix is stripped before the lookup. */
 export function findWorkspaceModule(pathname: string): WorkspaceModule | undefined {
   return MODULES_BY_PATH.get(pathname.split("?")[0]);
 }
@@ -63,31 +63,57 @@ export function isWorkspaceRoute(pathname: string): boolean {
   return MODULES_BY_PATH.has(pathname.split("?")[0]);
 }
 
-// Opt-in only: every route not listed here keeps the default one-tab-per-path behavior
-// (resolveTabKey returns the path unchanged) exactly as before. A route listed here gets one
-// independently-open tab per distinct value of the named query param, instead of one shared tab
-// slot for the whole route (which is what every other multi-variant screen, e.g. the 18-type
-// Inventory Receipts screen, still uses — that one deliberately reuses a single tab).
+// The query param that carries a record's identity on a form screen (`?id=6&mode=view` — the
+// list+form convention every Legacy/Finance ERP document screen follows). Every distinct value is its
+// own tab, so IR-6, IR-7 and IR-8 stay open side by side; other params (mode, receiptType, inner-tab
+// state, ...) only ride along on the tab's href. A route without it (a list screen, a create form)
+// keeps one tab per path.
+const RECORD_ID_PARAM = "id";
+
+// Routes whose tab identity is a param other than `id` (it replaces `id` for that route). Same rule
+// — one independently-open tab per distinct value — for screens whose identity isn't a record id.
 const MULTI_KEY_ROUTES: Record<string, string> = {
   "/dashboard/legacy-erp/fabric-yarn-requirements": "type",
-  // Same precedent as above (keyed on one param, not "id") — each Production Color gets its own
-  // open Cutting Entry tab, matching "each color must have its own independent Cutting context".
-  // The Cutting Card MAIN screen (search + color matrix, no color param yet) is deliberately NOT
-  // in this map — it behaves like the plain Work Orders List screen, one shared tab reused across
-  // whichever Work Order is currently being searched.
+  // Each Production Color gets its own open Cutting Entry tab, matching "each color must have its
+  // own independent Cutting context". The Cutting Card MAIN screen (search + color matrix, no color
+  // param yet) carries no such param — one shared tab reused across whichever Work Order is searched.
   "/dashboard/legacy-erp/cutting-card/entry": "color",
   // One open tab per (Order, Process, mode, Color) — `k` is built by Order Manufacturing Entry's buttons.
   "/dashboard/legacy-erp/order-manufacturing-entry/entry": "k",
 };
 
-/** Computes a tab's key for a given module path + the href being opened. Returns `pathname`
- *  unchanged for every route not in MULTI_KEY_ROUTES (byte-identical to the old `mod.path`
- *  behavior) — only an opted-in route gets a `path?param=value` composite key so two values of
- *  that param can be open as two separate tabs at once. */
+/** Computes a tab's key for a given module path + the href being opened: `path?id=<value>` when the
+ *  href names a record (or `path?<param>=<value>` for a MULTI_KEY_ROUTES route), else `pathname`.
+ *  Only the identity param is part of the key, so transient params never split a record into two tabs. */
 export function resolveTabKey(pathname: string, href: string): string {
-  const param = MULTI_KEY_ROUTES[pathname];
-  if (!param) return pathname;
+  const param = MULTI_KEY_ROUTES[pathname] ?? RECORD_ID_PARAM;
   const query = href.split("?")[1] ?? "";
   const value = new URLSearchParams(query).get(param);
   return value ? `${pathname}?${param}=${value}` : pathname;
+}
+
+/** The canonical tab key for any href — a workspace module's (resolveTabKey) or a record route's
+ *  (its pathname) — or undefined for a route the workspace doesn't track. */
+export function tabKeyForHref(href: string): string | undefined {
+  const [pathname] = href.split("?");
+  if (findWorkspaceModule(pathname)) return resolveTabKey(pathname, href);
+  if (findRecordRoute(pathname)) return pathname;
+  return undefined;
+}
+
+/** True when an href opens a create form — `?mode=create|new` on a form screen, or a record route's `/new`. */
+export function isCreateHref(href: string): boolean {
+  const [pathname, query = ""] = href.split("?");
+  const mode = new URLSearchParams(query).get("mode")?.toLowerCase();
+  return mode === "create" || mode === "new" || isNewRecordPath(pathname);
+}
+
+/** `href` re-pointed at record `id` — a create form's href becomes the saved record's edit href. */
+export function withRecordId(href: string, id: string): string {
+  const [pathname, query = ""] = href.split("?");
+  const params = new URLSearchParams(query);
+  params.set(RECORD_ID_PARAM, id);
+  const mode = params.get("mode")?.toLowerCase();
+  if (mode === "create" || mode === "new") params.set("mode", "edit");
+  return `${pathname}?${params.toString()}`;
 }

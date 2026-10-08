@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Search, Save, FilePlus2, FileSignature, Lock, BadgeCheck } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
@@ -72,6 +73,7 @@ export default function ContractPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [contractId, setContractId] = useState<number | null>(null);
+  useWorkspaceRecordId(contractId);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);

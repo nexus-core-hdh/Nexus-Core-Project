@@ -18,6 +18,7 @@ import {
 import { MasterDetailLayout, MasterListPanel, DetailEditorPanel } from "@/components/shared/master-detail";
 import { GridSection, FormRow, FieldCell, controlClass } from "@/components/legacy-erp/unit-item-detail-grid";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 
 // ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ export default function SizeDetailPage() {
   const [codeInput, setCodeInput] = useState("");
   const [searching, setSearching] = useState(false);
   const [sizeSetId, setSizeSetId] = useState<number | null>(null);
+  useWorkspaceRecordId(sizeSetId);
   const [form, setForm] = useState<SizeSetForm>(emptySetForm);
   const [mode, setMode] = useState<"view" | "edit" | "create">(initialMode);
   const [saving, setSaving] = useState(false);

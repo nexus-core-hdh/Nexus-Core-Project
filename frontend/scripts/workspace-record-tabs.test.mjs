@@ -1,6 +1,7 @@
-// Headless tests for Workspace record tabs (dynamic `[id]` routes): the real workspace store,
-// registry, record-route sync and tab-title resolver, driven the way the sidebar/search
-// (navigateOrOpenTab), list-row links / deep links (useRecordTabSync) and the tab bar do.
+// Headless tests for Workspace record tabs — dynamic `[id]` routes and `form?id=` records: the real
+// workspace store, registry, route->tab syncs and tab-title resolver, driven the way the
+// sidebar/search/list rows/related-record links (navigateOrOpenTab), URL changes (the layout's
+// syncModuleRouteTab + useRecordTabSync), the tab bar and form screens (useWorkspaceRecordId) do.
 //   Run: npm run test:workspace-tabs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -10,9 +11,10 @@ import { beforeEach, describe, it } from "node:test";
 register("./workspace-test-loader.mjs", import.meta.url);
 
 const { useWorkspaceStore } = await import("@/lib/store/workspace-store");
-const { findRecordRoute, isNewRecordPath } = await import("@/lib/workspace/registry");
-const { navigateOrOpenTab } = await import("@/lib/workspace/navigate");
+const { findRecordRoute, isNewRecordPath, resolveTabKey, tabKeyForHref } = await import("@/lib/workspace/registry");
+const { navigateOrOpenTab, syncModuleRouteTab } = await import("@/lib/workspace/navigate");
 const { syncRecordRouteTab } = await import("@/hooks/use-record-tab-sync");
+const { adoptWorkspaceRecordId } = await import("@/hooks/use-workspace-record-id");
 const { resolveWorkspaceTabTitle } = await import("@/lib/workspace/resolve-tab-title");
 
 await new Promise((done) =>
@@ -26,11 +28,12 @@ const COSTING = "/dashboard/plm/costing-sheets/77";
 const INVENTORY = "/dashboard/legacy-erp/inventory-cards-list";
 
 // What the browser URL does in response: navigateOrOpenTab/goTo call router.replace, then the
-// layout's useRecordTabSync sees the new route.
+// layout's two route syncs (WorkspaceContentStack's + useRecordTabSync) see the new route.
 const urls = [];
 const router = { push: (href) => urls.push(href), replace: (href) => urls.push(href) };
 const land = (href) => {
   const [pathname, query = ""] = href.split("?");
+  syncModuleRouteTab(pathname, query);
   syncRecordRouteTab(pathname, query);
 };
 const openFromMenu = (href) => {
@@ -181,10 +184,11 @@ describe("F. direct URL / reload", () => {
     assert.equal(tabOf(STYLE_A).href, `${STYLE_A}?tab=cost`);
   });
 
-  it("non-record routes are left to the existing workspace logic", () => {
+  it("a list screen gets one tab; an untracked route gets none", () => {
+    land(STYLE_LIST);
     land(STYLE_LIST);
     land("/dashboard/default");
-    assert.deepEqual(keys(), []);
+    assert.deepEqual(keys(), [STYLE_LIST]);
   });
 });
 
@@ -220,5 +224,272 @@ describe("tab titles", () => {
       "New Style Card"
     );
     assert.equal(resolveWorkspaceTabTitle({ key: STYLE_LIST, href: STYLE_LIST }, entryByHref).title, "Style Cards");
+  });
+});
+
+// ── Multi-record workspace: `form?id=` records (Legacy/Finance ERP list+form screens) ──────────────
+const RECEIPTS = "/dashboard/legacy-erp/inventory-receipts";
+const RECEIPTS_LIST = `${RECEIPTS}-list`;
+const POS = "/dashboard/legacy-erp/purchase-orders";
+const WOS = "/dashboard/legacy-erp/work-orders";
+const IR = (id, mode = "view", type = 1) => `${RECEIPTS}?receiptType=${type}&id=${id}&mode=${mode}`;
+const IR_KEY = (id) => `${RECEIPTS}?id=${id}`;
+const PO = (id) => `${POS}?id=${id}&mode=view`;
+const WO = (id) => `${WOS}?id=${id}&mode=edit`;
+const reactKeys = () => useWorkspaceStore.getState().tabs.map((t) => t.mount?.key ?? t.key);
+
+describe("record identity in the tab key", () => {
+  it("only the identity param is part of the key — mode/type/inner-tab state ride along on the href", () => {
+    assert.equal(tabKeyForHref(IR(6)), IR_KEY(6));
+    assert.equal(tabKeyForHref(IR(6, "edit", 4)), IR_KEY(6));
+    assert.equal(tabKeyForHref(`${IR(6)}&tab=lines`), IR_KEY(6));
+    assert.equal(tabKeyForHref(`${RECEIPTS}?mode=create&receiptType=1`), RECEIPTS);
+    assert.equal(tabKeyForHref(RECEIPTS_LIST), RECEIPTS_LIST);
+    assert.equal(tabKeyForHref(`${STYLE_A}?tab=bom`), STYLE_A);
+    assert.equal(tabKeyForHref("/dashboard/default"), undefined);
+  });
+
+  it("routes keyed by another param keep it (and only it)", () => {
+    const entry = "/dashboard/legacy-erp/cutting-card/entry";
+    assert.equal(resolveTabKey(entry, `${entry}?id=5&color=red`), `${entry}?color=red`);
+  });
+});
+
+describe("1. same entity, different records", () => {
+  it("IR-6 -> IR-7 -> IR-8 from the list are three tabs", () => {
+    openFromMenu(RECEIPTS_LIST);
+    openFromMenu(IR(6));
+    openFromMenu(IR(7));
+    openFromMenu(IR(8));
+    assert.deepEqual(keys(), [RECEIPTS_LIST, IR_KEY(6), IR_KEY(7), IR_KEY(8)]);
+    assert.equal(active(), IR_KEY(8));
+  });
+
+  it("different receipt types of the same table are still separate records", () => {
+    openFromMenu(IR(6, "view", 1));
+    openFromMenu(IR(4, "view", 7)); // e.g. Purchase Return PRN-4
+    assert.deepEqual(keys(), [IR_KEY(6), IR_KEY(4)]);
+  });
+});
+
+describe("2. different Style Cards", () => {
+  it("SC-1 -> SC-2 -> SC-3 are three tabs", () => {
+    const sc = (n) => `${STYLE_LIST}/sc-${n}`;
+    [1, 2, 3].forEach((n) => land(sc(n)));
+    assert.deepEqual(keys(), [sc(1), sc(2), sc(3)]);
+  });
+});
+
+describe("3. different entities", () => {
+  it("Style Card, Receipt, Purchase Order and Work Order all stay open", () => {
+    land(STYLE_A);
+    openFromMenu(IR(6));
+    openFromMenu(PO(101));
+    openFromMenu(WO(212));
+    assert.deepEqual(keys(), [STYLE_A, IR_KEY(6), `${POS}?id=101`, `${WOS}?id=212`]);
+  });
+});
+
+describe("4. duplicates", () => {
+  it("opening IR-6 again (even in another mode) activates its one tab", () => {
+    openFromMenu(IR(6));
+    openFromMenu(PO(101));
+    openFromMenu(IR(6, "edit"));
+    land(IR(6, "edit"));
+    assert.deepEqual(keys(), [IR_KEY(6), `${POS}?id=101`]);
+    assert.equal(active(), IR_KEY(6));
+    assert.equal(tabOf(IR_KEY(6)).href, IR(6, "edit"));
+  });
+});
+
+describe("5. mixed", () => {
+  it("IR-6 -> IR-7 -> SC -> IR-8 -> PO-1 all remain available", () => {
+    openFromMenu(IR(6));
+    openFromMenu(IR(7));
+    land(STYLE_A);
+    openFromMenu(IR(8));
+    openFromMenu(PO(1));
+    assert.deepEqual(keys(), [IR_KEY(6), IR_KEY(7), STYLE_A, IR_KEY(8), `${POS}?id=1`]);
+  });
+});
+
+describe("6. return to a record", () => {
+  it("IR-6 -> IR-7 -> IR-8, click IR-6: lands straight on IR-6", () => {
+    [6, 7, 8].forEach((n) => openFromMenu(IR(n)));
+    clickTab(IR_KEY(6));
+    assert.equal(active(), IR_KEY(6));
+    assert.equal(urls.at(-1), IR(6));
+    assert.deepEqual(keys(), [IR_KEY(6), IR_KEY(7), IR_KEY(8)]);
+  });
+
+  it("Back/Forward to an earlier record URL re-activates its tab, never re-points another", () => {
+    [6, 7].forEach((n) => openFromMenu(IR(n)));
+    land(IR(6)); // browser Back
+    assert.equal(active(), IR_KEY(6));
+    assert.equal(tabOf(IR_KEY(7)).href, IR(7));
+    land(IR(7)); // Forward
+    assert.equal(active(), IR_KEY(7));
+    assert.deepEqual(keys(), [IR_KEY(6), IR_KEY(7)]);
+  });
+});
+
+describe("7/8. close and Close All", () => {
+  it("closing IR-7 leaves IR-6 and IR-8", () => {
+    [6, 7, 8].forEach((n) => openFromMenu(IR(n)));
+    useWorkspaceStore.getState().closeTab(IR_KEY(7));
+    assert.deepEqual(keys(), [IR_KEY(6), IR_KEY(8)]);
+  });
+
+  it("Close All closes every record and screen tab", () => {
+    openFromMenu(RECEIPTS_LIST);
+    [6, 7].forEach((n) => openFromMenu(IR(n)));
+    land(STYLE_A);
+    openFromMenu(PO(1));
+    useWorkspaceStore.getState().closeTabs(keys());
+    assert.deepEqual(keys(), []);
+    assert.equal(active(), null);
+  });
+});
+
+describe("9. new record -> save", () => {
+  it("a form that saves in place (useWorkspaceRecordId) turns its New tab into the record's tab without remounting", () => {
+    openFromMenu(RECEIPTS_LIST);
+    const createHref = `${RECEIPTS}?mode=create&receiptType=1`;
+    openFromMenu(createHref);
+    assert.deepEqual(keys(), [RECEIPTS_LIST, RECEIPTS]);
+    adoptWorkspaceRecordId(RECEIPTS, null); // blank form: nothing to adopt
+    adoptWorkspaceRecordId(RECEIPTS, 9); // first Save -> setReceiptId(9)
+    assert.deepEqual(keys(), [RECEIPTS_LIST, IR_KEY(9)]);
+    assert.equal(active(), IR_KEY(9));
+    assert.equal(tabOf(IR_KEY(9)).href, `${RECEIPTS}?mode=edit&receiptType=1&id=9`);
+    assert.deepEqual(tabOf(IR_KEY(9)).mount, { key: RECEIPTS, href: createHref }, "same screen instance — no remount");
+
+    openFromMenu(IR(9)); // reopening the saved record from the list: no duplicate
+    assert.deepEqual(keys(), [RECEIPTS_LIST, IR_KEY(9)]);
+  });
+
+  it("a second New form alongside a saved one gets its own screen instance", () => {
+    const createHref = `${RECEIPTS}?mode=create&receiptType=1`;
+    openFromMenu(createHref);
+    adoptWorkspaceRecordId(RECEIPTS, 9);
+    openFromMenu(createHref);
+    assert.deepEqual(keys(), [IR_KEY(9), RECEIPTS]);
+    assert.equal(new Set(reactKeys()).size, 2, "distinct React instance keys");
+  });
+
+  it("a form that saves by moving its URL (Work Orders) re-keys its New tab in place", () => {
+    openFromMenu(`${WOS}?mode=create`);
+    land(WO(12)); // save: router.replace(`?id=12&mode=edit`)
+    assert.deepEqual(keys(), [`${WOS}?id=12`]);
+    assert.equal(tabOf(`${WOS}?id=12`).mount.key, WOS);
+    useWorkspaceStore.getState().updateTabHref(WOS, WO(12)); // its later syncTabHref via a stale key: harmless
+    assert.deepEqual(keys(), [`${WOS}?id=12`]);
+  });
+
+  it("loading another record by code inside a record tab follows it, unless that record has its own tab", () => {
+    openFromMenu(IR(6));
+    adoptWorkspaceRecordId(IR_KEY(6), 11);
+    assert.deepEqual(keys(), [IR_KEY(11)]);
+    openFromMenu(IR(12));
+    adoptWorkspaceRecordId(IR_KEY(12), 11);
+    assert.deepEqual(keys(), [IR_KEY(11), IR_KEY(12)]);
+  });
+});
+
+describe("10. global search / sidebar", () => {
+  it("both open screens through navigateOrOpenTab, the call-in tested above", () => {
+    for (const file of ["components/search/global-screen-search.tsx", "components/layout/sidebar/nav-main.tsx"]) {
+      assert.match(readFileSync(new URL(`../${file}`, import.meta.url), "utf8"), /navigateOrOpenTab\(/, file);
+    }
+  });
+});
+
+describe("11. related records", () => {
+  it("opening a receipt from inside a PO keeps the PO and adds the receipt", () => {
+    openFromMenu(PO(101));
+    navigateOrOpenTab(router, IR(6)); // purchase-orders/page.tsx's own receipt link
+    land(IR(6));
+    assert.deepEqual(keys(), [`${POS}?id=101`, IR_KEY(6)]);
+    assert.equal(active(), IR_KEY(6));
+  });
+
+  it("a screen re-pointing its own tab (Work Order copy) re-keys it to the new record", () => {
+    openFromMenu(WO(5));
+    useWorkspaceStore.getState().updateTabHref(`${WOS}?id=5`, WO(6));
+    land(WO(6));
+    assert.deepEqual(keys(), [`${WOS}?id=6`]);
+    assert.equal(active(), `${WOS}?id=6`);
+    assert.equal(tabOf(`${WOS}?id=6`).mount, undefined, "re-pointing remounts, as before");
+  });
+});
+
+describe("12. query state", () => {
+  it("a record's inner-view params are kept on its href and restored on return", () => {
+    openFromMenu(`${IR(6)}&tab=lines`);
+    openFromMenu(IR(7));
+    clickTab(IR_KEY(6));
+    assert.equal(urls.at(-1), `${IR(6)}&tab=lines`);
+  });
+});
+
+describe("13. reload / direct URL", () => {
+  it("a record URL opened directly gets its tab", () => {
+    land(IR(6, "edit"));
+    assert.deepEqual(keys(), [IR_KEY(6)]);
+    assert.equal(active(), IR_KEY(6));
+  });
+
+  it("reload restores record tabs; tabs saved by older builds (bare-path keys) are re-keyed and de-duplicated", async () => {
+    globalThis.__workspaceSettings = {
+      tablePreferences: {
+        workspace: {
+          tabs: [
+            { key: RECEIPTS_LIST, href: RECEIPTS_LIST, dirty: false },
+            { key: RECEIPTS, href: IR(6), dirty: false },
+            { key: IR_KEY(6), href: IR(6), dirty: false },
+            { key: STYLE_A, href: STYLE_A, dirty: false, recordLabel: "gulraiz" },
+          ],
+          activeKey: RECEIPTS,
+        },
+      },
+    };
+    await useWorkspaceStore.persist.rehydrate();
+    delete globalThis.__workspaceSettings;
+    assert.deepEqual(keys(), [RECEIPTS_LIST, IR_KEY(6), STYLE_A]);
+    assert.equal(active(), IR_KEY(6));
+  });
+
+  it("instance bookkeeping is never persisted", () => {
+    openFromMenu(`${RECEIPTS}?mode=create`);
+    adoptWorkspaceRecordId(RECEIPTS, 9);
+    const persisted = useWorkspaceStore.persist.getOptions().partialize(useWorkspaceStore.getState());
+    assert.equal(persisted.tabs[0].mount, undefined);
+    assert.equal(persisted.tabs[0].key, IR_KEY(9));
+  });
+});
+
+describe("14. generated registry", () => {
+  it("record forms and their lists are both mountable screens; list routes stay one-tab screens", () => {
+    const generated = readFileSync(new URL("../lib/workspace/registry.generated.ts", import.meta.url), "utf8");
+    for (const path of [RECEIPTS, RECEIPTS_LIST, POS, `${POS}-list`, WOS, `${WOS}-list`]) {
+      assert.ok(generated.includes(`path: "${path}"`), path);
+    }
+    assert.equal(tabKeyForHref(RECEIPTS_LIST), RECEIPTS_LIST);
+  });
+});
+
+describe("record tab titles", () => {
+  const entryByHref = new Map([[RECEIPTS_LIST, { title: "Inventory Receipts", href: RECEIPTS_LIST }]]);
+  it("compose the owning screen's name with the record label; an explicit title still wins", () => {
+    assert.equal(resolveWorkspaceTabTitle({ key: IR_KEY(6), href: IR(6) }, entryByHref).title, "Inventory Receipt");
+    assert.equal(
+      resolveWorkspaceTabTitle({ key: IR_KEY(6), href: IR(6), recordLabel: "IR-6" }, entryByHref).title,
+      "Inventory Receipt [IR-6]"
+    );
+    assert.equal(
+      resolveWorkspaceTabTitle({ key: IR_KEY(6), href: IR(6), title: "Purchase Receipt [IR-6]" }, entryByHref).title,
+      "Purchase Receipt [IR-6]"
+    );
+    assert.equal(resolveWorkspaceTabTitle({ key: RECEIPTS_LIST, href: RECEIPTS_LIST }, entryByHref).title, "Inventory Receipts");
   });
 });

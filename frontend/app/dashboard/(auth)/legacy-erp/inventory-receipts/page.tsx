@@ -22,6 +22,7 @@ import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert 
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText, FieldLabel } from "@/components/forms/form-field";
@@ -139,6 +140,7 @@ export default function InventoryReceiptPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [receiptId, setReceiptId] = useState<number | null>(null);
+  useWorkspaceRecordId(receiptId);
   const [form, setForm] = useState<Record<string, any>>(() =>
     incomingSubcontractTypeLabel
       ? { ...emptyForm, subcontractTypeId: incomingSubcontractTypeId ?? "", subcontractTypeLabel: incomingSubcontractTypeLabel }

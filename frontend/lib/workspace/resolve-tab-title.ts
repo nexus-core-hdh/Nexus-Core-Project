@@ -106,16 +106,18 @@ export function resolveWorkspaceTabTitle(
   tab: { key: string; href: string; title?: string; recordLabel?: string },
   entryByHref: Map<string, ScreenEntry>
 ): ResolvedTabTitle {
+  // A record tab's key is `path?id=<record>` (see resolveTabKey) — the screen is its path part.
+  const [path, recordIdentity] = tab.key.split("?");
   if (tab.title) {
-    return { title: tab.title, icon: entryByHref.get(tab.key)?.icon };
+    return { title: tab.title, icon: entryByHref.get(path)?.icon };
   }
 
-  const exact = entryByHref.get(tab.key);
-  if (exact) {
+  const exact = entryByHref.get(path);
+  if (exact && !recordIdentity) {
     return { title: exact.title, icon: exact.icon };
   }
 
-  const owner = findOwningEntry(tab.key, entryByHref);
+  const owner = findOwningEntry(path, entryByHref);
   if (owner) {
     const base = singularize(owner.title);
     if (tab.recordLabel) {
@@ -127,5 +129,5 @@ export function resolveWorkspaceTabTitle(
     return { title: prefix ? `${prefix}${base}` : base, icon: owner.icon };
   }
 
-  return { title: humanizeFallback(tab.key) };
+  return { title: humanizeFallback(path) };
 }
