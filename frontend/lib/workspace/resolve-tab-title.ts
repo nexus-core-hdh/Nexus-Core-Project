@@ -121,7 +121,8 @@ export function resolveWorkspaceTabTitle(
     if (tab.recordLabel) {
       return { title: `${base} [${tab.recordLabel}]`, icon: owner.icon };
     }
-    const mode = resolveMode(tab.href);
+    // A record route's create form (`/style-cards/new`) carries its mode in the path, not `?mode=`.
+    const mode = resolveMode(tab.href) ?? /\/(new|create)$/i.exec(tab.key)?.[1] ?? null;
     const prefix = mode ? MODE_PREFIXES[mode.toLowerCase()] : undefined;
     return { title: prefix ? `${prefix}${base}` : base, icon: owner.icon };
   }

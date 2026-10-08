@@ -53,6 +53,7 @@ interface WorkspaceState extends WorkspacePersisted {
   saveHandlers: Record<string, SaveHandler | undefined>;
   openTab: (tab: OpenTabInput) => void;
   updateTabHref: (key: string, href: string) => void;
+  replaceTab: (oldKey: string, tab: OpenTabInput) => void;
   closeTab: (key: string) => void;
   closeTabs: (keys: string[]) => void;
   activateTab: (key: string) => void;
@@ -126,6 +127,8 @@ const backendStorage: PersistStorage<WorkspacePersisted> = {
 // sidebar/search becomes an entry here. One tab per registered module (see
 // lib/workspace/registry.tsx), reused across records: opening a different record
 // from a list updates the existing tab's href instead of creating a new one.
+// Record pages (dynamic `[id]` routes) are the exception: one tab per opened record,
+// keyed by its own pathname (see hooks/use-record-tab-sync.ts).
 // Persisted to the database (not sessionStorage) so tabs and My Menu restore after
 // logout/login and aren't lost when the browser tab closes.
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -166,6 +169,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           if (!current || current.href === href) return state;
           return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, href } : t)) };
         }),
+
+      // Re-keys one tab in place (same position) and activates it — for a record tab whose identity
+      // changes under it, e.g. a "New" record form whose save swaps its URL for the created record's.
+      replaceTab: (oldKey, tab) =>
+        set((state) => ({
+          tabs: state.tabs
+            .filter((t) => t.key === oldKey || t.key !== tab.key)
+            .map((t) => (t.key === oldKey ? { ...tab, dirty: false } : t)),
+          activeKey: tab.key,
+        })),
 
       closeTab: (key) => {
         const { tabs, activeKey } = get();

@@ -20,9 +20,35 @@ export interface WorkspaceModule {
 // keep working as normal Next.js pages, just without a Workspace tab. In this
 // codebase that's mostly the demo/template pages (Academy, Mail, Kanban, ...)
 // carried over from the starter kit, not the ERP's own business screens.
-import { GENERATED_WORKSPACE_MODULES } from "./registry.generated";
+import { GENERATED_RECORD_ROUTES, GENERATED_WORKSPACE_MODULES } from "./registry.generated";
 
 export const WORKSPACE_MODULES: WorkspaceModule[] = GENERATED_WORKSPACE_MODULES;
+
+// Record (dynamic-segment) routes, e.g. /dashboard/plm/style-cards/[id]. Not mountable by the stack
+// (see the generator), so they render as ordinary Next.js pages — but each opened record still gets
+// its own tab, keyed by its concrete pathname (record identity included), so navigating to another
+// screen keeps it in the tab bar to come back to.
+const RECORD_ROUTE_PATTERNS = GENERATED_RECORD_ROUTES.map((pattern) => ({
+  pattern,
+  // Route paths here are only [a-z0-9-/] plus `[param]` segments, so swapping each segment for a capture group is enough.
+  regex: new RegExp("^" + pattern.replace(/\[[^/\]]+\]/g, "([^/]+)") + "$"),
+}));
+
+/** The record route pattern a pathname belongs to (ignoring query string) — undefined for static
+ *  workspace modules (those always win) and for anything else. */
+export function findRecordRoute(pathname: string): string | undefined {
+  const path = pathname.split("?")[0];
+  if (MODULES_BY_PATH.has(path)) return undefined;
+  return RECORD_ROUTE_PATTERNS.find((r) => r.regex.test(path))?.pattern;
+}
+
+/** True for a record route opened on its create form (`.../new`, `.../create`) rather than an existing record. */
+export function isNewRecordPath(pathname: string): boolean {
+  const pattern = findRecordRoute(pathname);
+  if (!pattern) return false;
+  const values = RECORD_ROUTE_PATTERNS.find((r) => r.pattern === pattern)!.regex.exec(pathname.split("?")[0])!.slice(1);
+  return values.some((v) => v === "new" || v === "create");
+}
 
 const MODULES_BY_PATH = new Map(WORKSPACE_MODULES.map((m) => [m.path, m]));
 

@@ -39,18 +39,26 @@ function isMountable(filePath) {
   return true;
 }
 
-function walk(dir, segments) {
+// Dynamic-segment routes (`[id]`, `[slug]`, ...) — record/detail pages. They aren't addressable by a
+// single static import path and read their record id from the live URL (useParams), so they can't be
+// kept mounted by the Workspace stack and stay ordinary Next.js pages. Their patterns are still
+// emitted so each opened record gets its own Workspace tab (see findRecordRoute in registry.tsx).
+const recordRoutes = [];
+
+function walk(dir, segments, dynamic = false) {
   const entries = readdirSync(dir, { withFileTypes: true });
   const routes = [];
   for (const entry of entries) {
     if (entry.isDirectory()) {
       // Private folders (leading `_`) are excluded from Next.js's router.
-      // Dynamic segments (`[id]`) aren't addressable by a single static
-      // import path, so they're excluded — menu-linked screens are always
-      // static list/overview routes, never a bare `[id]` route.
-      if (entry.name.startsWith("_") || entry.name.includes("[")) continue;
-      routes.push(...walk(path.join(dir, entry.name), [...segments, entry.name]));
+      // Catch-all segments (`[...x]`) span a variable number of segments — never a single record.
+      if (entry.name.startsWith("_") || entry.name.startsWith("[...") || entry.name.startsWith("[[...")) continue;
+      routes.push(...walk(path.join(dir, entry.name), [...segments, entry.name], dynamic || entry.name.includes("[")));
     } else if (entry.isFile() && (entry.name === "page.tsx" || entry.name === "page.ts")) {
+      if (dynamic) {
+        recordRoutes.push("/dashboard/" + segments.join("/"));
+        continue;
+      }
       const filePath = path.join(dir, entry.name);
       if (isMountable(filePath)) {
         routes.push(segments);
@@ -78,6 +86,10 @@ import type { WorkspaceModule } from "./registry";
 export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
 ${entries}
 ];
+
+export const GENERATED_RECORD_ROUTES: string[] = [
+${recordRoutes.sort().map((r) => `  ${JSON.stringify(r)},`).join("\n")}
+];
 `;
 
 // Skip the write when nothing changed (line-ending-insensitive, since git autocrlf may store CRLF)
@@ -86,4 +98,4 @@ ${entries}
 const normalize = (t) => t.replace(/\r\n/g, "\n");
 const unchanged = existsSync(OUTPUT_FILE) && normalize(readFileSync(OUTPUT_FILE, "utf8")) === normalize(content);
 if (!unchanged) writeFileSync(OUTPUT_FILE, content, "utf8");
-console.log(`[workspace-registry] ${unchanged ? "Up to date" : "Generated"} ${routes.length} entries -> ${path.relative(FRONTEND_ROOT, OUTPUT_FILE)}`);
+console.log(`[workspace-registry] ${unchanged ? "Up to date" : "Generated"} ${routes.length} entries + ${recordRoutes.length} record routes -> ${path.relative(FRONTEND_ROOT, OUTPUT_FILE)}`);
