@@ -493,3 +493,62 @@ describe("record tab titles", () => {
     assert.equal(resolveWorkspaceTabTitle({ key: RECEIPTS_LIST, href: RECEIPTS_LIST }, entryByHref).title, "Inventory Receipts");
   });
 });
+
+// ── Complete record titles ─────────────────────────────────────────────────────────────────────
+describe("complete record titles", () => {
+  const receiptTitle = (type, kind, no) => `Inventory Receipt [${type}-Purchase Receipt] - [${kind}] - ${no}`;
+  const entryByHref = new Map([[RECEIPTS_LIST, { title: "Inventory Receipts", href: RECEIPTS_LIST }]]);
+  const shown = (key) => resolveWorkspaceTabTitle(tabOf(key), entryByHref).title;
+
+  it("A/B. each receipt keeps its own complete title, byte for byte, as its own tab", () => {
+    const records = [
+      [595, receiptTitle(1, "Trim", "00000595")],
+      [596, receiptTitle(1, "Trim", "00000596")],
+      [597, receiptTitle(2, "Fabric", "00000597")],
+    ];
+    for (const [id, title] of records) {
+      openFromMenu(IR(id));
+      useWorkspaceStore.getState().setTabTitle(IR_KEY(id), title); // what useWorkspaceTabTitle does
+    }
+    assert.deepEqual(keys(), records.map(([id]) => IR_KEY(id)));
+    for (const [id, title] of records) assert.equal(shown(IR_KEY(id)), title);
+  });
+
+  it("C/D. resolved record titles for other entities come through unshortened", () => {
+    const longName = "gulraiz — winter capsule collection, kids outerwear, quilted parka with detachable hood";
+    land(STYLE_A);
+    useWorkspaceStore.getState().setTabRecordLabel(STYLE_A, longName);
+    const styleEntries = new Map([[STYLE_LIST, { title: "Style Cards", href: STYLE_LIST }]]);
+    assert.equal(resolveWorkspaceTabTitle(tabOf(STYLE_A), styleEntries).title, `Style Card [${longName}]`);
+    openFromMenu(WO(212));
+    useWorkspaceStore.getState().setTabTitle(`${WOS}?id=212`, "Work Order [WO-000212] - Kids Parka AW26 - 12,500 pcs");
+    assert.equal(shown(`${WOS}?id=212`), "Work Order [WO-000212] - Kids Parka AW26 - 12,500 pcs");
+  });
+
+  it("F. a title never changes tab identity — reopening the record keeps one tab and its title", () => {
+    openFromMenu(IR(595));
+    useWorkspaceStore.getState().setTabTitle(IR_KEY(595), receiptTitle(1, "Trim", "00000595"));
+    openFromMenu(IR(595, "edit"));
+    assert.deepEqual(keys(), [IR_KEY(595)]);
+    assert.equal(shown(IR_KEY(595)), receiptTitle(1, "Trim", "00000595"));
+  });
+
+  it("G. complete titles are persisted and restored on reload", async () => {
+    openFromMenu(IR(595));
+    useWorkspaceStore.getState().setTabTitle(IR_KEY(595), receiptTitle(1, "Trim", "00000595"));
+    const persisted = useWorkspaceStore.persist.getOptions().partialize(useWorkspaceStore.getState());
+    useWorkspaceStore.setState({ tabs: [], activeKey: null });
+    globalThis.__workspaceSettings = { tablePreferences: { workspace: { tabs: persisted.tabs, activeKey: persisted.activeKey } } };
+    await useWorkspaceStore.persist.rehydrate();
+    delete globalThis.__workspaceSettings;
+    assert.equal(shown(IR_KEY(595)), receiptTitle(1, "Trim", "00000595"));
+  });
+
+  it("E. the tab bar no longer caps tabs at 220px, and every tab exposes its complete title", () => {
+    const bar = readFileSync(new URL("../components/layout/workspace/workspace-tab-bar.tsx", import.meta.url), "utf8");
+    assert.ok(!bar.includes("max-w-[220px]"), "old 220px cap removed");
+    assert.match(bar, /max-w-\[min\(40rem,70vw\)\] shrink-0/, "content-sized, capped, non-shrinking tabs (the strip scrolls)");
+    assert.match(bar, /aria-label=\{title\}/, "accessible name is the complete title");
+    assert.match(bar, /<span title=\{title\} className="min-w-0 flex-1 truncate">\{title\}<\/span>/, "tooltip carries the complete title");
+  });
+});
