@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +39,7 @@ export default function PurchaseOrderFormPage() {
   const isEdit = !!id;
 
   const [existing, setExisting] = useState<PurchaseOrder | null>(null);
+  useWorkspaceRecordLabel(isEdit ? existing?.poNumber || undefined : undefined);
   const [vendorId, setVendorId] = useState("");
   const [branchId, setBranchId] = useState(BRANCHES[0]?.id ?? "");
   const [warehouseId, setWarehouseId] = useState(WAREHOUSES[0]?.id ?? "");

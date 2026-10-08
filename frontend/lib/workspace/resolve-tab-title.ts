@@ -129,5 +129,7 @@ export function resolveWorkspaceTabTitle(
     return { title: prefix ? `${prefix}${base}` : base, icon: owner.icon };
   }
 
-  return { title: humanizeFallback(path) };
+  // No menu presence at all — still show the record the screen reported, same "[...]" composition.
+  const fallback = humanizeFallback(path);
+  return { title: tab.recordLabel ? `${fallback} [${tab.recordLabel}]` : fallback };
 }

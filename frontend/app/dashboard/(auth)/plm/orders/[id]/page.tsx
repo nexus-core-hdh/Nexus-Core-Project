@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ export default function OrderDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [order, setOrder] = useState<any>(null);
+  useWorkspaceRecordLabel(order?.orderNumber || undefined);
   const [loading, setLoading] = useState(true);
   const [statusDialog, setStatusDialog] = useState(false);
   const [newStatus, setNewStatus] = useState('');

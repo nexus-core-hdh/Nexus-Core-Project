@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,6 +25,7 @@ export default function PresentationEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [document, setDocument] = useState<any>(null);
+  useWorkspaceRecordLabel(document?.name || undefined);
   const [slides, setSlides] = useState<Slide[]>([
     { id: "1", title: "Slide 1", content: "Add your content here..." },
   ]);

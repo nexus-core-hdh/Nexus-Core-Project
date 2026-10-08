@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ export default function SpreadsheetEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [document, setDocument] = useState<any>(null);
+  useWorkspaceRecordLabel(document?.name || undefined);
   const [isEditingName, setIsEditingName] = useState(false);
   const [documentName, setDocumentName] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);

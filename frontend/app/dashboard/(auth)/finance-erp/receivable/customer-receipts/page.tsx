@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { Landmark, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +39,7 @@ export default function CustomerReceiptFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [doc, setDoc] = useState<Omit<CustomerReceipt, "id" | "receiptNumber"> & { id?: string; receiptNumber?: string }>(newCustomerReceiptDraft());
+  useWorkspaceRecordLabel(isEdit ? doc.receiptNumber || undefined : undefined);
 
   useEffect(() => {
     if (!id) return;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { Save, FilePlus2, Search, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -99,6 +100,7 @@ export default function SizeDetailPage() {
   const [sizeSetId, setSizeSetId] = useState<number | null>(null);
   useWorkspaceRecordId(sizeSetId);
   const [form, setForm] = useState<SizeSetForm>(emptySetForm);
+  useWorkspaceRecordLabel(sizeSetId ? form.code || undefined : undefined);
   const [mode, setMode] = useState<"view" | "edit" | "create">(initialMode);
   const [saving, setSaving] = useState(false);
   const readOnly = mode === "view";

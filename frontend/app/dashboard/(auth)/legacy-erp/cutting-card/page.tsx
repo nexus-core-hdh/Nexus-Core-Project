@@ -11,6 +11,7 @@
 // changes that.
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,6 +52,7 @@ export default function CuttingCardPage() {
 
   const [workOrderId, setWorkOrderId] = useState<number | null>(initialId ? Number(initialId) : null);
   const [workOrder, setWorkOrder] = useState<any>(null);
+  useWorkspaceRecordLabel(workOrderId ? workOrder?.workOrderNo || undefined : undefined);
   const [customerLabel, setCustomerLabel] = useState<string>("");
   const [styleCard, setStyleCard] = useState<any>(null);
   const [matrix, setMatrix] = useState<ColorMatrix | null>(null);

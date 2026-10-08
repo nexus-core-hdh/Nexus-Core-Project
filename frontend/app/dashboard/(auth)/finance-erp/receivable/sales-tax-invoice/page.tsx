@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { ReceiptText, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -37,6 +38,7 @@ export default function SalesTaxInvoiceFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [doc, setDoc] = useState<Omit<SalesTaxInvoice, "id" | "invoiceNumber"> & { id?: string; invoiceNumber?: string }>(newSalesTaxInvoiceDraft());
+  useWorkspaceRecordLabel(isEdit ? doc.invoiceNumber || undefined : undefined);
 
   useEffect(() => {
     if (!id) return;

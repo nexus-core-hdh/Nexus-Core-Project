@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ export default function CustomEntityPage() {
   const params = useParams();
   const slug = params?.slug as string;
   const [pageData, setPageData] = React.useState<any>(null);
+  useWorkspaceRecordLabel(pageData?.name || undefined);
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const createDialogTriggerRef = React.useRef<(() => void) | null>(null);

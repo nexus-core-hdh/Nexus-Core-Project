@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,6 +113,7 @@ export default function ItemStatementPage() {
 
   const [view, setView] = useState<ViewMode>("overall");
   const [data, setData] = useState<any>(null);
+  useWorkspaceRecordLabel(itemId ? data?.item?.inventoryCode || undefined : undefined);
   const [detailedRows, setDetailedRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

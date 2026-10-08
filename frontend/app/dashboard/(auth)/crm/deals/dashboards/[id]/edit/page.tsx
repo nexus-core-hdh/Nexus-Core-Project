@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { use } from "react";
 import {
@@ -36,6 +37,7 @@ export default function EditDealDashboardPage({ params }: { params: Promise<{ id
   const [saving, setSaving] = React.useState(false);
 
   const [name, setName] = React.useState("");
+  useWorkspaceRecordLabel(name || undefined);
   const [description, setDescription] = React.useState("");
 
   const [text, setText] = React.useState("");

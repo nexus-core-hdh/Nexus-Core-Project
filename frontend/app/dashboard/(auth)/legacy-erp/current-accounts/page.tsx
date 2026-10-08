@@ -217,7 +217,7 @@ export default function CurrentAccountCardPage() {
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Current Account [<this>]" on the Workspace tab.
-  useWorkspaceRecordLabel(accountId ? form.currentAccountCode || undefined : undefined);
+  useWorkspaceRecordLabel(accountId ? [form.currentAccountCode, form.currentAccountName].filter(Boolean).join(" — ") || undefined : undefined);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">

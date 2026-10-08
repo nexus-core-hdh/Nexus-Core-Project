@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ export default function MoodBoardDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [board, setBoard] = useState<any>(null);
+  useWorkspaceRecordLabel(board?.title || undefined);
   const [loading, setLoading] = useState(true);
   const [editDialog, setEditDialog] = useState(false);
   const [statusDialog, setStatusDialog] = useState(false);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { ArrowUpFromLine } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ export default function IssuanceFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [issuanceNumber, setIssuanceNumber] = useState<string | null>(null);
+  useWorkspaceRecordLabel(isEdit ? issuanceNumber || undefined : undefined);
   const [status, setStatus] = useState<IssuanceStatus>("Draft");
 
   const [issuanceDate, setIssuanceDate] = useState(todayIso());

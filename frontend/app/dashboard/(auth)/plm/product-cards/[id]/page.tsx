@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ export default function ProductCardDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [card, setCard] = useState<any>(null);
+  useWorkspaceRecordLabel(card?.productNumber || undefined);
   const [loading, setLoading] = useState(true);
   const [measurementDefs, setMeasurementDefs] = useState<any[]>([]);
   const [swatchCards, setSwatchCards] = useState<any[]>([]);

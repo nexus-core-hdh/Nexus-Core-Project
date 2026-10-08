@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { FileText, CheckCircle2, AlertTriangle, XCircle, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -42,6 +43,7 @@ export default function PurchaseInvoiceFormPage() {
   const isEdit = !!id;
 
   const [existing, setExisting] = useState<PurchaseInvoice | null>(null);
+  useWorkspaceRecordLabel(isEdit ? existing?.invoiceNumber || undefined : undefined);
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
   const [vendorId, setVendorId] = useState("");
   const [poId, setPoId] = useState<string>("");

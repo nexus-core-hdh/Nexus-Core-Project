@@ -552,3 +552,122 @@ describe("complete record titles", () => {
     assert.match(bar, /<span title=\{title\} className="min-w-0 flex-1 truncate">\{title\}<\/span>/, "tooltip carries the complete title");
   });
 });
+
+// ── Record names on screens' tabs (useWorkspaceRecordLabel / useWorkspaceTabTitle) ─────────────────
+// Menu titles below are the REAL ones the resolver sees: MenuItem rows (read from the DB, read-only)
+// and lib/finance-erp/nav.ts's static Finance entries.
+describe("record names in tab titles", () => {
+  const D = "/dashboard";
+  const MENU = new Map(
+    [
+      [`${D}/finance-erp/payable/purchase-orders-list`, "Purchase Order"],
+      [`${D}/finance-erp/payable/purchase-invoices-list`, "Purchase Invoice / GRN Matching"],
+      [`${D}/finance-erp/payable/vendor-bills-list`, "Vendor Bills"],
+      [`${D}/finance-erp/receivable/sales-orders-list`, "Sales Order"],
+      [`${D}/finance-erp/inventory/receipt-list`, "Receipt"],
+      [`${D}/finance-erp/inventory/issuance-list`, "Issuance"],
+      [`${D}/legacy-erp/work-orders-list`, "Work Order"],
+      [`${D}/legacy-erp/purchase-orders-list`, "1 - Purchase Order"],
+      [`${D}/legacy-erp/current-accounts-list`, "Current Account"],
+      [`${D}/plm/costing-sheets`, "Costing Sheets"],
+      [`${D}/plm/style-cards`, "Style Cards"],
+      [`${D}/plm/sample-cards-list`, "Sample Cards"],
+      [`${D}/dockets/order-dockets`, "Order Dockets"],
+    ].map(([href, title]) => [href, { title, href }])
+  );
+  const titleOf = (key, extra = {}) => resolveWorkspaceTabTitle({ key, href: key, ...extra }, MENU).title;
+  const recordTab = (path, id, label) => titleOf(`${D}${path}?id=${id}`, { recordLabel: label });
+
+  it("1-6. Finance documents show '{Screen} [number]' from their own menu entry", () => {
+    assert.equal(recordTab("/finance-erp/payable/purchase-orders", "a1", "PO-001"), "Purchase Order [PO-001]");
+    assert.equal(recordTab("/finance-erp/payable/purchase-invoices", "a2", "INV-001"), "Purchase Invoice / GRN Matching [INV-001]");
+    assert.equal(recordTab("/finance-erp/payable/vendor-bills", "a3", "VB-001"), "Vendor Bill [VB-001]");
+    assert.equal(recordTab("/finance-erp/receivable/sales-orders", "a4", "SO-001"), "Sales Order [SO-001]");
+    assert.equal(recordTab("/finance-erp/inventory/receipt", "a5", "IR-001"), "Receipt [IR-001]");
+    assert.equal(recordTab("/finance-erp/inventory/issuance", "a6", "IS-001"), "Issuance [IS-001]");
+  });
+
+  it("7-9. Work Order, Cutting Card (no menu entry) and Costing Sheet", () => {
+    assert.equal(recordTab("/legacy-erp/work-orders", 212, "WO-000212"), "Work Order [WO-000212]");
+    // Cutting Card has no menu entry at all — the resolver's humanized fallback now keeps the label.
+    assert.equal(recordTab("/legacy-erp/cutting-card", 212, "WO-000212"), "Cutting Card [WO-000212]");
+    assert.equal(titleOf(`${D}/plm/costing-sheets/abc`, { recordLabel: "CS-001" }), "Costing Sheet [CS-001]");
+    assert.equal(titleOf(`${D}/dockets/order-dockets/7`, { recordLabel: "AW26 Kids" }), "Order Docket [AW26 Kids]");
+  });
+
+  it("10-11. Style Card and Sample Card keep their name-based labels", () => {
+    assert.equal(titleOf(`${D}/plm/style-cards/x`, { recordLabel: "gulraiz" }), "Style Card [gulraiz]");
+    assert.equal(titleOf(`${D}/plm/sample-cards?id=4`, { recordLabel: "Summer Tee" }), "Sample Card [Summer Tee]");
+  });
+
+  it("master data: Code — Name", () => {
+    assert.equal(recordTab("/legacy-erp/current-accounts", 53, "S-0053 — Local Market"), "Current Account [S-0053 — Local Market]");
+  });
+
+  it("12. long names stay complete (494e69d)", () => {
+    const long = "Inventory Receipt [1-Purchase Receipt] [Unapproved] - [Trim] - 00000595";
+    assert.equal(titleOf(`${D}/legacy-erp/inventory-receipts?id=595`, { title: long }), long);
+  });
+
+  it("13-14. PO-001 and PO-002 are two distinguishable tabs; reopening PO-001 keeps one", () => {
+    const PO_F = `${D}/finance-erp/payable/purchase-orders`;
+    openFromMenu(`${PO_F}?id=a1`);
+    useWorkspaceStore.getState().setTabRecordLabel(`${PO_F}?id=a1`, "PO-001");
+    openFromMenu(`${PO_F}?id=a2`);
+    useWorkspaceStore.getState().setTabRecordLabel(`${PO_F}?id=a2`, "PO-002");
+    openFromMenu(`${PO_F}?id=a1`);
+    assert.deepEqual(keys(), [`${PO_F}?id=a1`, `${PO_F}?id=a2`]);
+    assert.deepEqual(
+      useWorkspaceStore.getState().tabs.map((t) => resolveWorkspaceTabTitle(t, MENU).title),
+      ["Purchase Order [PO-001]", "Purchase Order [PO-002]"]
+    );
+  });
+
+  it("15. New -> Save turns the New tab into the record's titled tab, no duplicate", () => {
+    const PO_L = `${D}/legacy-erp/purchase-orders`;
+    openFromMenu(`${PO_L}?mode=create`);
+    assert.equal(resolveWorkspaceTabTitle(tabOf(PO_L), MENU).title, "New 1 - Purchase Order");
+    adoptWorkspaceRecordId(PO_L, 1); // save: setPoId(1)
+    useWorkspaceStore.getState().setTabRecordLabel(`${PO_L}?id=1`, "PO-001"); // label hook re-applies on the new key
+    assert.deepEqual(keys(), [`${PO_L}?id=1`]);
+    assert.equal(resolveWorkspaceTabTitle(tabOf(`${PO_L}?id=1`), MENU).title, "1 - Purchase Order [PO-001]");
+  });
+
+  it("16. without a loaded identifier the generic title shows — never 'undefined'/'null'", () => {
+    const t = titleOf(`${D}/finance-erp/payable/purchase-orders?id=a9`, { recordLabel: undefined });
+    assert.equal(t, "Purchase Order");
+    assert.equal(titleOf(`${D}/legacy-erp/cutting-card?id=1`), "Cutting Card");
+  });
+});
+
+describe("record-name hooks are wired safely in every screen", () => {
+  const SCREENS = [
+    "finance-erp/payable/purchase-orders", "finance-erp/payable/purchase-invoices", "finance-erp/payable/vendor-bills",
+    "finance-erp/payable/vendor-payments", "finance-erp/payable/debit-notes", "finance-erp/receivable/sales-orders",
+    "finance-erp/receivable/sales-invoices", "finance-erp/receivable/sales-tax-invoice", "finance-erp/receivable/credit-notes",
+    "finance-erp/receivable/customer-receipts", "finance-erp/inventory/receipt", "finance-erp/inventory/issuance",
+    "finance-erp/inventory/demand", "finance-erp/general-ledger/journal-entries", "finance-erp/fixed-assets/register",
+    "legacy-erp/sizes", "legacy-erp/unit-sets", "legacy-erp/cutting-card", "legacy-erp/cutting-card/entry",
+    "legacy-erp/order-manufacturing-entry", "legacy-erp/order-manufacturing-entry/entry", "legacy-erp/item-statement",
+    "legacy-erp/current-accounts", "legacy-erp/fabric-cards", "legacy-erp/yarn-cards", "legacy-erp/trim-inventory-cards",
+    "plm/costing-sheets/[id]", "plm/orders/[id]", "plm/product-cards/[id]", "plm/mood-boards/[id]",
+    "dockets/order-dockets/[id]", "dockets/product-dockets/[id]", "dockets/sample-dockets/[id]", "dockets/style-dockets/[id]",
+    "dockets/setup/docket-templates/[id]", "pages/orders/[id]", "pages/custom-entities/[slug]", "crm/settings/pdf-reports/[id]",
+    "crm/deals/dashboards/[id]/edit", "crm/settings/auto-numbering/[entity]", "collaboration/documents/editor/[id]",
+    "collaboration/documents/board/[id]", "collaboration/documents/presentation/[id]", "collaboration/documents/spreadsheet/[id]",
+  ];
+  const HOOK = /^  useWorkspace(RecordLabel|TabTitle)\((.*)\);\r?$/;
+
+  it(`each of the ${SCREENS.length} screens calls one title hook unconditionally, before any early return, defaulting to undefined`, () => {
+    for (const screen of SCREENS) {
+      const src = readFileSync(new URL(`../app/dashboard/(auth)/${screen}/page.tsx`, import.meta.url), "utf8").split(/\r?\n/);
+      const start = src.findIndex((l) => /^export default (async )?function/.test(l));
+      const hooks = src.map((l, i) => (HOOK.test(l) ? i : -1)).filter((i) => i >= 0);
+      assert.equal(hooks.length, 1, `${screen}: exactly one top-level title hook`);
+      const firstReturn = src.findIndex((l, i) => i > start && /^  (if \(.*\)\s*(return\b|\{$)|return \()/.test(l));
+      assert.ok(hooks[0] > start && hooks[0] < firstReturn, `${screen}: hook (line ${hooks[0] + 1}) must precede the first return (line ${firstReturn + 1})`);
+      const expr = HOOK.exec(src[hooks[0]])[2];
+      assert.match(expr, /undefined\s*\)?$|undefined$/, `${screen}: falls back to undefined, never renders a missing value`);
+    }
+  });
+});

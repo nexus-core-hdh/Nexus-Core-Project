@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,6 +31,7 @@ export default function DocumentEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [document, setDocument] = useState<any>(null);
+  useWorkspaceRecordLabel(document?.name || undefined);
   const [content, setContent] = useState<Content>("");
   const [activeTab, setActiveTab] = useState("home");
   const [isContentLoaded, setIsContentLoaded] = useState(false);

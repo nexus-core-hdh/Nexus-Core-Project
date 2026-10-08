@@ -293,7 +293,7 @@ export default function FabricCardPage() {
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Fabric Card [<this>]" on the Workspace tab.
-  useWorkspaceRecordLabel(itemId ? form.inventoryCode || undefined : undefined);
+  useWorkspaceRecordLabel(itemId ? [form.inventoryCode, form.inventoryName].filter(Boolean).join(" — ") || undefined : undefined);
 
   // Live client-side preview of the backend's own naming convention (fabric-card.service.ts's
   // buildIdentityName) — used only while form.inventoryName is still empty, i.e. a NEW/unsaved

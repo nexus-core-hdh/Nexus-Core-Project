@@ -3,6 +3,7 @@
 // Product docket detail — same structure as style/sample docket detail
 // Only difference: back navigation goes to product-dockets list
 import { useEffect, useState, useCallback } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +50,7 @@ export default function ProductDocketDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [docket, setDocket] = useState<any>(null);
+  useWorkspaceRecordLabel(docket?.title || undefined);
   const [loading, setLoading] = useState(true);
   const [recalculating, setRecalculating] = useState(false);
   const [locking, setLocking] = useState(false);

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { use } from "react";
 import { useRouter } from "next/navigation";
 import { pdfReportApi } from "@/lib/api";
@@ -15,6 +16,7 @@ export default function PdfReportDetailPage({ params }: { params: Promise<{ id: 
   const { id } = use(params);
   const router = useRouter();
   const [report, setReport] = React.useState<any>(null);
+  useWorkspaceRecordLabel(report?.name || undefined);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {

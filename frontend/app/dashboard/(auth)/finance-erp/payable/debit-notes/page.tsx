@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { FileMinus } from "lucide-react";
 import { toast } from "sonner";
@@ -26,6 +27,7 @@ export default function DebitNoteFormPage() {
   const isEdit = !!id;
 
   const [existing, setExisting] = useState<DebitNote | null>(null);
+  useWorkspaceRecordLabel(isEdit ? existing?.debitNoteNumber || undefined : undefined);
   const [vendorId, setVendorId] = useState("");
   const [date, setDate] = useState(todayIso());
   const [referenceInvoice, setReferenceInvoice] = useState("");

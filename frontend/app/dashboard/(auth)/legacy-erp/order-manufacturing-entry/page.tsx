@@ -9,6 +9,7 @@
 // screen re-reads the DB.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -59,6 +60,7 @@ export default function OrderManufacturingEntryPage() {
   const [workOrderId, setWorkOrderId] = useState<number | null>(idParam ? Number(idParam) : null);
   const [processId, setProcessId] = useState<number | null>(processParam ? Number(processParam) : null);
   const [ctx, setCtx] = useState<Context | null>(null);
+  useWorkspaceRecordLabel(ctx?.workOrder.workOrderNo || undefined);
   const [selectedColor, setSelectedColor] = useState<string | null>(searchParams.get("color"));
   const [loading, setLoading] = useState(false);
   const [priceOpen, setPriceOpen] = useState(false);

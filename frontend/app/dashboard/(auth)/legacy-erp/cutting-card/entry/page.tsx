@@ -18,6 +18,7 @@
 // — nothing on this screen is a fake/static display field anymore.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -102,6 +103,7 @@ export default function CuttingEntryPage() {
   const productionColor = searchParams.get("color") || "";
 
   const [workOrder, setWorkOrder] = useState<any>(null);
+  useWorkspaceTabTitle(workOrder?.workOrderNo ? `Cutting Entry [${[workOrder.workOrderNo, productionColor].filter(Boolean).join(" · ")}]` : undefined);
   const [styleCard, setStyleCard] = useState<any>(null);
   const [fabrics, setFabrics] = useState<ApplicableFabric[]>([]);
   const [loadingFabrics, setLoadingFabrics] = useState(false);

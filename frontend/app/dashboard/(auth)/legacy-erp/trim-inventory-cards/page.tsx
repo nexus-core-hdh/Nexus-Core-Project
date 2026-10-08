@@ -221,7 +221,7 @@ export default function TrimInventoryCardPage() {
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Trim Card [<this>]" on the Workspace tab.
-  useWorkspaceRecordLabel(itemId ? form.inventoryCode || undefined : undefined);
+  useWorkspaceRecordLabel(itemId ? [form.inventoryCode, form.inventoryName].filter(Boolean).join(" — ") || undefined : undefined);
 
   const lookupField = (key: LookupKey, label: string, formKey: string, span: "normal" | "wide" = "normal") => (
     <LookupField
