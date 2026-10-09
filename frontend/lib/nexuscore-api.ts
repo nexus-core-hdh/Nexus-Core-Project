@@ -124,6 +124,14 @@ const entities = (path: string, q?: Record<string, string>) => {
 
 export const entitiesApi = {
   getCustomFields: (entity: string) => api.get(entities('/custom-fields', { entity })),
+  // Administration > User Defined Fields — every field (active or not) with its value count, and the
+  // definition writes (settings:create/update/delete; scope/immutability/delete-safety enforced
+  // server-side by custom-fields.service.ts).
+  listCustomFieldsAdmin: (entity?: string) => api.get(entities('/custom-fields', entity ? { entity, admin: '1' } : { admin: '1' })),
+  createCustomField: (d: any) => api.post(entities('/custom-fields'), d),
+  updateCustomField: (id: string, d: any) => api.patch(entities(`/custom-fields/${id}`), d),
+  reorderCustomFields: (entity: string, ids: string[]) => api.post(entities('/custom-fields/reorder'), { entity, ids }),
+  deleteCustomField: (id: string) => api.delete(entities(`/custom-fields/${id}`)),
   getCustomFieldValues: (entity: string, entityId: string) => api.get(entities('/custom-field-values', { entity, entityId })),
   upsertCustomFieldValues: (entity: string, entityId: string, values: any[]) =>
     api.put(entities('/custom-field-values'), { entity, entityId, values }),
@@ -1190,6 +1198,60 @@ export const auditApi = {
   listModules: () => api.get<string[]>('/audit/logs/filters/modules'),
   listActions: () => api.get<string[]>('/audit/logs/filters/actions'),
   listEntityTypes: () => api.get<string[]>('/audit/logs/filters/entity-types'),
+};
+
+// Dashboard "Recent Activity" — newest real records (AuditLog events + Finance payments/sales
+// orders), merged and limited server-side (dashboard.service.ts).
+export interface RecentActivityItem {
+  id: string;
+  kind: 'sale' | 'purchase' | 'payment' | 'receipt' | 'item' | 'stock' | 'other';
+  label: string;
+  documentNo: string | null;
+  action: string;
+  amount: number | null;
+  currency: string | null;
+  party: string | null;
+  partyPrefix: 'from' | 'to' | null;
+  userName: string | null;
+  occurredAt: string;
+}
+
+// Dashboard "Recent Transactions" — latest real Sales Orders / Purchase Orders / Payments /
+// Financial + inventory Receipts, filtered by type and limited server-side (dashboard.service.ts).
+export type RecentTransactionType = 'sale' | 'purchase' | 'payment' | 'receipt';
+export interface RecentTransaction {
+  id: string;
+  type: RecentTransactionType;
+  subtype: string | null;
+  recordId: string;
+  reference: string | null;
+  party: string | null;
+  date: string | null;
+  amount: number | null;
+  currency: string | null;
+  status: string | null;
+  // Inventory receipts only: selects that receipt type's View screen and display label.
+  receiptType?: number;
+  subcontractType?: string | null;
+}
+
+// Dashboard order KPIs — Work Orders counted server-side for one date range (dashboard.service.ts).
+export interface OrderKpiCounts { total: number; running: number; completed: number; pending: number; cancelled: number }
+export interface OrderKpisResponse {
+  from: string; to: string; previousFrom: string; previousTo: string;
+  current: OrderKpiCounts;
+  previous: OrderKpiCounts;
+  delayed: number;
+  spark: Record<keyof OrderKpiCounts, number[]>;
+}
+
+export const dashboardApi = {
+  recentActivity: (take = 8) => api.get<RecentActivityItem[]>(`/dashboard/recent-activity?take=${take}`),
+  // from/to are exact instants: the caller's local start of the first day / end of the last day.
+  orderKpis: (from: Date, to: Date) =>
+    api.get<OrderKpisResponse>(`/dashboard/order-kpis?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`),
+  recentTransactions: (type: RecentTransactionType | 'all' = 'all', take = 8) =>
+    api.get<RecentTransaction[]>(`/dashboard/recent-transactions?type=${type}&take=${take}`),
 };
 
 // Recipe Usage ("Where Used") — one shared endpoint behind Fabric/Yarn/Trim/Inventory Cards' own

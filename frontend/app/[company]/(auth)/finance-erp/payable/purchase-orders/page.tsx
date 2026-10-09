@@ -116,7 +116,7 @@ export default function PurchaseOrderFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold">Line Items</div>
+        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Line Items</div>
         <LineItemsTable
           columns={columns}
           rows={items}

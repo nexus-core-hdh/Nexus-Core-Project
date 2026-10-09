@@ -388,7 +388,7 @@ export function YarnRecipeDialog({ open, onOpenChange, fabricInventoryId, fabric
               <p className="p-6 text-sm text-muted-foreground">Loading...</p>
             ) : (
               <Table className="table-fixed" style={{ minWidth: 1340 }}>
-                <TableHeader className="sticky top-0 z-10 bg-muted/40">
+                <TableHeader className="sticky top-0 z-10 bg-background">
                   <TableRow className="[&>th]:border-r [&>th]:text-xs [&>th]:font-semibold [&>th]:h-10 [&>th]:whitespace-nowrap">
                     <TableHead style={{ width: 44 }} className="text-center">#</TableHead>
                     <TableHead style={{ width: 100 }}>Inventory Code</TableHead>

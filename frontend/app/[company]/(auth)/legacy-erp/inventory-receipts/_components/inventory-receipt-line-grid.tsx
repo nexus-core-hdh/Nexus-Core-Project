@@ -3,10 +3,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useRouter } from "@/lib/app-navigation";
 import { legacyErpApi, plmApi, fetchAllPages } from "@/lib/nexuscore-api";
+import { loadSavedInventoryItems } from "@/lib/legacy-erp/saved-line-refs";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
-import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
@@ -21,7 +21,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
-import { Search, Plus, Trash2, ListOrdered, Layers } from "lucide-react";
+import { Search, Plus, Trash2, ListOrdered, Layers, X } from "lucide-react";
+import { InventoryCardsLookupDialog } from "@/components/legacy-erp/inventory-cards-lookup-dialog";
+import { WorkOrdersLookupDialog } from "@/components/legacy-erp/work-orders-lookup";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
@@ -88,7 +90,7 @@ type ColKey =
   | "forexVatAmount" | "forexVatBase" | "forexWithholdingAmount1" | "forexWithholdingAmount2" | "netItemForexAmount"
   | "closed" | "qcApproved" | "usedQuantity" | "returnQuantity" | "nonAllocatableQuantity" | "reservedQuantity"
   | "checked" | "taxExempt" | "customerOrderNo" | "packageQuantity" | "packageNo" | "packageCode"
-  | "manProductCode" | "manufacturingOrder" | "workOrderNo" | "workOrderCertification"
+  | "manProductCode" | "legacyManufacturingOrder" | "workOrderNo" | "workOrderCertification"
   | "vatReportGroupingField1" | "vatReportGroupingField2" | "routeExplanation" | "routeProcesses"
   | "ipac" | "ipacNo" | "ipacDocumentNo" | "remarks" | "shippingMarks"
   | "poNo";
@@ -137,7 +139,6 @@ const COLUMNS: ColumnDef[] = [
   ro("lastPurchasePrice", "Last Purchase Price", "number"),
   { key: "specialCode", label: "Special Code", align: "left", editable: true, kind: "text" },
   { key: "explanation", label: "Explanation", align: "left", editable: true, kind: "text" },
-  ro("manufacturingOrderNo", "Manufacturing Order No", "text", "manufacturingOrderNo"),
   ro("partyNo", "Party (Lot No)", "text", "partyNo"),
   ro("accountCode", "Account Code", "text"),
   ro("accountName", "Account Name", "text"),
@@ -244,13 +245,20 @@ const COLUMNS: ColumnDef[] = [
   ro("packageNo", "Package No", "number", "packageNo"),
   ro("packageCode", "Package Code", "text"),
   ro("manProductCode", "Man.Product Code", "text"),
-  ro("manufacturingOrder", "Manufacturing Order", "text"),
-  // Work Order No — special-cased in render (like PO NO below): reads the dedicated
-  // LineRow.workOrderNo display field, not extra[dataKey], since a fresh Planning-prefilled line
-  // has its real display text immediately (from PlanningPrefillLine.workOrderNo) but no `extra`
-  // yet (nothing has been saved/reloaded). No dataKey here — the generic ro() fallback would
-  // otherwise show the raw WorkOrderReceiptItemId integer, not a human-readable Work Order No.
-  ro("workOrderNo", "Work Order No", "text"),
+  // No IM_ReceiptItem column backs this (always "—"); hidden by default (LEGACY_HIDDEN_COLS), and
+  // labelled apart from the real Manufacturing Order column below.
+  ro("legacyManufacturingOrder", "Manufacturing Order (no data)", "text"),
+  // Manufacturing Order — the legacy free-text reference IM_ReceiptItem.ManufacturingOrderNo,
+  // shown read-only exactly as stored. Independent of the Work Order link next to it: this screen
+  // never sends it (buildDto has no such field), so picking or clearing a Work Order leaves it as
+  // is. Original "manufacturingOrderNo" key, so saved layouts keep their own setting for it.
+  ro("manufacturingOrderNo", "Manufacturing Order", "text", "manufacturingOrderNo"),
+  // Work Order — the line's real order link, IM_ReceiptItem.WorkOrderReceiptItemId (see
+  // LineRow.workOrderReceiptItemId), picked through the Work Orders List popup
+  // (WorkOrdersLookupDialog) Purchase Order's grid also uses. Special-cased in render: shows LineRow.workOrderNo (display text,
+  // set on pick/prefill/import or resolved server-side on load), never the raw line id. Keeps the
+  // old "workOrderNo" key so saved layouts keep this column's position and width.
+  { key: "workOrderNo", label: "Work Order", align: "left", editable: true, kind: "text" },
   ro("workOrderCertification", "Work Order Certification", "text"),
   ro("vatReportGroupingField1", "VAT Report Grouping Field-1", "text", "vatListGField01"),
   ro("vatReportGroupingField2", "VAT Report Grouping Field-2", "text", "vatListGField02"),
@@ -274,6 +282,10 @@ const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 // FIXED_COLS (purchase-order-line-grid.tsx), applied here to the same three columns.
 const FIXED_COLS: ColKey[] = ["type", "code", "name"];
 
+// The data-less Manufacturing Order placeholder: hidden by default, for existing saved layouts too
+// (useGridColumns hideNewDefaultHiddenColumns), still available through Manage Columns.
+const LEGACY_HIDDEN_COLS: ColKey[] = ["legacyManufacturingOrder"];
+
 // Column resize/reorder/hide/persist mechanics now live in the shared useGridColumns hook
 // (hooks/use-grid-columns.ts). storageKey "irLineGrid" below reproduces the exact
 // tablePreferences keys already saved for existing users (irLineGridColumnOrder /
@@ -281,9 +293,13 @@ const FIXED_COLS: ColKey[] = ["type", "code", "name"];
 
 const DEFAULT_WIDTHS: Record<ColKey, number> = Object.fromEntries(
   COLUMNS.map((c) => {
+    // Shared columns follow purchase-order-line-grid.tsx's own DEFAULT_WIDTHS (Type/Code/Name/
+    // Gross Quantity/Color/Rate; its Manufacturing Order lookup cell's 180 for the two order
+    // columns, whose Work Order cell carries a search icon and a clear button).
     const overrides: Partial<Record<ColKey, number>> = {
-      type: 110, code: 140, name: 260, explanation: 200, specialCode: 130,
+      type: 116, code: 148, name: 280, explanation: 200, specialCode: 130,
       quantity: 100, unit: 90, price: 110, forex: 100, itemOrderNo: 96, itemId: 96,
+      grossQuantity: 120, color: 120, rate: 100, manufacturingOrderNo: 180, workOrderNo: 180,
     };
     return [c.key, overrides[c.key] ?? (c.align === "right" ? 110 : 150)];
   }),
@@ -294,9 +310,12 @@ const DEFAULT_WIDTHS: Record<ColKey, number> = Object.fromEntries(
 // handful of overrides for the columns that actually get typed into or carry long labels.
 const MIN_WIDTHS: Record<ColKey, number> = Object.fromEntries(
   COLUMNS.map((c) => {
+    // Also enforced over saved widths (useGridColumns clamps restored widths to minWidth), so a
+    // layout saved when Work Order was a narrow text column still fits its lookup cell.
     const overrides: Partial<Record<ColKey, number>> = {
       type: 96, code: 104, name: 150, explanation: 130, specialCode: 100,
       quantity: 82, unit: 70, price: 90, forex: 76, itemOrderNo: 80, itemId: 80,
+      grossQuantity: 96, color: 90, rate: 80, manufacturingOrderNo: 150, workOrderNo: 150,
     };
     return [c.key, overrides[c.key] ?? (c.align === "right" ? 70 : 90)];
   }),
@@ -310,8 +329,6 @@ const FIRST_COL_BORDER = "border-l border-border";
 const EDITOR_CONTROL = "h-full! w-full min-w-0 rounded-none border-0 bg-background px-3.5 text-[13px] font-medium shadow-none focus-visible:ring-0";
 const EDITOR_WRAP = "flex h-12 items-stretch";
 const DEL_W = 44;
-
-const INVENTORY_CARDS_LIST_PATH = "/legacy-erp/inventory-cards-list";
 
 // Same "no lookup/enum table for item type" situation as Purchase Order's own grid — Inventory
 // only, matching the reference screenshot (no Service/Fixed Asset rows shown there).
@@ -518,10 +535,26 @@ interface Props {
   initialLines?: PlanningPrefillLine[];
 }
 
+// A Work Order header (MA_WorkOrder) -> the link a receipt line stores: its CURRENT live line
+// (IM_ReceiptItem.WorkOrderReceiptItemId -> MA_WorkOrderItem) plus its WorkOrderNo for display.
+// Same "primary line" convention the Planning prefill effect below resolves with (listItems()
+// returns only non-deleted lines, ordered by ItemOrderNo/RecId). null = no live line to link.
+async function resolveWorkOrderLink(workOrderId: number, knownWorkOrderNo?: string): Promise<{ workOrderReceiptItemId: number; workOrderNo: string } | null> {
+  const [items, header]: any[] = await Promise.all([
+    legacyErpApi.workOrders.listItems(workOrderId),
+    knownWorkOrderNo ? Promise.resolve(null) : legacyErpApi.workOrders.get(workOrderId),
+  ]);
+  const lineId = Array.isArray(items) && items.length ? Number(items[0].id) : null;
+  if (lineId == null) return null;
+  return { workOrderReceiptItemId: lineId, workOrderNo: knownWorkOrderNo ?? header?.workOrderNo ?? "" };
+}
+
 export interface ImportedPendingLine {
   inventoryId: number; code: string; name: string; quantity: number;
   unitId: number | null; unit: string; unitPrice: number | null; orderReceiptItemId: number; poReceiptNo: string;
   colorCardId: string | null;
+  /** The source order line's own Work Order (IM_OrderReceiptItem.ManufacturingOrderId -> MA_WorkOrder), if any. */
+  manufacturingOrderId: number | null;
   variants: { inventoryVariantId: number; quantity: number; netUnitPrice: number | null; orderReceiptItemVariantId: number }[];
 }
 
@@ -542,7 +575,7 @@ export interface InventoryReceiptLineGridHandle {
    *  Reuses the exact same draft-vs-persisted branching persistRow/commitDrafts already have:
    *  on an already-saved receipt these persist immediately; on a new/unsaved one they become
    *  ordinary drafts that the existing commitDrafts() creates for real on Save. */
-  importLines: (lines: ImportedPendingLine[]) => void;
+  importLines: (lines: ImportedPendingLine[]) => Promise<void>;
   /** PO line ids already present on this grid (persisted or still-draft) — lets the Pending
    *  Orders dialog exclude lines already imported, even before the receipt is saved. */
   getImportedOrderReceiptItemIds: () => number[];
@@ -634,6 +667,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialLines, inventoryReceiptId]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [woLookupClientId, setWoLookupClientId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
   // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
@@ -724,17 +758,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     plmApi.colors.list().then((r: any) => setColorOptions(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
 
-  // IM_Item.InventoryCode/InventoryName via the same inventoryCards.list() aggregation Code's
-  // lookup dialog and hydrateCodesNames already read from — no separate Inventory Card table,
-  // no duplicated data. Every row is Type=Inventory on this grid (no Fixed Asset/Service split
-  // here, unlike Purchase Order), so unlike PO's own inventoryCodeOptions this isn't filtered
-  // by sourceType.
-  const inventoryCodeOptions = useMemo(
-    () => inventoryOptions.map((o) => ({ id: String(o.id), code: o.inventoryCode, name: o.inventoryName })),
-    [inventoryOptions],
-  );
-  // Resolves a picked suggestion's id back to the full record (stockOnHand/lastPurchasePrice
-  // etc.) — same purpose as purchase-order-line-grid.tsx's own inventoryById.
+  // Resolves an inventory id back to its Inventory Card List record (sourceType etc.) — same
+  // purpose as purchase-order-line-grid.tsx's own inventoryById.
   const inventoryById = useMemo(() => new Map(inventoryOptions.map((o) => [String(o.id), o])), [inventoryOptions]);
 
   // Right-click menu — "Generate Serial Card" (Fabric receipt lines only; see
@@ -774,18 +799,15 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
-    try {
-      const all: any = await fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req));
-      const byId = new Map<string, any>((Array.isArray(all) ? all : []).map((r: any) => [String(r.id), r]));
-      return list.map((row) => {
-        if (!row.inventoryId) return row;
-        const match = byId.get(String(row.inventoryId));
-        if (!match) return row;
-        return { ...row, code: match.inventoryCode, name: match.inventoryName, stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
-      });
-    } catch {
-      return list;
-    }
+    // Shared saved-line resolver: Inventory Card List, then the by-id master lookup for any id
+    // the list doesn't return (lib/legacy-erp/saved-line-refs.ts).
+    const byId = await loadSavedInventoryItems(list.map((row) => row.inventoryId));
+    return list.map((row) => {
+      if (!row.inventoryId) return row;
+      const match = byId.get(String(row.inventoryId));
+      if (!match) return row;
+      return { ...row, code: match.inventoryCode, name: match.inventoryName, stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null };
+    });
   };
 
   const hydrateForex = async (list: LineRow[]): Promise<LineRow[]> => {
@@ -879,7 +901,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     extra: r,
   });
 
+  // Only the newest load may write rows: on a first Save this grid stays mounted while its id
+  // changes, so the id-change load and commitDrafts()'s own reload overlap — an earlier, staler
+  // response must not land last.
+  const loadSeqRef = useRef(0);
   const load = async (idOverride?: number | null) => {
+    const seq = ++loadSeqRef.current;
     const id = idOverride ?? inventoryReceiptId;
     if (!id) {
       // Don't stomp a Planning-row prefill that the lazy useState initializer (or the safety-net
@@ -897,6 +924,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
       const withUnits = await hydrateUnits(withForex);
       const withColors = await hydrateColors(withUnits);
       const withVariants = await hydrateVariants(withColors);
+      if (seq !== loadSeqRef.current) return;
       setRows(withVariants.length ? withVariants : [emptyLine()]);
       // Prefetch each distinct item's own valid units so the Unit cell's dropdown is ready the
       // moment a saved line is opened for edit — same prefetch purchase-order-line-grid.tsx's
@@ -904,10 +932,11 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
       Array.from(new Set(withUnits.map((r) => r.inventoryId).filter((id): id is number => id != null)))
         .forEach((id) => ensureItemUnitsLoaded(id));
     } catch (e: any) {
+      if (seq !== loadSeqRef.current) return;
       toast.error(e.message || "Failed to load purchase receipt lines");
       setRows([emptyLine()]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
@@ -949,10 +978,12 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // Colour — IM_ReceiptItem.ColorCardId, carried across from the source PO line at import
     // time (see importLines below); undefined for every manually-added line.
     colorCardId: row.colorCardId ?? undefined,
-    // Work Order — IM_ReceiptItem.WorkOrderReceiptItemId, resolved from a Planning-menu prefill
-    // (see the resolvePrimaryItemId effect above); undefined for every manually-added line, same
-    // "only sent when real" convention as every other optional FK here.
-    workOrderReceiptItemId: row.workOrderReceiptItemId ?? undefined,
+    // Work Order — IM_ReceiptItem.WorkOrderReceiptItemId, from a Planning-menu prefill (see the
+    // resolvePrimaryItemId effect above), a Pending Orders import, or the Work Order lookup cell.
+    // Sent as null (not omitted) when empty so clearing the lookup actually clears the link; a
+    // loaded line always carries its real stored value (fromApiRow), so null only ever writes
+    // NULL where there is no link or the user removed it.
+    workOrderReceiptItemId: row.workOrderReceiptItemId,
   }), [round]);
 
   // Variant breakdown — creates each of a just-persisted line's still-pending
@@ -1013,9 +1044,20 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   // left as ordinary drafts and the existing commitDrafts(newId) — already wired into the
   // header's own save() — creates them for real once the header is saved, exactly like any
   // manually-typed draft line.
-  const importLines = (lines: ImportedPendingLine[]) => {
+  const importLines = async (lines: ImportedPendingLine[]) => {
     if (!lines.length) return;
+    // Work Order — carry each source line's own Work Order across as its CURRENT live line (the
+    // same link the Work Order lookup cell stores), resolved BEFORE the rows are created/persisted
+    // so each new line is saved once, with its link. A line without one stays empty.
+    const workOrderIds = Array.from(new Set(lines.map((l) => l.manufacturingOrderId).filter((id): id is number => id != null)));
+    const links = new Map<number, Awaited<ReturnType<typeof resolveWorkOrderLink>>>();
+    await Promise.all(workOrderIds.map(async (id) => {
+      try { links.set(id, await resolveWorkOrderLink(id)); } catch { links.set(id, null); }
+    }));
+    const unlinked = workOrderIds.filter((id) => !links.get(id)).length;
+    if (unlinked) toast.warning(`${unlinked} Work Order link(s) could not be resolved — left empty on the imported lines`);
     const newRows = lines.map((l) => {
+      const link = l.manufacturingOrderId != null ? links.get(l.manufacturingOrderId) : null;
       // Resolve the Unit label from the same already-loaded unitOptions this grid's own "unit"
       // cell Select already uses — a PO line only carries unitId, not a display label.
       const unitMatch = l.unitId != null ? unitOptions.find((u) => String(u.id) === String(l.unitId)) : undefined;
@@ -1032,6 +1074,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         // row itself is persisted (see persistRow/commitDrafts's createPendingVariants call).
         colorCardId: l.colorCardId,
         pendingVariants: l.variants ?? [],
+        ...(link ?? {}),
       });
     });
     setRows((prev) => [...prev.filter((r) => !isBlankLine(r)), ...newRows, emptyLine()]);
@@ -1181,21 +1224,17 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     fetchItemVariantOptions(itemPatch.inventoryId);
   }, [updateRow, fetchItemUnits, fetchItemVariantOptions]);
 
-  const { openFullScreen: openInventoryLookup } = useMasterLookupField(
-    "inventory",
-    (selection) => {
-      if (!pendingClientIdRef.current) return;
-      selectItemOnRow(pendingClientIdRef.current, {
-        inventoryId: Number(selection.id),
-        code: selection.code,
-        name: selection.name,
-      });
-      pendingClientIdRef.current = null;
-    },
-    INVENTORY_CARDS_LIST_PATH,
-  );
-  const pendingClientIdRef = useMemo(() => ({ current: null as string | null }), []);
-  const openLookupForRow = (clientId: string) => { pendingClientIdRef.current = clientId; openInventoryLookup(); };
+  // Item lookup — the Inventory Card List (same view, API, search, paging and worklists as its
+  // Workspace screen) in a modal, so it floats above this grid instead of being a cell-sized
+  // dropdown. The picked row feeds the same selectItemOnRow every item pick goes through.
+  const [inventoryLookupClientId, setInventoryLookupClientId] = useState<string | null>(null);
+  const selectInventoryCard = (clientId: string, card: any) => {
+    selectItemOnRow(clientId, {
+      inventoryId: Number(card.id), code: card.inventoryCode ?? "", name: card.inventoryName ?? "",
+      stockOnHand: typeof card.stockOnHand === "number" ? card.stockOnHand : null,
+      lastPurchasePrice: typeof card.lastPurchasePrice === "number" ? card.lastPurchasePrice : null,
+    });
+  };
 
   const visibleRows = useMemo(
     () => rows.filter((r) => isBlankLine(r) || !searchTerm.trim() ||
@@ -1212,6 +1251,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     storageKey: "irLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
+    defaultHidden: LEGACY_HIDDEN_COLS,
+    hideNewDefaultHiddenColumns: true,
   });
   const displayColumnDefs = useMemo(
     () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
@@ -1269,9 +1310,29 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     setCursor({ clientId: row.clientId, col });
     const def = COLUMN_BY_KEY.get(col);
     if (!def?.editable) return;
+    // Work Order is purely a picker (no typable value) — open the Work Orders List popup, as Purchase
+    // Order's grid does for its own Manufacturing Order cell.
+    if (col === "workOrderNo") { setWoLookupClientId(row.clientId); return; }
+    // Name (the item) is picked through the Inventory Cards List lookup dialog.
+    if (col === "name") { setInventoryLookupClientId(row.clientId); return; }
     preEditSnapshotRef.current = row;
     setEditing(true);
   }, [readOnly]);
+
+  // Work Order lookup — the Work Orders List popup (WorkOrdersLookupDialog: MA_WorkOrder via the
+  // Work Orders List screen's own workOrders.list(), non-deleted, searched by Order No), the same
+  // picker Purchase Order's grid uses. The chosen Work Order is stored as its current live line
+  // (resolveWorkOrderLink), through updateRow's normal commit: persisted at once on a saved
+  // receipt, sent with the drafts on first Save otherwise.
+  const selectWorkOrder = async (clientId: string, workOrder: { id: number | string; name: string }) => {
+    try {
+      const link = await resolveWorkOrderLink(Number(workOrder.id), workOrder.name);
+      if (!link) { toast.error(`${workOrder.name} has no Work Order line to link to`); return; }
+      updateRow(clientId, link, true);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to load the Work Order");
+    }
+  };
 
   const handleStaticKeyDown = useCallback((e: React.KeyboardEvent, row: LineRow, col: ColKey) => {
     switch (e.key) {
@@ -1380,7 +1441,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className={cn(HEADER_H, "bg-muted hover:bg-muted")}>
+          <TableRow className={cn(HEADER_H, "bg-background hover:bg-muted/60")}>
             {displayColumnDefs.map((col, i) => {
               const fixed = FIXED_COLS.includes(col.key);
               return (
@@ -1427,7 +1488,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
               const rowBg = idx % 2 === 1 ? "bg-muted/20" : "bg-card";
 
               const rowEl = (
-                <TableRow key={r.clientId} className={cn(ROW_H, "group transition-colors [&>td]:p-0", "hover:bg-muted/30", rowBg)}>
+                <TableRow key={r.clientId} className={cn(ROW_H, "group transition-colors [&>td]:p-0", "hover:bg-muted/60", rowBg)}>
                   {displayColumnDefs.map((col, i) => {
                     const firstBorder = i === 0 ? FIRST_COL_BORDER : undefined;
 
@@ -1464,12 +1525,25 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       );
                     }
 
-                    // WORK ORDER NO — read-only, Planning menu context (see LineRow.workOrderNo
-                    // comment above).
+                    // WORK ORDER — lookup cell: click / Enter / F2 opens the Work Orders List popup
+                    // (see activateCell); the × clears the link. Read-only screens show the number only.
                     if (col.key === "workOrderNo") {
                       return (
                         <TableCell key={col.key} className={cellCls(r.clientId, "workOrderNo", firstBorder)}>
-                          <div {...staticCellProps(r, "workOrderNo", r.workOrderNo || "—", "left", !r.workOrderNo)} />
+                          <div
+                            {...staticCellProps(r, "workOrderNo", r.workOrderNo || "", "left", !r.workOrderNo)}
+                            title={r.workOrderNo || (readOnly ? undefined : "Select Work Order")}>
+                            {!readOnly && <Search className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                            <span data-col="workOrderNo" className="min-w-0 flex-1 truncate">{r.workOrderNo || (readOnly ? "—" : "")}</span>
+                            {!readOnly && r.workOrderReceiptItemId != null && (
+                              <button
+                                type="button" aria-label="Clear Work Order" title="Clear Work Order"
+                                className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                onClick={(e) => { e.stopPropagation(); updateRow(r.clientId, { workOrderReceiptItemId: null, workOrderNo: "" }, true); }}>
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
                         </TableCell>
                       );
                     }
@@ -1486,48 +1560,19 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                       );
                     }
 
-                    // NAME — smart-search autocomplete relocated here from Code, per spec:
-                    // search/select by Name, Code auto-fills read-only. Same shared
-                    // AutocompleteTextCell + Inventory Card List datasource Code used to search
-                    // (client-side CONTAINS match over inventoryCardsList(), now matching Name
-                    // text too — see autocomplete-text-cell.tsx). Selecting a suggestion
-                    // resolves inventoryId + code + name + stockOnHand + lastPurchasePrice
-                    // together; free-typed text with nothing picked just saves the typed Name
-                    // and leaves inventoryId/Code untouched.
+                    // NAME — the item: click / Enter / F2 opens the Inventory Cards List lookup
+                    // dialog (see activateCell); picking a card fills inventoryId + Code + Name
+                    // (+ Stock On Hand / Last Purchase Price) through selectItemOnRow. Code stays
+                    // read-only, auto-filled from the pick.
                     if (col.key === "name") {
                       return (
                         <TableCell key={col.key} className={cellCls(r.clientId, "name", firstBorder)}>
-                          {isActive(r.clientId, "name") && editing ? (
-                            <div className={cn(EDITOR_WRAP, "gap-0")}>
-                              <AutocompleteTextCell
-                                autoFocus
-                                value={r.name}
-                                options={inventoryCodeOptions}
-                                disabled={readOnly}
-                                showDropdownIcon
-                                onChange={(v) => updateRow(r.clientId, { name: v })}
-                                onCancel={() => cancelEdit(r.clientId)}
-                                onDoubleClick={() => !readOnly && openLookupForRow(r.clientId)}
-                                onSelectOption={(o) => {
-                                  const match = inventoryById.get(o.id);
-                                  setEditing(false);
-                                  selectItemOnRow(r.clientId, {
-                                    inventoryId: Number(o.id), code: o.code ?? "", name: o.name ?? "",
-                                    stockOnHand: typeof match?.stockOnHand === "number" ? match.stockOnHand : null,
-                                    lastPurchasePrice: typeof match?.lastPurchasePrice === "number" ? match.lastPurchasePrice : null,
-                                  });
-                                }}
-                                onCommit={(finalValue) => {
-                                  setEditing(false);
-                                  updateRow(r.clientId, { name: finalValue }, true);
-                                }}
-                              />
-                              <Button variant="ghost" size="icon" className="h-full w-8 shrink-0 rounded-none border-l border-border"
-                                title="Search Inventory" onMouseDown={(e) => e.preventDefault()} onClick={() => openLookupForRow(r.clientId)}>
-                                <Search className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          ) : <div {...staticCellProps(r, "name", r.name || "—", "left", !r.name)} />}
+                          <div
+                            {...staticCellProps(r, "name", r.name || "", "left", !r.name)}
+                            title={r.name || (readOnly ? undefined : "Select Inventory")}>
+                            {!readOnly && <Search className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                            <span data-col="name" className="min-w-0 flex-1 truncate">{r.name || (readOnly ? "—" : "")}</span>
+                          </div>
                         </TableCell>
                       );
                     }
@@ -1907,6 +1952,18 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
         fixedColumns={FIXED_COLS}
         columns={gridColumnDefs}
         description="Show, hide and reorder columns. Type, Code and Name are required and always stay first."
+      />
+
+      <InventoryCardsLookupDialog
+        open={inventoryLookupClientId !== null}
+        onOpenChange={(open) => !open && setInventoryLookupClientId(null)}
+        onSelect={(card) => { if (inventoryLookupClientId) selectInventoryCard(inventoryLookupClientId, card); }}
+      />
+
+      <WorkOrdersLookupDialog
+        open={woLookupClientId !== null}
+        onOpenChange={(open) => !open && setWoLookupClientId(null)}
+        onSelect={(w: any) => { if (woLookupClientId) void selectWorkOrder(woLookupClientId, { id: w.id, name: w.workOrderNo }); }}
       />
 
       <GenerateSerialCardsDialog

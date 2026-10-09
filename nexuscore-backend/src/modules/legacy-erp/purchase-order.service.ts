@@ -265,6 +265,8 @@ export class PurchaseOrderService {
         po."RecId" as "orderReceiptId", po."ReceiptNo" as "receiptNo", po."ReceiptDate" as "receiptDate", po."DocumentNo" as "documentNo",
         poi."RecId" as "orderReceiptItemId", poi."InventoryId" as "inventoryId", poi."Explanation" as "explanation",
         poi."Quantity" as "orderQty", poi."UnitId" as "unitId", poi."UnitPrice" as "unitPrice", poi."ColorCardId" as "colorCardId",
+        -- The order line's own Work Order (-> MA_WorkOrder), carried onto the imported receipt line.
+        poi."ManufacturingOrderId" as "manufacturingOrderId",
         i."InventoryCode" as "code", i."InventoryName" as "name",
         base_unit.id as "baseUnitId", base_unit.code as "baseUnitCode",
         ${poOrderBaseQty} as "orderBaseQty",
@@ -342,6 +344,7 @@ export class PurchaseOrderService {
       byPo.get(r.orderReceiptId)!.lines.push({
         orderReceiptItemId: r.orderReceiptItemId, inventoryId: r.inventoryId, code: r.code, name: r.name,
         explanation: r.explanation, unitId: r.unitId, unitPrice: r.unitPrice, colorCardId: r.colorCardId,
+        manufacturingOrderId: r.manufacturingOrderId ?? null,
         orderQty: r.orderQty, receivedQty: r.receivedQty, pendingQty: r.pendingQty,
         baseUnitId: r.baseUnitId, baseUnitCode: r.baseUnitCode,
         orderBaseQty: r.orderBaseQty, receivedBaseQty: r.receivedBaseQty, pendingBaseQty: r.pendingBaseQty,

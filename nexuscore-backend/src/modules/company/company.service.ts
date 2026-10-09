@@ -9,7 +9,7 @@ export class CompanyService {
   async getCompany(companyId: string) {
     const company = await this.prisma.company.findUnique({
       where: { id: companyId },
-      include: { branches: true },
+      include: { branches: true, _count: { select: { users: true } } },
     });
     if (!company) throw new NotFoundException('Company not found');
     return { data: company };

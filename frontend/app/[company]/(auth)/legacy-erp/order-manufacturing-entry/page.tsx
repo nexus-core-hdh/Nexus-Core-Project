@@ -206,7 +206,7 @@ export default function OrderManufacturingEntryPage() {
                 const sel = r.color === selectedColor;
                 const blank = (v: number) => (v ? fmt(v) : "");
                 return (
-                  <tr key={r.color} className={cn("cursor-pointer", sel ? "bg-primary text-primary-foreground" : "odd:bg-background even:bg-muted/30 hover:bg-accent/50")} onClick={() => setSelectedColor(r.color)}>
+                  <tr key={r.color} className={cn("cursor-pointer", sel ? "bg-primary text-primary-foreground" : "odd:bg-background even:bg-muted/25 hover:bg-accent/50")} onClick={() => setSelectedColor(r.color)}>
                     <td className={cn("sticky left-0 z-10 w-3 border border-border/50 p-0", sel ? "bg-primary" : "bg-muted")} title={r.color} />
                     {ctx.materialColumns.map((m, i) => {
                       const c = r.cells[m.key];

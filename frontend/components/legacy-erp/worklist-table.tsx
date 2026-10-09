@@ -184,7 +184,7 @@ export function WorklistTable<T = any>({
           {renderRowActions && <col style={{ width: actionsColumnWidth }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+          <TableRow className="border-b bg-background hover:bg-muted/60">
             {selectable && (
               <TableHead className={cn("p-0 text-center", CELL_BORDER)} style={{ width: selectColumnWidth }}>
                 <div className={cn(HEADER_H, "flex items-center justify-center")}>

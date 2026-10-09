@@ -5,8 +5,10 @@
 // confirmed by searching nexuscore-backend/src and frontend/lib/nexuscore-api.ts.
 // This module exists so the real API can be wired in later without touching
 // any of the presentational components: every shape here (KPI, ChartPoint,
-// Product, Transaction, ActivityEvent, GlanceStat) is what a real endpoint
-// would return, and every consuming component only reads through these types.
+// Product, GlanceStat) is what a real endpoint would return, and every
+// consuming component only reads through these types. (Recent Activity and
+// Recent Transactions are real data — dashboardApi, see recent-activity.tsx /
+// recent-transactions-table.tsx.)
 
 export type Trend = "up" | "down";
 
@@ -54,40 +56,6 @@ export const topProducts: TopProduct[] = [
   { name: "Product C", share: 20, amount: "PKR 4.97M", color: "var(--chart-3)" },
   { name: "Product D", share: 12, amount: "PKR 2.98M", color: "var(--chart-4)" },
   { name: "Others", share: 8, amount: "PKR 1.99M", color: "var(--chart-5)" }
-];
-
-export interface Transaction {
-  id: string;
-  type: "Sale" | "Purchase" | "Payment" | "Receipt";
-  reference: string;
-  party: string;
-  date: string;
-  amount: number;
-  status: "Completed" | "Pending" | "Failed";
-}
-
-export const recentTransactions: Transaction[] = [
-  { id: "1", type: "Sale", reference: "SO-000312", party: "ABC Traders", date: "May 31, 2025", amount: 250000, status: "Completed" },
-  { id: "2", type: "Purchase", reference: "PO-000231", party: "Tech Distributors", date: "May 31, 2025", amount: 180000, status: "Completed" },
-  { id: "3", type: "Payment", reference: "RCPT-000881", party: "ABC Traders", date: "May 30, 2025", amount: 250000, status: "Completed" },
-  { id: "4", type: "Sale", reference: "SO-000311", party: "Zain Electronics", date: "May 30, 2025", amount: 95500, status: "Pending" },
-  { id: "5", type: "Purchase", reference: "PO-000230", party: "Global Supplies", date: "May 29, 2025", amount: 320000, status: "Completed" }
-];
-
-export interface ActivityEvent {
-  id: string;
-  icon: "sale" | "purchase" | "payment" | "item" | "stock";
-  title: string;
-  meta: string;
-  time: string;
-}
-
-export const recentActivity: ActivityEvent[] = [
-  { id: "1", icon: "sale", title: "Sale Order SO-000312 created", meta: "by Ali Raza", time: "2m ago" },
-  { id: "2", icon: "purchase", title: "Purchase Order PO-000231 created", meta: "by Sana Khan", time: "15m ago" },
-  { id: "3", icon: "payment", title: "Payment of PKR 250,000 received", meta: "from ABC Traders", time: "1h ago" },
-  { id: "4", icon: "item", title: "New Item Wireless Mouse added", meta: "by Admin User", time: "2h ago" },
-  { id: "5", icon: "stock", title: "Stock Adjustment completed", meta: "by Bilal Ahmed", time: "3h ago" }
 ];
 
 export interface GlanceStat {

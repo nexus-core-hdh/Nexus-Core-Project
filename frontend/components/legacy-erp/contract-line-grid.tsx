@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
+import { loadSavedInventoryItems } from "@/lib/legacy-erp/saved-line-refs";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
@@ -249,22 +250,19 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
 
   const hydrateCodesNames = async (list: LineRow[]): Promise<LineRow[]> => {
     if (!list.length) return list;
-    try {
-      const all: any = await fetchAllPages((req) => legacyErpApi.inventoryCards.list(undefined, req));
-      const byId = new Map<string, any>((Array.isArray(all) ? all : []).map((r: any) => [String(r.id), r]));
-      return list.map((row) => {
-        if (!row.inventoryId) return row;
-        const match = byId.get(String(row.inventoryId));
-        if (!match) return row;
-        return {
-          ...row, code: match.inventoryCode, name: match.inventoryName, sourceType: match.sourceType,
-          unit: row.unit || match.unit || "",
-          stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null,
-        };
-      });
-    } catch {
-      return list;
-    }
+    // Shared saved-line resolver: Inventory Card List, then the by-id master lookup for any id
+    // the list doesn't return (lib/legacy-erp/saved-line-refs.ts).
+    const byId = await loadSavedInventoryItems(list.map((row) => row.inventoryId));
+    return list.map((row) => {
+      if (!row.inventoryId) return row;
+      const match = byId.get(String(row.inventoryId));
+      if (!match) return row;
+      return {
+        ...row, code: match.inventoryCode, name: match.inventoryName, sourceType: match.sourceType ?? row.sourceType,
+        unit: row.unit || match.unit || "",
+        stockOnHand: match.stockOnHand ?? null, lastPurchasePrice: match.lastPurchasePrice ?? null,
+      };
+    });
   };
 
   const hydrateServices = async (list: LineRow[]): Promise<LineRow[]> => {
@@ -583,7 +581,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
             {!readOnly && <col style={{ width: DEL_W }} />}
           </colgroup>
           <TableHeader>
-            <TableRow className="border-b bg-muted/40 hover:bg-muted/40">
+            <TableRow className="border-b bg-background hover:bg-muted/60">
               {displayColumnDefs.map((col, i) => {
                 const fixed = FIXED_COLS.includes(col.key);
                 return (

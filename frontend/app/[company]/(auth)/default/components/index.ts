@@ -1,4 +1,5 @@
 export * from "./welcome-header";
+export * from "./dashboard-date-range";
 export * from "./order-kpi-row";
 export * from "./kpi-cards";
 export * from "./sales-overview-chart";

@@ -289,7 +289,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
             <div className="overflow-x-auto rounded-lg border border-border">
               <Table className="min-w-[1180px]">
                 <TableHeader>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableRow className="bg-background hover:bg-muted/60">
                     <TableHead className={cn(th, COL.checkbox)} />
                     <TableHead className={cn(th, COL.expand)} />
                     <TableHead className={cn(th, COL.receiptNo)}>Receipt No</TableHead>
@@ -313,7 +313,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
                     const isCollapsed = collapsed.has(r.id);
                     return (
                       <Fragment key={r.id}>
-                        <TableRow className="cursor-pointer bg-muted/25 hover:bg-muted/35" onClick={() => toggleReceipt(r)}>
+                        <TableRow className="cursor-pointer bg-muted/25 hover:bg-muted/60" onClick={() => toggleReceipt(r)}>
                           <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                               checked={state === "all" ? true : state === "some" ? "indeterminate" : false}
@@ -349,7 +349,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
                           ))}
                         </TableRow>
                         {!isCollapsed && r.lines.map((l) => (
-                          <TableRow key={`line-${l.purchaseReceiptItemId}`} className="cursor-pointer hover:bg-muted/20" onClick={() => toggleLine(l.purchaseReceiptItemId)}>
+                          <TableRow key={`line-${l.purchaseReceiptItemId}`} className="cursor-pointer hover:bg-muted/60" onClick={() => toggleLine(l.purchaseReceiptItemId)}>
                             <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
                               <Checkbox
                                 checked={selected.has(l.purchaseReceiptItemId)}

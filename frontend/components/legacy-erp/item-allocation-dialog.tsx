@@ -239,7 +239,7 @@ export function ItemAllocationDialog({ open, onOpenChange, context, onChanged }:
             ) : (
               <Table className="w-full">
                 <TableHeader>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableRow className="bg-background hover:bg-muted/60">
                     <TableHead className={th}>Receipt No</TableHead>
                     <TableHead className={th}>Document No</TableHead>
                     <TableHead className={th}>Receipt Date</TableHead>

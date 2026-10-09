@@ -29,6 +29,7 @@ import type { ImportedPendingLine } from "./inventory-receipt-line-grid";
 interface PendingLine {
   orderReceiptItemId: number; inventoryId: number; code: string; name: string;
   explanation: string | null; unitId: number | null; unitPrice: number | null; colorCardId: string | null;
+  manufacturingOrderId: number | null; // the order line's own Work Order (MA_WorkOrder), if any
   orderQty: number; receivedQty: number; pendingQty: number;
   // Base Unit + Unit Conversion (spec Section 9) — additive display fields from
   // purchase-order.service.ts's listPending(). `pendingQty`/`unitId` above stay expressed in the
@@ -155,6 +156,7 @@ export function PendingOrdersDialog({
           unitId: l.unitId, unit: "", unitPrice: l.unitPrice,
           orderReceiptItemId: l.orderReceiptItemId, poReceiptNo: po.receiptNo,
           colorCardId: l.colorCardId,
+          manufacturingOrderId: l.manufacturingOrderId != null ? Number(l.manufacturingOrderId) : null,
           variants: l.variants.map((v) => ({
             inventoryVariantId: v.inventoryVariantId, quantity: v.quantity, netUnitPrice: v.netUnitPrice,
             orderReceiptItemVariantId: v.id,
@@ -190,7 +192,7 @@ export function PendingOrdersDialog({
             <div className="overflow-hidden rounded-lg border border-border">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableRow className="bg-background hover:bg-muted/60">
                     <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{sourceLabel}</TableHead>
                     <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
@@ -208,7 +210,7 @@ export function PendingOrdersDialog({
                     const state = poSelectionState(po);
                     return (
                       <Fragment key={po.id}>
-                        <TableRow className="cursor-pointer bg-muted/20 hover:bg-muted/30" onClick={() => togglePo(po)}>
+                        <TableRow className="cursor-pointer bg-muted/20 hover:bg-muted/60" onClick={() => togglePo(po)}>
                           <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                               checked={state === "all" ? true : state === "some" ? "indeterminate" : false}
@@ -223,7 +225,7 @@ export function PendingOrdersDialog({
                           </TableCell>
                         </TableRow>
                         {po.lines.map((l) => (
-                          <TableRow key={`line-${l.orderReceiptItemId}`} className="cursor-pointer hover:bg-muted/20" onClick={() => toggleLine(l.orderReceiptItemId)}>
+                          <TableRow key={`line-${l.orderReceiptItemId}`} className="cursor-pointer hover:bg-muted/60" onClick={() => toggleLine(l.orderReceiptItemId)}>
                             <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
                               <Checkbox
                                 checked={selected.has(l.orderReceiptItemId)}

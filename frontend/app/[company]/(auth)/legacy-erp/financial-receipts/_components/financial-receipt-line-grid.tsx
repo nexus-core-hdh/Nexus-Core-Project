@@ -275,7 +275,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className="h-11 bg-muted hover:bg-muted">
+          <TableRow className="h-11 bg-background hover:bg-muted/60">
             {displayColumnDefs.map((col) => {
               const fixed = FIXED_COLS.includes(col.key);
               return (

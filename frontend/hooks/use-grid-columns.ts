@@ -46,6 +46,10 @@ export interface UseGridColumnsOptions<K extends string> {
    *  no effect once any preference (session or permanent) has been saved for this storageKey —
    *  it only seeds the very first render, exactly like `defaultWidth` already does for widths. */
   defaultHidden?: K[];
+  /** Opt-in: also hide a `defaultHidden` column for a user whose saved preference predates it
+   *  (the key is absent from their saved order), instead of appending it visible. Columns the
+   *  user's saved order already knows keep whatever state they saved. */
+  hideNewDefaultHiddenColumns?: boolean;
 }
 
 export interface HeaderDragProps {
@@ -163,6 +167,7 @@ export function useGridColumns<K extends string>({
   columns,
   fixedColumns = [],
   defaultHidden = [],
+  hideNewDefaultHiddenColumns = false,
 }: UseGridColumnsOptions<K>): UseGridColumnsResult<K> {
   const columnByKey = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns]);
   const reorderableDefault = useMemo(
@@ -183,14 +188,20 @@ export function useGridColumns<K extends string>({
   // (skips the network round trip entirely), else fall back to whatever's permanently
   // saved for this user, else the built-in default.
   useEffect(() => {
+    // See hideNewDefaultHiddenColumns: a defaultHidden column the saved order has never seen.
+    const withNewDefaults = (hidden: K[], savedOrder: unknown): K[] =>
+      hideNewDefaultHiddenColumns && Array.isArray(savedOrder)
+        ? Array.from(new Set([...hidden, ...defaultHidden.filter((k) => !savedOrder.includes(k))]))
+        : hidden;
     let sessionOrderFound = false;
+    let sessionOrder: unknown = null;
     try {
       const raw = sessionStorage.getItem(sessionOrderKey(storageKey));
-      if (raw) { setColumnOrder(sanitizeOrder(JSON.parse(raw), reorderableDefault)); sessionOrderFound = true; }
+      if (raw) { sessionOrder = JSON.parse(raw); setColumnOrder(sanitizeOrder(sessionOrder, reorderableDefault)); sessionOrderFound = true; }
     } catch { /* malformed sessionStorage entry — fall through */ }
     try {
       const raw = sessionStorage.getItem(sessionHiddenKey(storageKey));
-      if (raw) setHiddenColumns(new Set(sanitizeHidden(JSON.parse(raw), reorderableDefault)));
+      if (raw) setHiddenColumns(new Set(withNewDefaults(sanitizeHidden(JSON.parse(raw), reorderableDefault), sessionOrder)));
     } catch { /* malformed sessionStorage entry — fall through */ }
     try {
       const raw = sessionStorage.getItem(sessionWidthsKey(storageKey));
@@ -203,7 +214,7 @@ export function useGridColumns<K extends string>({
         const savedOrder = s?.tablePreferences?.[permOrderKey(storageKey)];
         if (Array.isArray(savedOrder) && savedOrder.length) setColumnOrder(sanitizeOrder(savedOrder, reorderableDefault));
         const savedHidden = s?.tablePreferences?.[permHiddenKey(storageKey)];
-        if (Array.isArray(savedHidden)) setHiddenColumns(new Set(sanitizeHidden(savedHidden, reorderableDefault)));
+        if (Array.isArray(savedHidden)) setHiddenColumns(new Set(withNewDefaults(sanitizeHidden(savedHidden, reorderableDefault), savedOrder)));
         const savedWidths = s?.tablePreferences?.[permWidthsKey(storageKey)];
         if (savedWidths) setColWidths((prev) => ({ ...prev, ...sanitizeWidths(savedWidths, columnByKey) }));
       })

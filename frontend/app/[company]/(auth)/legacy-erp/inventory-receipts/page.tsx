@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
+import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
@@ -295,7 +296,7 @@ export default function InventoryReceiptPage() {
       ...r,
       receiptDate: r.receiptDate ? String(r.receiptDate).slice(0, 10) : emptyForm.receiptDate,
       shipmentDate: r.shipmentDate ? String(r.shipmentDate).slice(0, 10) : "",
-      currentAccountLabel: account ? `${(account as any).code} — ${(account as any).name}` : "",
+      currentAccountLabel: currentAccountLabel(account),
       warehouseLabel: warehouse ? (warehouse as any).warehouseName : "",
       // get() already resolves these via a LEFT JOIN server-side (see inventory-receipt.service.ts)
       // — no second round-trip needed, unlike Current Account/Warehouse above. Deliberately not
@@ -679,21 +680,6 @@ export default function InventoryReceiptPage() {
                 </FormSection>
               </fieldset>
 
-              {/* On Create, the grid still needs to be reachable before the header has an id
-                  (so the user can type lines before the first Save) — it renders here as
-                  drafts, then the Detail tab takes over as the single live view once the
-                  receipt exists. Rendering the SAME grid instance in two tabs at once would
-                  desync two independent copies of the same line list, so General only ever
-                  shows it pre-save; Detail owns it afterward. */}
-              {!receiptId && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
-                  </div>
-                  <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
-                </div>
-              )}
             </TabsContent>
 
             {!receiptId ? (
@@ -704,9 +690,8 @@ export default function InventoryReceiptPage() {
               ))
             ) : (
               <>
-                <TabsContent value="Detail">
-                  <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
-                </TabsContent>
+                {/* Its content is the shared line grid rendered just below. */}
+                <TabsContent value="Detail" />
 
                 <TabsContent value="Attachments">
                   <AttachmentsTab itemId={receiptId} readOnly={readOnly} api={client} />
@@ -726,6 +711,23 @@ export default function InventoryReceiptPage() {
                   <CustomizedFieldsTab itemId={String(receiptId)} readOnly={readOnly} />
                 </TabsContent>
               </>
+            )}
+
+            {/* Detail Lines — ONE grid instance shared by General (below the header, as on
+                Purchase Order) and Detail (once the receipt exists). Two tab panels each holding
+                their own copy would desync two independent line lists; one instance that stays
+                mounted while moving between those two tabs keeps a single source of truth. Before
+                the first Save the lines are drafts, so Detail keeps its Save-required notice. */}
+            {(activeTab === "General" || (activeTab === "Detail" && receiptId)) && (
+              <div className={activeTab === "General" ? "mt-3 space-y-2" : "space-y-2"}>
+                {activeTab === "General" && (
+                  <div className="flex items-center gap-2">
+                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
+                  </div>
+                )}
+                <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
+              </div>
             )}
           </div>
         </div>

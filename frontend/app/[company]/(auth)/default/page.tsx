@@ -1,9 +1,9 @@
 import { generateMeta } from "@/lib/utils";
 
-import CustomDateRangePicker from "@/components/custom-date-range-picker";
-
 import {
   BusinessGlance,
+  DashboardDateRangePicker,
+  DashboardDateRangeProvider,
   KpiCards,
   OrderKpiRow,
   QuickActions,
@@ -25,34 +25,36 @@ export async function generateMetadata() {
 
 export default function Page() {
   return (
-    <div className="space-y-4">
-      <div className="flex flex-row items-center justify-between">
-        <WelcomeHeader />
-        <CustomDateRangePicker />
+    <DashboardDateRangeProvider>
+      <div className="space-y-4">
+        <div className="flex flex-row items-center justify-between">
+          <WelcomeHeader />
+          <DashboardDateRangePicker />
+        </div>
+
+        <OrderKpiRow />
+
+        <KpiCards />
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+          <div className="xl:col-span-5">
+            <SalesOverviewChart />
+          </div>
+          <div className="xl:col-span-4">
+            <TopProductsChart />
+          </div>
+          <div className="space-y-4 xl:col-span-3">
+            <QuickActions />
+            <RecentActivity />
+          </div>
+        </div>
+
+        <TodaysOperations />
+
+        <RecentTransactionsTable />
+
+        <BusinessGlance />
       </div>
-
-      <OrderKpiRow />
-
-      <KpiCards />
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        <div className="xl:col-span-5">
-          <SalesOverviewChart />
-        </div>
-        <div className="xl:col-span-4">
-          <TopProductsChart />
-        </div>
-        <div className="space-y-4 xl:col-span-3">
-          <QuickActions />
-          <RecentActivity />
-        </div>
-      </div>
-
-      <TodaysOperations />
-
-      <RecentTransactionsTable />
-
-      <BusinessGlance />
-    </div>
+    </DashboardDateRangeProvider>
   );
 }
