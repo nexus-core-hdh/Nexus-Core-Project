@@ -26,7 +26,7 @@ import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResol
 // "2 - Purchase Receipt" included — only ever used the `?receiptType=N` query-string form. Live
 // re-verification (querying MenuItem/ApprovalConfiguration/ApprovalRequest directly) shows that
 // claim no longer holds: all three tables' Purchase Receipt rows use the BARE path with no query
-// string (`/dashboard/legacy-erp/inventory-receipts-list`) — every OTHER receipt type's rows do
+// string (`/legacy-erp/inventory-receipts-list`) — every OTHER receipt type's rows do
 // use the query-string form, receiptType=2 alone doesn't. Generating the query-string form for
 // receiptType=2 therefore matched NO row in any of the three tables, silently breaking both
 // isApprovalRequired() and AuditService.resolveScreen() (each an exact-match findFirst against
@@ -36,8 +36,8 @@ import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResol
 // confirmed still correct against live MenuItem data for all of them).
 export const screenKeyFor = (receiptType: number) =>
   receiptType === RECEIPT_TYPE
-    ? `/dashboard/legacy-erp/inventory-receipts-list`
-    : `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
+    ? `/legacy-erp/inventory-receipts-list`
+    : `/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
 
 // Inventory Receipt — NOT the same entity as Purchase Order. IM_Receipt/IM_ReceiptItem is a
 // separate, pre-existing "physical goods receipt" spine (DriverName/PlateNumber/IsApproved —

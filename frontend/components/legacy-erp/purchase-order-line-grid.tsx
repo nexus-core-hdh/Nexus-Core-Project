@@ -159,7 +159,7 @@ const EDITOR_CONTROL = "h-full! w-full min-w-0 rounded-none border-0 bg-backgrou
 // this comment being noticed — if ROW_H's Tailwind class ever changes, update this one too.
 const EDITOR_WRAP = "flex h-12 items-stretch";
 
-const INVENTORY_CARDS_LIST_PATH = "/dashboard/legacy-erp/inventory-cards-list";
+const INVENTORY_CARDS_LIST_PATH = "/legacy-erp/inventory-cards-list";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -1240,7 +1240,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                             if (match) { updateRow(r.clientId, { colorCardId: match.id, color: match.code || match.name || text }, true); return; }
                             try {
                               // Matches the existing Color Card management screen's own create
-                              // payload shape exactly (app/dashboard/.../color-cards/page.tsx) —
+                              // payload shape exactly (app/[company]/.../color-cards/page.tsx) —
                               // `color` (hex swatch) and `branchId` are required, non-nullable
                               // columns on ColorCard with no default for branchId.
                               const user = getCurrentUser();

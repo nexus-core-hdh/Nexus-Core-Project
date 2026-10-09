@@ -1,5 +1,5 @@
 // One-off, idempotent nav seed for the new "Financial Receipt & Master Data" screen (see
-// frontend/app/dashboard/(auth)/legacy-erp/financial-receipt-master-data/page.tsx). Not a
+// frontend/app/[company]/(auth)/legacy-erp/financial-receipt-master-data/page.tsx). Not a
 // schema migration — plain Prisma Client data write into the existing `MenuItem` table, same
 // shape/group as the other "Legacy ERP" rows. Safe to re-run: skips if the href already exists.
 //
@@ -9,7 +9,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/financial-receipt-master-data';
+  const href = '/legacy-erp/financial-receipt-master-data';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): Financial Receipt & Master Data -> ${href}`);

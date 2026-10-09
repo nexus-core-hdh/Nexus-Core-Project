@@ -1,69 +1,83 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import {
+  APP_HOME_PATH,
+  COMPANY_SLUG_COOKIE,
+  isAppPath,
+  slugFromPathname,
+  withCompanySlug,
+} from "@/lib/company-path";
+
+// Guest pages live at the root (no company yet). See lib/company-path.ts for the URL scheme.
+const LOGIN_PATH = "/login/v1";
+const GUEST_PREFIXES = ["/login", "/register", "/forgot-password", "/reset-password"];
+const ONBOARDING_PATH = "/onboarding-flow";
+
+function redirectTo(request: NextRequest, pathname: string) {
+  const url = request.nextUrl.clone();
+  url.pathname = pathname;
+  return NextResponse.redirect(url);
+}
+
+function toLogin(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  url.pathname = LOGIN_PATH;
+  url.search = "";
+  return NextResponse.redirect(url);
+}
+
+/** Old `/dashboard/...` URLs (bookmarks, emails sent before company slugs) -> the new scheme. */
+function legacyDashboardPath(pathname: string): string | null {
+  if (pathname !== "/dashboard" && !pathname.startsWith("/dashboard/")) return null;
+  let rest = pathname.slice("/dashboard".length) || APP_HOME_PATH;
+  if (rest.startsWith("/pages/onboarding-flow")) rest = rest.slice("/pages".length);
+  else if (/^\/pages\/error\/(404|500)/.test(rest)) rest = rest.slice("/pages".length);
+  return rest;
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  
-  // Check if user is trying to access auth routes (protected routes)
-  // Exclude onboarding-flow from auth routes since it's in the guest folder
-  const isOnboardingFlow = pathname.startsWith('/dashboard/pages/onboarding-flow');
-  const isAuthRoute = pathname.startsWith('/dashboard/default') ||
-                      (pathname.startsWith('/dashboard/pages') && !isOnboardingFlow) ||
-                      pathname.startsWith('/dashboard/apps') ||
-                      pathname.startsWith('/dashboard/crm') ||
-                      pathname.startsWith('/dashboard/collaboration') ||
-                      pathname.startsWith('/dashboard/academy') ||
-                      pathname.startsWith('/dashboard/crypto') ||
-                      pathname.startsWith('/dashboard/ecommerce') ||
-                      pathname.startsWith('/dashboard/finance') ||
-                      pathname.startsWith('/dashboard/hotel') ||
-                      pathname.startsWith('/dashboard/logistics') ||
-                      pathname.startsWith('/dashboard/payment') ||
-                      pathname.startsWith('/dashboard/project') ||
-                      pathname.startsWith('/dashboard/sales') ||
-                      pathname.startsWith('/dashboard/website-analytics') ||
-                      pathname.startsWith('/dashboard/widgets') ||
-                      pathname.startsWith('/dashboard/file-manager') ||
-                      pathname.startsWith('/dashboard/hospital-management') ||
-                      pathname.startsWith('/dashboard/onboarding-flow');
-  
-  // Check if user is trying to access guest routes (login, register, etc.)
-  const isGuestRoute = pathname.startsWith('/dashboard/login') ||
-                       pathname.startsWith('/dashboard/register') ||
-                       pathname.startsWith('/dashboard/forgot-password') ||
-                       pathname.startsWith('/dashboard/reset-password') ||
-                       isOnboardingFlow;
-  
-  // Get token from cookie
-  const token = request.cookies.get('auth_token')?.value;
-  
-  // If accessing auth route without token, redirect to login
-  if (isAuthRoute && !token) {
-    return NextResponse.redirect(new URL('/dashboard/login/v1', request.url));
+  const token = request.cookies.get("auth_token")?.value;
+  const slug = request.cookies.get(COMPANY_SLUG_COOKIE)?.value || null;
+
+  const legacy = legacyDashboardPath(pathname);
+  if (legacy) return redirectTo(request, isAppPath(legacy) ? withCompanySlug(legacy, slug) : legacy);
+
+  if (pathname === "/") {
+    if (token && slug) return redirectTo(request, withCompanySlug(APP_HOME_PATH, slug));
+    return toLogin(request);
   }
-  
-  // If accessing guest route with token, redirect to dashboard
-  // Exception: Allow onboarding-flow even with token (user might need to complete company setup)
-  if (isGuestRoute && token && !isOnboardingFlow) {
-    return NextResponse.redirect(new URL('/dashboard/default', request.url));
+
+  // Signed-in users skip the guest pages (onboarding stays reachable to finish company setup).
+  if (GUEST_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    if (token && slug) return redirectTo(request, withCompanySlug(APP_HOME_PATH, slug));
+    return NextResponse.next();
   }
-  
-  // For root path, redirect based on auth status
-  if (pathname === '/' || pathname === '/dashboard') {
-    if (token) {
-      return NextResponse.redirect(new URL('/dashboard/default', request.url));
-    } else {
-      return NextResponse.redirect(new URL('/dashboard/login/v1', request.url));
-    }
+  if (pathname === ONBOARDING_PATH || pathname.startsWith(ONBOARDING_PATH + "/")) return NextResponse.next();
+
+  // App path without a company (`/plm/x`, from a hard navigation such as window.location.href):
+  // add the signed-in company's slug.
+  if (isAppPath(pathname)) {
+    if (!token || !slug) return toLogin(request);
+    return redirectTo(request, withCompanySlug(pathname, slug));
   }
-  
-  // Continue with next response for other routes
+
+  // Company URL `/{slug}/...`.
+  const urlSlug = slugFromPathname(pathname);
+  if (urlSlug) {
+    // Sessions from before company slugs have a token but no slug cookie: sign in again once.
+    if (!token || !slug) return toLogin(request);
+    const rest = pathname.slice(urlSlug.length + 1);
+    // `/{slug}` itself has no page: open the home dashboard.
+    if (rest === "" || rest === "/") return redirectTo(request, withCompanySlug(APP_HOME_PATH, slug));
+    // A user only ever works inside their own company.
+    if (urlSlug !== slug) return redirectTo(request, isAppPath(rest) ? withCompanySlug(rest, slug) : rest);
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    '/',
-    '/dashboard',
-    '/dashboard/:path*'
-  ]
+  // Everything except Next.js internals, the API proxy and static files (paths with an extension).
+  matcher: ["/((?!_next/|api/|.*\\.[a-zA-Z0-9]+$).*)"],
 };

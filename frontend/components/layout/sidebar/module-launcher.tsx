@@ -1,8 +1,46 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { SearchIcon, type LucideIcon } from "lucide-react";
+import { useRouter, usePathname } from "@/lib/app-navigation";
+import {
+  ArrowLeftRight,
+  Banknote,
+  BarChart3,
+  BookOpen,
+  Bot,
+  Boxes,
+  Building2,
+  Calculator,
+  CalendarRange,
+  ClipboardCheck,
+  ClipboardList,
+  Factory,
+  FileSignature,
+  FileText,
+  FolderOpen,
+  Hash,
+  LayoutDashboard,
+  ListTree,
+  MessageSquare,
+  Package,
+  Palette,
+  Receipt,
+  Ruler,
+  Scale,
+  Scaling,
+  Scissors,
+  Settings,
+  Shield,
+  Shirt,
+  ShoppingCart,
+  SlidersHorizontal,
+  Spool,
+  Truck,
+  Undo2,
+  Users,
+  Warehouse,
+  type LucideIcon,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -48,25 +86,74 @@ function dedupeByHref(rows: LauncherRow[]): LauncherRow[] {
   });
 }
 
+// Many menu rows (mostly submenu leaves) carry no icon of their own. Pick one from the screen's
+// title so every launcher row gets a meaningful icon; first matching rule wins, so more specific
+// keywords come before generic ones ("purchase return" before "purchase", "receipt").
+const TITLE_ICON_RULES: [RegExp, LucideIcon][] = [
+  [/dashboard|overview/, LayoutDashboard],
+  [/return/, Undo2],
+  [/transfer/, ArrowLeftRight],
+  [/planning|schedule|calendar/, CalendarRange],
+  [/recipe/, BookOpen],
+  [/requirement|demand/, ClipboardList],
+  [/yarn/, Spool],
+  [/fabric|trim/, Shirt],
+  [/cutting/, Scissors],
+  [/costing|cost|price|pricing/, Calculator],
+  [/contract/, FileSignature],
+  [/manufactur|production|subcontract|outside process/, Factory],
+  [/purchase|order/, ShoppingCart],
+  [/receipt|invoice|bill/, Receipt],
+  [/payment|account|ledger|bank|finance|cash|journal/, Banknote],
+  [/warehouse/, Warehouse],
+  [/inventory|stock|item/, Boxes],
+  [/package|packing/, Package],
+  [/shipment|delivery|logistic/, Truck],
+  [/size|measurement/, Scaling],
+  [/unit/, Ruler],
+  [/color|colour/, Palette],
+  [/serial|number/, Hash],
+  [/weight|gsm/, Scale],
+  [/approval|quality|inspection|check/, ClipboardCheck],
+  [/customer|contact|lead|user|employee|team|people/, Users],
+  [/company|branch|workplace/, Building2],
+  [/permission|role|security/, Shield],
+  [/report|statement|analytics|chart/, BarChart3],
+  [/parameter|setting|config/, SlidersHorizontal],
+  [/master|lookup|type|category/, ListTree],
+  [/message|chat|mail/, MessageSquare],
+  [/file|document|docket/, FolderOpen],
+  [/\bai\b|assistant/, Bot],
+  [/admin/, Settings],
+];
+
+function inferIcon(title: string): LucideIcon | undefined {
+  const t = title.toLowerCase();
+  return TITLE_ICON_RULES.find(([pattern]) => pattern.test(t))?.[1];
+}
+
 function buildSections(group: NavGroup): LauncherSection[] {
   const sections: LauncherSection[] = [];
   const general: LauncherRow[] = [];
 
-  const flattenRows = (items: NavItem[], prefix: string): LauncherRow[] => {
+  // Icon resolution: the menu row's own icon, else one inferred from its title, else the nearest
+  // parent's icon, else a generic document icon — never an empty or placeholder icon.
+  const flattenRows = (items: NavItem[], prefix: string, parentIcon?: NavItem["icon"]): LauncherRow[] => {
     const rows: LauncherRow[] = [];
     for (const item of items) {
+      const icon = item.icon ?? inferIcon(item.title) ?? parentIcon ?? FileText;
       if (item.href && item.href !== "#" && !item.isComing) {
         rows.push({
           key: item.href,
           title: prefix ? `${prefix}${item.title}` : item.title,
           href: item.href,
-          icon: item.icon,
+          icon,
           isNew: item.isNew,
           isDataBadge: item.isDataBadge,
         });
       }
       if (item.items?.length) {
-        rows.push(...flattenRows(item.items, `${prefix}${item.title} / `));
+        rows.push(...flattenRows(item.items, `${prefix}${item.title} / `, item.icon ?? parentIcon));
       }
     }
     return rows;
@@ -75,15 +162,32 @@ function buildSections(group: NavGroup): LauncherSection[] {
   for (const item of group.items) {
     if (item.isComing) continue;
     if (item.items?.length) {
-      const rows = dedupeByHref(flattenRows(item.items, ""));
+      const rows = dedupeByHref(flattenRows(item.items, "", item.icon));
       if (rows.length > 0) sections.push({ key: item.title, title: item.title, rows });
     } else if (item.href && item.href !== "#") {
-      general.push({ key: item.href, title: item.title, href: item.href, icon: item.icon, isNew: item.isNew, isDataBadge: item.isDataBadge });
+      const icon = item.icon ?? inferIcon(item.title) ?? FileText;
+      general.push({ key: item.href, title: item.title, href: item.href, icon, isNew: item.isNew, isDataBadge: item.isDataBadge });
     }
   }
 
   if (general.length > 0) sections.unshift({ key: "__general", title: null, rows: dedupeByHref(general) });
   return sections;
+}
+
+/**
+ * Whether a menu href is the screen currently open. Several screens share one path and differ
+ * only by query (e.g. inventory receipts `?type=2`, `?type=122`), so every query param in the
+ * href must also match the current URL, not just the path.
+ */
+function isCurrentRoute(href: string, pathname: string, search: string): boolean {
+  const [path, query] = href.split("?");
+  if (path !== pathname) return false;
+  if (!query) return true;
+  const current = new URLSearchParams(search);
+  for (const [key, value] of new URLSearchParams(query)) {
+    if (current.get(key) !== value) return false;
+  }
+  return true;
 }
 
 interface ModuleLauncherProps {
@@ -119,6 +223,14 @@ export function ModuleLauncher({ groupTitle, icon: Icon, open, onOpenChange }: M
     else setQuery("");
   }, [open, ensureLoaded]);
 
+  // Read when the dialog opens: workspace tabs update the URL via history.replaceState, which
+  // usePathname tracks but this component does not otherwise re-render for.
+  const currentSearch = useMemo(
+    () => (open && typeof window !== "undefined" ? window.location.search : ""),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open, pathname]
+  );
+
   const group = useMemo(() => groups.find((g) => g.title === groupTitle) ?? null, [groups, groupTitle]);
   const sections = useMemo(() => (group ? buildSections(group) : []), [group]);
 
@@ -132,7 +244,7 @@ export function ModuleLauncher({ groupTitle, icon: Icon, open, onOpenChange }: M
       <DialogContent
         dismissOnEscape
         dismissOnOutside
-        className="top-[15%] max-h-[70vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+        className="top-[10%] max-h-[80vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-3xl lg:max-w-5xl"
       >
         <DialogHeader className="flex-row items-center gap-2.5 space-y-0 border-b px-5 py-4">
           {Icon && (
@@ -150,35 +262,31 @@ export function ModuleLauncher({ groupTitle, icon: Icon, open, onOpenChange }: M
 
         <Command className="bg-transparent">
           <CommandInput placeholder="Search screens..." value={query} onValueChange={setQuery} className="h-11" />
-          <CommandList className="max-h-[55vh] px-1 py-2">
+          <CommandList className="max-h-[65vh] px-1 py-2">
             <CommandEmpty>No matching screens found.</CommandEmpty>
             {sections.map((section) => (
               <CommandGroup
                 key={section.key}
                 heading={section.title ?? undefined}
-                className="[&_[cmdk-group-heading]]:text-primary/70 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:uppercase"
+                className="pb-4 [&_[cmdk-group-heading]]:pb-2.5 [&_[cmdk-group-heading]]:text-primary/70 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:uppercase"
               >
                 {/* A thin left connector under a titled (submodule) section only — makes the
                     parent-heading -> child-rows relationship visible without extra markup depth;
-                    the unlabeled "general" section (standalone screens, no submodule) stays flush. */}
-                <div className={cn(section.title && "ml-2 border-l pl-2")}>
+                    the unlabeled "general" section (standalone screens, no submodule) stays flush.
+                    Rows flow into 2 columns (3 on wide screens) so the dialog's width is used. */}
+                <div className={cn("grid grid-cols-1 gap-x-2 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3", section.title && "ml-2 border-l pl-2")}>
                   {section.rows.map((row) => {
                     const RowIcon = row.icon;
-                    const rowPath = row.href.split("?")[0];
-                    const isActive = pathname === rowPath;
+                    const isActive = isCurrentRoute(row.href, pathname, currentSearch);
                     return (
                       <CommandItem
                         key={row.key}
                         value={row.title}
                         onSelect={() => select(row)}
                         onDoubleClick={() => select(row)}
-                        className={cn(isActive && "bg-primary/8 text-foreground font-medium")}
+                        className={cn("min-w-0 py-2.5", isActive && "bg-primary/8 text-foreground font-medium")}
                       >
-                        {RowIcon ? (
-                          <RowIcon className={cn("text-muted-foreground/70", isActive && "text-primary")} />
-                        ) : (
-                          <SearchIcon className="opacity-40" />
-                        )}
+                        {RowIcon && <RowIcon className={cn("text-muted-foreground/70", isActive && "text-primary")} />}
                         <span className="flex-1 truncate">{row.title}</span>
                         {row.isNew && <Badge variant="secondary" className="h-5 text-[10px] font-normal">New</Badge>}
                         {row.isDataBadge && <Badge variant="outline" className="h-5 text-[10px] font-normal">{row.isDataBadge}</Badge>}

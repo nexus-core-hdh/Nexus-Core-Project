@@ -1,5 +1,5 @@
 // Idempotent nav seed for the already-existing "Trim Planning" screen
-// (frontend/app/dashboard/(auth)/legacy-erp/trim-planning/page.tsx,
+// (frontend/app/[company]/(auth)/legacy-erp/trim-planning/page.tsx,
 // nexuscore-backend/src/modules/legacy-erp/trim-planning.{controller,service}.ts). This script ONLY
 // adds its menu entry — the development database got it by hand, with no script, so a fresh
 // installation had no way to reach the screen from the sidebar.
@@ -14,7 +14,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/trim-planning';
+  const href = '/legacy-erp/trim-planning';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): Trim Planning -> ${href}`);

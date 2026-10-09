@@ -223,7 +223,7 @@ export class AccountService {
         if (currentUserId && companyId) {
           const enriched = await enrichDisplayRefs(created, this.displayResolvers());
           this.audit.recordSafe({
-            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/current-accounts-list',
+            userId: currentUserId, companyId, screenKey: '/legacy-erp/current-accounts-list',
             entityType: 'CurrentAccount', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
             documentNo: created.currentAccountCode, after: { 'Current Account (FI_Account)': enriched },
           });
@@ -265,7 +265,7 @@ export class AccountService {
       const resolvers = this.displayResolvers();
       const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/current-accounts-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/current-accounts-list',
         entityType: 'CurrentAccount', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
         documentNo: updated.currentAccountCode,
         before: { 'Current Account (FI_Account)': enrichedBefore }, after: { 'Current Account (FI_Account)': enrichedAfter },
@@ -282,7 +282,7 @@ export class AccountService {
     if (currentUserId && companyId) {
       const enriched = await enrichDisplayRefs(before, this.displayResolvers());
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/current-accounts-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/current-accounts-list',
         entityType: 'CurrentAccount', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
         documentNo: before.currentAccountCode, before: { 'Current Account (FI_Account)': enriched },
       });

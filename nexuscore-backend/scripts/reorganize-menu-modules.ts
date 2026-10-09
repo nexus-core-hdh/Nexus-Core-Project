@@ -57,11 +57,11 @@ async function main() {
   );
   await ensureCreated(
     { title: 'Subcontract Order', group: 'Sales Module', parentId: contractReceiptsId },
-    { href: '/dashboard/legacy-erp/subcontract-orders-list', icon: 'Factory', order: 0, isActive: true },
+    { href: '/legacy-erp/subcontract-orders-list', icon: 'Factory', order: 0, isActive: true },
   );
   await ensureCreated(
     { title: 'Sub Contract Receipt', group: 'Sales Module', parentId: contractReceiptsId },
-    { href: '/dashboard/legacy-erp/subcontract-receipts-list', icon: 'Factory', order: 1, isActive: true },
+    { href: '/legacy-erp/subcontract-receipts-list', icon: 'Factory', order: 1, isActive: true },
   );
 
   // ── Purchase ──────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ async function main() {
   await ensureCreated(
     { title: 'Manufacture Sent Receipt', group: 'PLM', parentId: null },
     {
-      href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=140',
+      href: '/legacy-erp/inventory-receipts-list?receiptType=140',
       icon: 'Truck',
       order: 505,
       isActive: true,
@@ -148,7 +148,7 @@ async function main() {
   await ensureCreated(
     { title: 'Service Purchase Return Receipt', group: 'PLM', parentId: null },
     {
-      href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=139',
+      href: '/legacy-erp/inventory-receipts-list?receiptType=139',
       icon: 'Truck',
       order: 506,
       isActive: true,

@@ -13,6 +13,8 @@ export class MenuItemsService {
           ...(companyId || branchId
             ? [{ companyId: companyId ?? null, branchId: branchId ?? null }]
             : []),
+          // Company-wide items (no branch) — e.g. user-defined reports — for every branch of it.
+          ...(companyId && branchId ? [{ companyId, branchId: null }] : []),
           { companyId: null, branchId: null },
         ],
       },

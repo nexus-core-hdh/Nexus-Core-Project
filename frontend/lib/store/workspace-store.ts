@@ -196,7 +196,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({ tabs: remaining, activeKey: nextActive });
       },
 
-      activateTab: (key) => set({ activeKey: key }),
+      // Ignores a key with no open tab — activating one would leave no tab visible or highlighted.
+      activateTab: (key) => {
+        if (get().tabs.some((t) => t.key === key)) set({ activeKey: key });
+      },
 
       pin: (key, href) => {
         const { myMenu } = get();
@@ -252,6 +255,20 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       name: "nexuscore-workspace-tabs",
       storage: backendStorage,
       partialize: (state) => ({ tabs: state.tabs, activeKey: state.activeKey, myMenu: state.myMenu }),
+      // Saved tabs load asynchronously, after the page for the current URL has already opened (and
+      // activated) its own tab. The default merge would replace that live tab list with the saved
+      // one, restoring a stale active tab that no longer matches the URL. Instead: saved tabs keep
+      // their order, tabs opened before loading finished are kept (appended at the end, with their
+      // live state), and the tab already active for the current URL stays active.
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<WorkspacePersisted>;
+        const savedTabs = (saved.tabs ?? []).map((t) => current.tabs.find((c) => c.key === t.key) ?? { ...t, dirty: false });
+        const opened = current.tabs.filter((c) => !savedTabs.some((t) => t.key === c.key));
+        const tabs = [...savedTabs, ...opened];
+        const wanted = current.activeKey ?? saved.activeKey ?? null;
+        const activeKey = tabs.some((t) => t.key === wanted) ? wanted : tabs[tabs.length - 1]?.key ?? null;
+        return { ...current, tabs, activeKey, myMenu: saved.myMenu ?? current.myMenu };
+      },
     }
   )
 );

@@ -8,7 +8,7 @@ import {
   UsersRound, Building, SlidersHorizontal, ListOrdered, GitBranch,
 } from "lucide-react";
 
-const BASE = "/dashboard/finance-erp";
+const BASE = "/finance-erp";
 
 /** The complete Finance module navigation tree (spec section 11). Merged additively into the
  *  sidebar's nav groups in nav-main.tsx — see mergeFinanceErpModule — so it appears regardless of
@@ -124,9 +124,9 @@ export const FINANCE_ERP_NAV_GROUP: NavGroup = {
  *  IMPORTANT: this appends into an existing "Finance" group rather than skipping when one is
  *  found. The live backend already seeds a real "Finance" menu group (confirmed via `GET
  *  /menu-items`, independent of the smaller placeholder in prisma/seed.ts which is stale/unused
- *  here) containing 5 legacy items — Finance Overview (/dashboard/finance), Payment Dashboard
- *  (/dashboard/payment), Transactions, Customer Payments and Supplier Payments
- *  (/dashboard/payment/*). An earlier version of this function returned early whenever ANY group
+ *  here) containing 5 legacy items — Finance Overview (/finance), Payment Dashboard
+ *  (/payment), Transactions, Customer Payments and Supplier Payments
+ *  (/payment/*). An earlier version of this function returned early whenever ANY group
  *  named "Finance" existed, which silently dropped this entire 40+ screen tree for every real
  *  (DB-backed) menu load — the module only ever appeared when the backend menu API returned
  *  nothing at all, which is never true for a real logged-in session. Appending instead of

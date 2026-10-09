@@ -191,7 +191,7 @@ export class YarnCardService {
         if (currentUserId && companyId) {
           const enriched = await enrichDisplayRefs(created, this.displayResolvers());
           this.audit.recordSafe({
-            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/yarn-cards-list',
+            userId: currentUserId, companyId, screenKey: '/legacy-erp/yarn-cards-list',
             entityType: 'YarnCard', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
             documentNo: created.inventoryCode, after: { 'Yarn Card (IM_Item)': enriched },
           });
@@ -230,7 +230,7 @@ export class YarnCardService {
       const resolvers = this.displayResolvers();
       const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/yarn-cards-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/yarn-cards-list',
         entityType: 'YarnCard', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
         documentNo: updated.inventoryCode,
         before: { 'Yarn Card (IM_Item)': enrichedBefore }, after: { 'Yarn Card (IM_Item)': enrichedAfter },
@@ -250,7 +250,7 @@ export class YarnCardService {
     if (currentUserId && companyId) {
       const enriched = await enrichDisplayRefs(before, this.displayResolvers());
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/yarn-cards-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/yarn-cards-list',
         entityType: 'YarnCard', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
         documentNo: before.inventoryCode, before: { 'Yarn Card (IM_Item)': enriched },
       });

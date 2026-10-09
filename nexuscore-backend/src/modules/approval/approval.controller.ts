@@ -5,7 +5,7 @@ import { Permissions, PermissionModule } from '../../common/decorators/permissio
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 // screenKey values are Legacy ERP MenuItem.href strings, which already contain "/" and often
-// their own "?query=" (e.g. "/dashboard/legacy-erp/inventory-receipts-list?receiptType=12") —
+// their own "?query=" (e.g. "/legacy-erp/inventory-receipts-list?receiptType=12") —
 // unsafe/ambiguous as a ":screenKey" URL path segment even URL-encoded. Query-string / body
 // params are used instead of the path-param shape sketched in the spec, for that reason.
 @ApiTags('Approval')

@@ -1,5 +1,5 @@
 // One-off, idempotent nav seed for the "Order Manufacturing Entry" screen
-// (frontend/app/dashboard/(auth)/legacy-erp/order-manufacturing-entry/page.tsx,
+// (frontend/app/[company]/(auth)/legacy-erp/order-manufacturing-entry/page.tsx,
 // nexuscore-backend/src/modules/legacy-erp/order-manufacturing.{controller,service}.ts). ONLY adds
 // its menu entry — the screen/API/tables (MA_WorkOrderProduction et al.) are separate.
 //
@@ -17,7 +17,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/order-manufacturing-entry';
+  const href = '/legacy-erp/order-manufacturing-entry';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): Order Manufacturing Entry -> ${href}`);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "@/lib/app-navigation";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListX, PanelRightClose, Pin, X, XSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -17,8 +17,10 @@ import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-acti
 import { useWorkspaceStore, type WorkspaceTab } from "@/lib/store/workspace-store";
 import { useScreenIndexStore } from "@/lib/store/screen-index-store";
 import { resolveWorkspaceTabTitle } from "@/lib/workspace/resolve-tab-title";
+import { isWorkspaceRoute } from "@/lib/workspace/registry";
 
-const DEFAULT_WORKSPACE_ROUTE = "/dashboard/default";
+import { replaceWorkspaceUrl } from "@/lib/workspace/navigate";
+const DEFAULT_WORKSPACE_ROUTE = "/default";
 
 type BulkCloseKind = "all" | "others" | "right";
 
@@ -51,6 +53,10 @@ const SCROLL_STEP_RATIO = 0.8;
 
 export function WorkspaceTabBar() {
   const router = useRouter();
+  const pathname = usePathname();
+  // On a page that is not itself a tab (e.g. the default dashboard), no tab is shown as active —
+  // highlighting the last-used tab there would point at a screen that is not on display.
+  const onTabRoute = isWorkspaceRoute(pathname);
   const tabs = useWorkspaceStore((s) => s.tabs);
   const activeKey = useWorkspaceStore((s) => s.activeKey);
   const activateTab = useWorkspaceStore((s) => s.activateTab);
@@ -77,7 +83,7 @@ export function WorkspaceTabBar() {
 
   // Exposes this bar's real, dynamic height (0 when no tabs are open, h-10
   // when they are) as a CSS custom property on the document root. The shared
-  // `--content-full-height` variable (app/dashboard/(auth)/layout.tsx) that
+  // `--content-full-height` variable (app/[company]/(auth)/layout.tsx) that
   // every fixed-height screen (Mail, Unit Sets, ...) sizes itself against
   // subtracts this — without it, those screens under-subtract whenever tabs
   // are open, claim more height than actually remains, and the surrounding
@@ -152,18 +158,18 @@ export function WorkspaceTabBar() {
   // previous neighbor" fallback — Close Others always wants the tab the user kept, and
   // Close Right wants it only when the active tab was itself one of the ones closed. Route
   // sync mirrors finishClose: land on the new active tab's href, or the default workspace
-  // route once no tabs remain (nothing under app/dashboard/(auth) registers that route as
+  // route once no tabs remain (nothing under app/[company]/(auth) registers that route as
   // a workspace module, so it can never become a tab itself — see lib/workspace/registry.tsx).
   const finishBulkClose = (keys: string[], forceActiveKey?: string) => {
     useWorkspaceStore.getState().closeTabs(keys);
     if (forceActiveKey) useWorkspaceStore.getState().activateTab(forceActiveKey);
     const { tabs: nextTabs, activeKey: nextActiveKey } = useWorkspaceStore.getState();
     if (nextTabs.length === 0) {
-      router.replace(DEFAULT_WORKSPACE_ROUTE, { scroll: false });
+      replaceWorkspaceUrl(router, DEFAULT_WORKSPACE_ROUTE);
       return;
     }
     const nextTab = nextTabs.find((t) => t.key === nextActiveKey) ?? nextTabs[0];
-    router.replace(nextTab.href, { scroll: false });
+    replaceWorkspaceUrl(router, nextTab.href);
   };
 
   // Shared dirty-check gate for all three bulk operations: closes immediately if nothing
@@ -216,7 +222,7 @@ export function WorkspaceTabBar() {
 
   const goTo = (tab: WorkspaceTab) => {
     activateTab(tab.key);
-    router.replace(tab.href, { scroll: false });
+    replaceWorkspaceUrl(router, tab.href);
   };
 
   const requestClose = (tab: WorkspaceTab) => {
@@ -227,13 +233,18 @@ export function WorkspaceTabBar() {
     finishClose(tab);
   };
 
+  // Closing the active tab activates the tab before it (closeTab's rule) and moves the URL there.
+  // The URL must follow the store's choice: navigating anywhere else makes the content stack
+  // re-activate whichever tab owns that URL instead. Closing the last tab lands on the default
+  // route rather than leaving the URL on the screen that was just closed. State is read fresh
+  // from the store, since "Save & Close" calls this after an await.
   const finishClose = (tab: WorkspaceTab) => {
+    const wasActive = useWorkspaceStore.getState().activeKey === tab.key;
     closeTab(tab.key);
-    if (tab.key === activeKey) {
-      const remaining = tabs.filter((t) => t.key !== tab.key);
-      const next = remaining[0];
-      if (next) router.replace(next.href, { scroll: false });
-    }
+    if (!wasActive) return;
+    const { tabs: nextTabs, activeKey: nextActiveKey } = useWorkspaceStore.getState();
+    const nextTab = nextTabs.find((t) => t.key === nextActiveKey);
+    replaceWorkspaceUrl(router, nextTab ? nextTab.href : DEFAULT_WORKSPACE_ROUTE);
   };
 
   return (
@@ -268,7 +279,7 @@ export function WorkspaceTabBar() {
         >
           {tabs.map((tab, tabIndex) => {
             const { title, icon: Icon } = resolveWorkspaceTabTitle(tab, entryByHref);
-            const isActive = tab.key === activeKey;
+            const isActive = onTabRoute && tab.key === activeKey;
             const pinned = pinnedKeys.has(tab.key);
             const tabMenuActions: RowAction[] = [
               { key: "close", label: "Close", icon: X, onSelect: () => requestClose(tab) },
@@ -287,13 +298,15 @@ export function WorkspaceTabBar() {
                   aria-selected={isActive}
                   onClick={() => goTo(tab)}
                   className={cn(
-                    "group/tab flex h-8 min-w-[130px] max-w-[220px] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
+                    "group/tab relative flex h-8 min-w-[130px] max-w-[220px] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
+                    // Active tab: raised surface plus a primary accent bar along its bottom edge, so it
+                    // stands out at a glance in both light and dark themes.
                     isActive
-                      ? "border-border bg-background font-medium text-foreground shadow-xs"
+                      ? "border-border bg-background font-medium text-foreground shadow-sm after:absolute after:inset-x-2 after:-bottom-[5px] after:h-0.5 after:rounded-full after:bg-primary"
                       : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                   )}
                 >
-                  {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
+                  {Icon && <Icon className={cn("h-3.5 w-3.5 shrink-0", isActive && "text-primary")} />}
                   <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
                   <button
                     type="button"

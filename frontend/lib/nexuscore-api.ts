@@ -1237,3 +1237,101 @@ export const bpmApi = {
     api.post(`/bpm/tasks/${id}/assign`, { assignedTo }),
   getProcesses: () => api.get('/bpm/processes'),
 };
+
+// ─── Report Builder (user-defined reports) ─────────────────────────────────────
+
+export type ReportFieldType = 'string' | 'number' | 'date' | 'boolean';
+export interface ReportSourceField { key: string; label: string; group: string; type: ReportFieldType; filterable: boolean; sortable: boolean }
+export interface ReportSourceInfo { key: string; label: string; description: string; fields: ReportSourceField[] }
+export interface ReportCapabilities { view: boolean; create: boolean; update: boolean; delete: boolean; export: boolean }
+export interface ReportCatalog {
+  module: { key: string; label: string };
+  sources: ReportSourceInfo[];
+  operators: Record<ReportFieldType, string[]>;
+  capabilities: ReportCapabilities;
+  maxRows: number;
+}
+export interface ReportColumnDef { field: string; label?: string; total?: boolean }
+export interface ReportFilterDef { id: string; field: string; operator: string; value?: string; value2?: string; prompt?: boolean }
+export interface ReportSortDef { field: string; direction: 'asc' | 'desc' }
+export interface ReportDefinitionInput {
+  name: string;
+  description?: string | null;
+  dataSource: string;
+  columns: ReportColumnDef[];
+  filters: ReportFilterDef[];
+  sorting: ReportSortDef[];
+}
+export interface ReportDefinition extends ReportDefinitionInput {
+  id: string;
+  module: string;
+  menuItemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export type ReportParams = Record<string, { value?: string; value2?: string }>;
+export interface ReportResult {
+  report: { id: string | null; name: string; description: string | null; source: string };
+  columns: { key: string; label: string; type: ReportFieldType; total: boolean }[];
+  rows: Record<string, any>[];
+  totals: Record<string, number>;
+  rowCount: number;
+  truncated: boolean;
+  appliedFilters: string[];
+  generatedAt: string;
+}
+export type ReportExportFormat = 'csv' | 'xlsx' | 'pdf';
+
+/** Downloads a POST response as a file (the export endpoint returns the file, not JSON). */
+async function downloadFile(path: string, body: unknown, fallbackName: string) {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: 'Export failed' }));
+    throw new Error(err.message || 'Export failed');
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const plain = /filename="([^"]+)"/i.exec(disposition)?.[1];
+  const fileName = encoded ? decodeURIComponent(encoded) : plain || fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Modules with user-defined reports, and where their report screens live. */
+export type ReportModuleKey = 'plm' | 'legacy-erp' | 'docket';
+export const REPORT_MODULE_UI: Record<ReportModuleKey, { label: string; basePath: string }> = {
+  plm: { label: 'PLM', basePath: '/plm/reports' },
+  'legacy-erp': { label: 'Legacy ERP', basePath: '/legacy-erp/reports' },
+  docket: { label: 'Docket Management', basePath: '/dockets/reports' },
+};
+
+/** Report Builder API of one module (/report-builder/<module>/...). */
+export function reportBuilderApiFor(module: ReportModuleKey) {
+  const base = `/report-builder/${module}`;
+  return {
+    catalog: () => api.get<ReportCatalog>(`${base}/catalog`),
+    list: () => api.get<ReportDefinition[]>(`${base}/reports`),
+    get: (id: string) => api.get<ReportDefinition>(`${base}/reports/${id}`),
+    create: (dto: ReportDefinitionInput) => api.post<ReportDefinition>(`${base}/reports`, dto),
+    update: (id: string, dto: ReportDefinitionInput) => api.patch<ReportDefinition>(`${base}/reports/${id}`, dto),
+    remove: (id: string) => api.delete(`${base}/reports/${id}`),
+    run: (id: string, params: ReportParams = {}) => api.post<ReportResult>(`${base}/reports/${id}/run`, { params }),
+    preview: (definition: ReportDefinitionInput, params: ReportParams = {}) =>
+      api.post<ReportResult>(`${base}/preview`, { definition, params }),
+    export: (id: string, format: ReportExportFormat, params: ReportParams = {}) =>
+      downloadFile(`${base}/reports/${id}/export`, { format, params }, `report.${format}`),
+  };
+}
+export type ReportBuilderApi = ReturnType<typeof reportBuilderApiFor>;

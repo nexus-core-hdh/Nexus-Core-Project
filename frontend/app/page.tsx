@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 
 export default function HomePage() {
   const router = useRouter();
@@ -12,10 +12,10 @@ export default function HomePage() {
     
     if (token) {
       // Redirect to dashboard if logged in
-      router.push("/dashboard/default");
+      router.push("/default");
     } else {
       // Redirect to login if not logged in
-      router.push("/dashboard/login/v1");
+      router.push("/login/v1");
     }
   }, [router]);
 

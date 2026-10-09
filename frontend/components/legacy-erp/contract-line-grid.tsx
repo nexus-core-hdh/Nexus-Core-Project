@@ -182,7 +182,7 @@ function recalc(row: LineRow): LineRow {
 }
 
 const isBlankLine = (row: LineRow) => !row.inventoryId && !row.serviceCardId && !row.code.trim();
-const INVENTORY_CARDS_LIST_PATH = "/dashboard/legacy-erp/inventory-cards-list";
+const INVENTORY_CARDS_LIST_PATH = "/legacy-erp/inventory-cards-list";
 
 interface Props {
   contractId: number | null;

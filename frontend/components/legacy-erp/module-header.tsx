@@ -13,8 +13,8 @@ import { cn } from "@/lib/utils";
 // the left-hand identity block and the row's spacing/alignment.
 const SIZES = {
   sm: { chip: "h-9 w-9", icon: "h-4 w-4", title: "text-[15px]", gap: "gap-3" },
-  md: { chip: "h-11 w-11", icon: "h-5 w-5", title: "text-[22px]", gap: "gap-4" },
-  lg: { chip: "h-12 w-12", icon: "h-6 w-6", title: "text-2xl", gap: "gap-4" },
+  md: { chip: "h-11 w-11", icon: "h-5 w-5", title: "text-lg", gap: "gap-4" },
+  lg: { chip: "h-12 w-12", icon: "h-6 w-6", title: "text-xl", gap: "gap-4" },
 } as const;
 
 export function ModuleHeader({

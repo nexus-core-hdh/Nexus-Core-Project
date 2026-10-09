@@ -1,7 +1,7 @@
 "use client";
 
 import { BellIcon, ClockIcon } from "lucide-react";
-import Link from "next/link";
+import Link from "@/components/app-link";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useEffect, useState } from "react";
 import { notificationsApi } from "@/lib/api";
@@ -171,7 +171,7 @@ const Notifications = () => {
                 </Button>
               )}
               <Button variant="link" className="h-auto p-0 text-xs" size="sm" asChild>
-                <Link href="/dashboard/collaboration/feed">View all</Link>
+                <Link href="/collaboration/feed">View all</Link>
               </Button>
             </div>
           </div>
@@ -198,10 +198,10 @@ const Notifications = () => {
                     handleMarkAsRead(item.id);
                   }
                   if (item.post) {
-                    window.location.href = `/dashboard/collaboration/feed#post-${item.post.id}`;
+                    window.location.href = `/collaboration/feed#post-${item.post.id}`;
                   } else if (item.type === 'CALENDAR_EVENT_STARTING') {
                     // Navigate to calendar when clicking on calendar event notification
-                    window.location.href = `/dashboard/apps/calendar`;
+                    window.location.href = `/apps/calendar`;
                   }
                 }}
               >

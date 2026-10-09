@@ -1,5 +1,5 @@
 // One-off, idempotent nav seed for the new "Yarn Recipe" list/management screen
-// (frontend/app/dashboard/(auth)/legacy-erp/yarn-recipes/page.tsx — a browsing screen over the
+// (frontend/app/[company]/(auth)/legacy-erp/yarn-recipes/page.tsx — a browsing screen over the
 // existing FabricYarnRecipeLine/FabricYarnRecipeService data, no new table/API beyond the
 // additive getYarnRecipeSummary endpoint). This script ONLY adds its menu entry, no new
 // screen/API/table of its own.
@@ -19,7 +19,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/yarn-recipes';
+  const href = '/legacy-erp/yarn-recipes';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): Yarn Recipe -> ${href}`);

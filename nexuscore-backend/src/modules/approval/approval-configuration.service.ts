@@ -32,7 +32,7 @@ export class ApprovalConfigurationService {
         // excluded alongside General Settings, which isn't a transactional screen either.
         where: {
           OR: [{ group: 'Legacy ERP' }, { parent: { group: 'Legacy ERP' } }],
-          href: { notIn: ['#', '/dashboard/legacy-erp/general-settings'] },
+          href: { notIn: ['#', '/legacy-erp/general-settings'] },
         },
         select: { title: true, href: true },
         orderBy: { title: 'asc' },
