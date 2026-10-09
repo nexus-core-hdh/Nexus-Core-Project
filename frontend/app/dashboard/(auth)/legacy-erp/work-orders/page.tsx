@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw } from "lucide-react";
+import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, ChevronDown, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
@@ -18,6 +18,8 @@ import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/ca
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SelectSizesDialog, type SizeGroup } from "@/app/dashboard/(auth)/plm/_components/select-sizes-dialog";
 import { BomTab } from "@/app/dashboard/(auth)/plm/style-cards/[id]/_components/bom-tab";
+import { STYLE_CARD_TRANSFER_OPTIONS } from "@/app/dashboard/(auth)/plm/style-cards/[id]/_components/work-order-bom-lines";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { StoredImage } from "@/components/legacy-erp/stored-image";
 import { firstImageAttachment } from "@/lib/stored-file";
@@ -1071,15 +1073,17 @@ export default function WorkOrderPage() {
   // this Work Order's BOM line shape, BomTab loads it into its grid (in memory), and nothing is
   // written until this screen's Save — which persists the BOM through BomTab's own save()
   // (registered below). Closing without Save leaves the saved BOM untouched.
-  const transferFromStyleCard = async () => {
+  // One of STYLE_CARD_TRANSFER_OPTIONS: "Recipe All Detail" transfers every line type; the others
+  // only their own type (only those rows are replaced in the grid).
+  const transferFromStyleCard = async (option: (typeof STYLE_CARD_TRANSFER_OPTIONS)[number]) => {
     const styleCardId = styleRows[0]?.styleCardId;
     if (!styleCardId) return toast.error("Select a Style first");
     if (!woId) return toast.error("Save the work order first, then Transfer from Style Card");
     setTransferring(true);
     try {
-      const preview: any = await legacyErpApi.workOrders.previewBomTransferFromStyleCard(woId, styleCardId);
+      const preview: any = await legacyErpApi.workOrders.previewBomTransferFromStyleCard(woId, styleCardId, option.lineType);
       setBomTransfer({ token: Date.now(), linesByType: preview?.lines ?? {} });
-      toast.success("BOM transferred from Style Card — Save the Work Order to keep it");
+      toast.success(`${option.label.replace(/^Transfer /, "")} transferred from Style Card — Save the Work Order to keep it`);
     } catch (e: any) {
       toast.error(e.message || "Transfer failed");
     } finally {
@@ -1336,9 +1340,20 @@ export default function WorkOrderPage() {
                       registerSave: registerBomSave,
                       toolbarExtra: (
                         <div className="flex gap-1.5">
-                          <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled={readOnly || transferring} onClick={transferFromStyleCard}>
-                            <ArrowDownToLine className="h-3 w-3 mr-1" />Transfer from Style Card
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled={readOnly || transferring}>
+                                <ArrowDownToLine className="h-3 w-3 mr-1" />Transfer from Style Card<ChevronDown className="h-3 w-3 ml-1" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start">
+                              {STYLE_CARD_TRANSFER_OPTIONS.map((option) => (
+                                <DropdownMenuItem key={option.key} className="text-xs" onSelect={() => transferFromStyleCard(option)}>
+                                  {option.label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                           <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled title="No existing Customer Trim source identified for this Work Order's Customer — not implemented this pass (Sample BOM has no Customer Trim transfer either)">
                             <ArrowDownToLine className="h-3 w-3 mr-1" />Transfer Customer Trims
                           </Button>

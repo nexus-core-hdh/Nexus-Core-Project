@@ -1,6 +1,6 @@
-// Work Order BOM — Transfer from Style Card as an unsaved edit. Covers the real line <-> row
-// mapping BomTab uses (work-order-bom-lines.ts) and the screen wiring that defers persistence to
-// the Work Order's Save.   Run: npm run test:bom-transfer
+// Work Order BOM — Transfer from Style Card (five options) as an unsaved edit. Covers the real
+// line <-> row mapping and transfer application BomTab uses (work-order-bom-lines.ts) and the
+// screen wiring that defers persistence to the Work Order's Save.   Run: npm run test:bom-transfer
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { register } from "node:module";
@@ -8,7 +8,9 @@ import { describe, it } from "node:test";
 
 register("./workspace-test-loader.mjs", import.meta.url);
 const COMPONENTS = "../app/dashboard/(auth)/plm/style-cards/[id]/_components";
-const { workOrderLineToBomRow, workOrderRowToRecipeLine } = await import(`${COMPONENTS}/work-order-bom-lines.ts`);
+const { workOrderLineToBomRow, workOrderRowToRecipeLine, replaceTransferredRows, STYLE_CARD_TRANSFER_OPTIONS } = await import(`${COMPONENTS}/work-order-bom-lines.ts`);
+
+const TYPES = ["fabric", "trim", "ornament", "process"];
 
 // A line exactly as WorkOrderService.previewBomTransferFromStyleCard returns it.
 const transferred = {
@@ -49,6 +51,48 @@ describe("transferred line → grid row → saved line", () => {
   });
 });
 
+describe("Transfer from Style Card options", () => {
+  it("exactly the five options, in order, each mapped to its transfer type", () => {
+    assert.deepEqual(STYLE_CARD_TRANSFER_OPTIONS.map((o) => [o.label, o.lineType ?? "ALL"]), [
+      ["Transfer Recipe All Detail", "ALL"],
+      ["Transfer Fabric Recipe Detail", "fabric"],
+      ["Transfer Trim Recipe Detail", "trim"],
+      ["Transfer Ornament Details", "ornament"],
+      ["Transfer Process Details", "process"],
+    ]);
+  });
+
+  // The grid as loaded from the saved BOM: one saved row of every type.
+  const savedRows = TYPES.map((lt) => workOrderLineToBomRow({ id: `saved-${lt}`, lineType: lt, explanation: `saved ${lt}` }, {}));
+  const toRow = (l) => ({ ...workOrderLineToBomRow(l, {}), id: `new-${l.lineType}` });
+  // What the read-only API returns per option: all four types, or only the option's own type.
+  const styleLines = Object.fromEntries(TYPES.map((lt) => [lt, [{ explanation: `style ${lt}` }]]));
+  const resultFor = (option) => (option.lineType ? { [option.lineType]: styleLines[option.lineType] } : styleLines);
+  const byType = (rows) => Object.fromEntries(TYPES.map((lt) => [lt, rows.filter((r) => r.lineType === lt).map((r) => r.explanation)]));
+
+  for (const option of STYLE_CARD_TRANSFER_OPTIONS) {
+    it(`"${option.label}" replaces ${option.lineType ? `only the ${option.lineType} rows` : "the rows of every type"}`, () => {
+      const rows = byType(replaceTransferredRows(savedRows, resultFor(option), toRow));
+      for (const lt of TYPES) {
+        const replaced = !option.lineType || option.lineType === lt;
+        assert.deepEqual(rows[lt], [replaced ? `style ${lt}` : `saved ${lt}`], lt);
+      }
+    });
+  }
+
+  it("All Detail empties a type the Style Card has no lines for (as the all-types transfer always did)", () => {
+    const rows = byType(replaceTransferredRows(savedRows, { ...styleLines, process: [] }, toRow));
+    assert.deepEqual(rows.process, []);
+    assert.deepEqual(rows.fabric, ["style fabric"]);
+  });
+
+  it("does not mutate the rows it was given", () => {
+    const before = JSON.stringify(savedRows);
+    replaceTransferredRows(savedRows, styleLines, toRow);
+    assert.equal(JSON.stringify(savedRows), before);
+  });
+});
+
 describe("screen wiring", () => {
   const page = readFileSync(new URL("../app/dashboard/(auth)/legacy-erp/work-orders/page.tsx", import.meta.url), "utf8");
   const bomTab = readFileSync(new URL(`${COMPONENTS}/bom-tab.tsx`, import.meta.url), "utf8");
@@ -58,11 +102,16 @@ describe("screen wiring", () => {
     assert.doesNotMatch(page, /transferBomFromStyleCard\(/);
     assert.doesNotMatch(api, /transfer-from-style-card/);
     assert.match(api, /previewBomTransferFromStyleCard: [^\n]*\n\s*api\.get\(`\/legacy-erp\/work-orders\/\$\{id\}\/bom\/style-card-transfer/);
-    assert.match(page, /previewBomTransferFromStyleCard\(woId, styleCardId\)/);
+  });
+
+  it("the button opens the five-option menu; each option passes its own type to the read-only transfer", () => {
+    assert.match(page, /<DropdownMenuTrigger asChild>\s*<Button[^>]*>\s*<ArrowDownToLine[^>]*\/>Transfer from Style Card/);
+    assert.match(page, /\{STYLE_CARD_TRANSFER_OPTIONS\.map\(\(option\) => \(\s*<DropdownMenuItem key=\{option\.key\}[^>]*onSelect=\{\(\) => transferFromStyleCard\(option\)\}>/);
+    assert.match(page, /previewBomTransferFromStyleCard\(woId, styleCardId, option\.lineType\)/);
   });
 
   it("the transfer goes into BomTab's in-memory rows, and no upsert runs outside save()", () => {
-    assert.match(bomTab, /setRows\(\(rs\) => \[\.\.\.rs\.filter\(\(r\) => !types\.includes\(r\.lineType\)\), \.\.\.incoming\]\)/);
+    assert.match(bomTab, /setRows\(\(rs\) => replaceTransferredRows\(rs, t\.linesByType, toRow\)\)/);
     assert.equal((bomTab.match(/workOrders\.upsertBom\(/g) ?? []).length, 1, "the single upsert is in save()");
   });
 

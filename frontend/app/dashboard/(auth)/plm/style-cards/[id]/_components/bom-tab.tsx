@@ -13,7 +13,7 @@ import { plmApi, legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
-import { workOrderLineToBomRow, workOrderRowToRecipeLine } from "./work-order-bom-lines";
+import { replaceTransferredRows, workOrderLineToBomRow, workOrderRowToRecipeLine } from "./work-order-bom-lines";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -1037,9 +1037,10 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     const t = workOrder?.transfer;
     if (!isWorkOrderMode || !t || loading || appliedTransferRef.current === t.token) return;
     appliedTransferRef.current = t.token;
-    const types = Object.keys(t.linesByType);
-    const incoming = types.flatMap((lt) => (t.linesByType[lt] ?? []).map((l: any) => ({ ...workOrderLineToRow({ ...l, lineType: lt }), id: uid() })));
-    setRows((rs) => [...rs.filter((r) => !types.includes(r.lineType)), ...incoming]);
+    // New ids: transferred lines are new rows until saved.
+    const toRow = (l: any): BomRow => ({ ...workOrderLineToRow(l), id: uid() });
+    const incoming = Object.entries(t.linesByType).flatMap(([lt, ls]) => (ls ?? []).map((l: any) => toRow({ ...l, lineType: lt })));
+    setRows((rs) => replaceTransferredRows(rs, t.linesByType, toRow));
     new Set(incoming.map((r) => r.fabricInventoryId).filter((id): id is number => id != null)).forEach((id) => { ensureItemUnits(id); });
   }, [workOrder?.transfer, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 

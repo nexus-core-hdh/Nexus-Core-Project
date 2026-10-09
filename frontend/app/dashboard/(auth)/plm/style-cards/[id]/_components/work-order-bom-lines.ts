@@ -37,6 +37,30 @@ export function workOrderLineToBomRow(l: any, cardCache: Record<string, any>): B
   };
 }
 
+export type WorkOrderBomLineType = "fabric" | "trim" | "ornament" | "process";
+
+/** Work Order BOM → "Transfer from Style Card" options. `lineType` undefined = every BOM line type
+ *  (the all-types transfer replaces all four); otherwise only that type's lines are transferred and
+ *  only that type's rows in the grid are replaced (the existing per-type transfer semantics). Each
+ *  option only READS (WorkOrderService.previewBomTransferFromStyleCard); nothing is written until the
+ *  Work Order is saved. */
+export const STYLE_CARD_TRANSFER_OPTIONS: { key: string; label: string; lineType?: WorkOrderBomLineType }[] = [
+  { key: "all", label: "Transfer Recipe All Detail" },
+  { key: "fabric", label: "Transfer Fabric Recipe Detail", lineType: "fabric" },
+  { key: "trim", label: "Transfer Trim Recipe Detail", lineType: "trim" },
+  { key: "ornament", label: "Transfer Ornament Details", lineType: "ornament" },
+  { key: "process", label: "Transfer Process Details", lineType: "process" },
+];
+
+/** Applies a transfer result to the grid rows: rows of every line type present in `linesByType`
+ *  are replaced by the transferred lines (via `toRow`); rows of any other type are kept as they are.
+ *  So an all-types transfer replaces all four, a single-type transfer only its own type. */
+export function replaceTransferredRows(rows: BomRow[], linesByType: Record<string, any[]>, toRow: (line: any) => BomRow): BomRow[] {
+  const types = Object.keys(linesByType);
+  const incoming = types.flatMap((lt) => (linesByType[lt] ?? []).map((l) => toRow({ ...l, lineType: lt })));
+  return [...rows.filter((r) => !types.includes(r.lineType)), ...incoming];
+}
+
 /** Grid row -> the MA_RecipeItem line save() persists via upsertBom. */
 export function workOrderRowToRecipeLine(r: BomRow) {
   return {

@@ -149,6 +149,52 @@ describe('the Work Order Save persists the transferred BOM', () => {
   });
 });
 
+// The five Work Order screen options (frontend STYLE_CARD_TRANSFER_OPTIONS): All Detail = every type,
+// otherwise only that type.
+const OPTIONS: [label: string, lineType: (typeof BOM_LINE_TYPES)[number] | undefined][] = [
+  ['Transfer Recipe All Detail', undefined],
+  ['Transfer Fabric Recipe Detail', 'fabric'],
+  ['Transfer Trim Recipe Detail', 'trim'],
+  ['Transfer Ornament Details', 'ornament'],
+  ['Transfer Process Details', 'process'],
+];
+
+/** A Work Order whose saved BOM already has one line of every type ("saved <type>"). */
+async function worldWithSavedBom() {
+  const w = await world();
+  for (const lt of BOM_LINE_TYPES) {
+    await svc.upsertBom(w.woId, lt, [{ inventoryId: lt === 'fabric' ? w.fabricId : lt === 'trim' ? w.trimId : undefined, explanation: `saved ${lt}`, quantity: 9 }], USER);
+  }
+  return w;
+}
+const explanations = async (woId: number) =>
+  Object.fromEntries(await Promise.all(BOM_LINE_TYPES.map(async (lt) => [lt, (await svc.listBom(woId, lt)).map((l: any) => l.explanation)])));
+const STYLE = { fabric: ['Body fabric'], trim: ['Label'], ornament: ['Print'], process: ['Wash'] } as const;
+
+describe('each of the five transfer options', () => {
+  for (const [label, lineType] of OPTIONS) {
+    test(`${label}: no Save → reload leaves the saved BOM unchanged`, async () => {
+      const w = await worldWithSavedBom();
+      const before = await savedBom(w.woId);
+      const r = await svc.previewBomTransferFromStyleCard(w.woId, w.styleCardId, lineType);
+      assert.deepEqual(r.lineTypes, lineType ? [lineType] : [...BOM_LINE_TYPES]);
+      assert.deepEqual(await savedBom(w.woId), before);
+    });
+
+    test(`${label}: Save → reload persists exactly ${lineType ? `the ${lineType} lines` : 'every type'}`, async () => {
+      const w = await worldWithSavedBom();
+      const { lines } = await svc.previewBomTransferFromStyleCard(w.woId, w.styleCardId, lineType);
+      // BomTab.save(): the transferred types carry the transferred rows; the others are unchanged.
+      for (const lt of Object.keys(lines) as (typeof BOM_LINE_TYPES)[number][]) await svc.upsertBom(w.woId, lt, lines[lt], USER);
+      const after = await explanations(w.woId);
+      for (const lt of BOM_LINE_TYPES) {
+        const transferred = !lineType || lineType === lt;
+        assert.deepEqual(after[lt], transferred ? [...STYLE[lt]] : [`saved ${lt}`], lt);
+      }
+    });
+  }
+});
+
 describe('API surface', () => {
   const route = (name: string, method: string) => {
     const handler = (WorkOrderController.prototype as any)[name];
