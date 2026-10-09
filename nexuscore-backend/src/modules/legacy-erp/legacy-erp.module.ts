@@ -64,6 +64,8 @@ import { TrimPlanningController } from './trim-planning.controller';
 import { TrimPlanningService } from './trim-planning.service';
 import { CuttingCardController } from './cutting-card.controller';
 import { CuttingCardService } from './cutting-card.service';
+import { PackingListController } from './packing-list.controller';
+import { PackingListService } from './packing-list.service';
 import { OrderManufacturingController } from './order-manufacturing.controller';
 import { OrderManufacturingService } from './order-manufacturing.service';
 import { DeleteDependencyService } from './delete-dependency.service';
@@ -100,6 +102,7 @@ import { AuditModule } from '../audit/audit.module';
     WarehouseController,
     AccountController,
     TrimCardController,
+    PackingListController,
     UnitSetController,
     LookupController,
     YarnCardController,
@@ -168,6 +171,7 @@ import { AuditModule } from '../audit/audit.module';
     WorkOrderService,
     FabricYarnRequirementsService,
     CuttingCardService,
+    PackingListService,
     OrderManufacturingService,
     DeleteDependencyService,
     ReceiptTraceabilityService,

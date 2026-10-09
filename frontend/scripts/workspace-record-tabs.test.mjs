@@ -671,3 +671,29 @@ describe("record-name hooks are wired safely in every screen", () => {
     }
   });
 });
+
+// ── Packing List workspace records ──────────────────────────────────────────────────────────────
+describe("Packing List workspace tabs", () => {
+  const PL = "/dashboard/legacy-erp/packing-lists";
+  const PL_LIST = `${PL}-list`;
+  const PL_KEY = (id) => `${PL}?id=${id}`;
+  const entryByHref = new Map([[PL_LIST, { title: "Packing List", href: PL_LIST }]]);
+
+  it("Packing Lists A, B and C are independent tabs; reopening A activates its tab", () => {
+    openFromMenu(PL_LIST);
+    for (const id of [11, 12, 13]) openFromMenu(`${PL}?id=${id}&mode=view`);
+    openFromMenu(`${PL}?id=11&mode=edit`);
+    assert.deepEqual(keys(), [PL_LIST, PL_KEY(11), PL_KEY(12), PL_KEY(13)]);
+    assert.equal(active(), PL_KEY(11));
+    clickTab(PL_KEY(12));
+    assert.equal(urls.at(-1), `${PL}?id=12&mode=view`);
+  });
+
+  it("a new Packing List becomes its saved record's tab, titled by its number", () => {
+    openFromMenu(`${PL}?mode=create`);
+    adoptWorkspaceRecordId(PL, 21); // first save -> setId(21)
+    useWorkspaceStore.getState().setTabRecordLabel(PL_KEY(21), "PL-00021");
+    assert.deepEqual(keys(), [PL_KEY(21)]);
+    assert.equal(resolveWorkspaceTabTitle(tabOf(PL_KEY(21)), entryByHref).title, "Packing List [PL-00021]");
+  });
+});

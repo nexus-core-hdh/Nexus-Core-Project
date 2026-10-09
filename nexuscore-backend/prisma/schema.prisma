@@ -4018,6 +4018,25 @@ model CuttingCardEntrySize {
   @@unique([entryId, sizeCode])
 }
 
+// Packing List — dynamic per-size packed quantities (migration 20261009000000_add_packing_list_item_size).
+// The header/lines stay in the legacy IM_PackagingList / IM_PackagingListItem tables (raw SQL,
+// packing-list.service.ts); packingListItemId is IM_PackagingListItem.RecId (a NOT VALID FK in SQL —
+// the legacy table isn't a Prisma model). variantKey is the Work Order's own "Color‖Size" identity
+// (MA_WorkOrderItemVariant.Explanation), never a column position.
+model PackingListItemSize {
+  id                BigInt   @id @default(autoincrement())
+  packingListItemId BigInt
+  variantKey        String
+  quantity          Decimal  @default(0) @db.Decimal(18, 4)
+  createdAt         DateTime @default(now())
+  createdBy         Int?
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedBy         Int?
+
+  @@unique([packingListItemId, variantKey])
+  @@index([packingListItemId])
+}
+
 // Fabric Card Yarn Recipe — the detailed, multi-row yarn composition for a Fabric Card. The
 // legacy IM_Item columns (UD_FabYarnCount1-4 / UD_FyarnRatio1-4) only ever support a fixed 4
 // slots with no room for Explanation/Variant/Process/Waste%/Dye Wastage% per yarn, so they can't

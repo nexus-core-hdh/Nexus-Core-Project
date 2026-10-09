@@ -473,6 +473,22 @@ export const legacyErpApi = {
     updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/trim-cards/${id}/items/${itemId}`, d),
     removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/trim-cards/${id}/items/${itemId}`),
   },
+  // Packing List — IM_PackagingList header + box-range lines, per-size quantities keyed by the
+  // Work Order's own "Color‖Size" variant (packing-list.service.ts).
+  packingLists: {
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/packing-lists${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
+    get: (id: number) => api.get(`/legacy-erp/packing-lists/${id}`),
+    previewNextCode: () => api.get(`/legacy-erp/packing-lists/next-code`),
+    workOrderContext: (workOrderId: number) => api.get(`/legacy-erp/packing-lists/work-order-context/${workOrderId}`),
+    create: (d: any) => api.post('/legacy-erp/packing-lists', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/packing-lists/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/packing-lists/${id}`),
+    getLines: (id: number) => api.get(`/legacy-erp/packing-lists/${id}/lines`),
+    saveLines: (id: number, lines: any[]) => api.put(`/legacy-erp/packing-lists/${id}/lines`, { lines }),
+    summary: (id: number) => api.get(`/legacy-erp/packing-lists/${id}/summary`),
+    approve: (id: number) => api.post(`/legacy-erp/packing-lists/${id}/approve`, {}),
+    unapprove: (id: number) => api.post(`/legacy-erp/packing-lists/${id}/unapprove`, {}),
+  },
   unitSets: {
     list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/unit-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
     get: (id: number) => api.get(`/legacy-erp/unit-sets/${id}`),

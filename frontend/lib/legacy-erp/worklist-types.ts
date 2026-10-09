@@ -7,7 +7,7 @@
 export type WorklistSource =
   | "purchase-receipt" | "purchase-receipt-item" | "yarn-card" | "fabric-card" | "current-account" | "warehouse" | "financial-receipt"
   | "trim-card" | "trim-inventory-card" | "purchase-order" | "contract" | "size-set" | "unit-set" | "inventory-card"
-  | "work-order";
+  | "work-order" | "packing-list";
 
 export interface WorklistField {
   source: WorklistSource;

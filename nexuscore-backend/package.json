@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json --tsBuildInfoFile .cache/typecheck.tsbuildinfo",
     "verify": "tsc -p tsconfig.build.json --outDir .cache/verify-dist --incremental false",
     "test:udf": "ts-node -T test/udf/prepare-test-db.ts && node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/udf/*.test.ts\"",
+    "test:packing-list": "ts-node -T test/packing-list/prepare-test-db.ts && node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/packing-list/*.test.ts\"",
     "start:prod": "node dist/src/main",
     "db:deploy": "prisma migrate deploy",
     "db:setup": "node dist/prisma/setup.js",

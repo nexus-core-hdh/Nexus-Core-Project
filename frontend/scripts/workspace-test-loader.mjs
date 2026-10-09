@@ -26,6 +26,8 @@ const STUBS = {
     { path: "/dashboard/legacy-erp/cutting-card/entry", Component: () => null },
     { path: "/dashboard/finance-erp/payable/purchase-orders", Component: () => null },
     { path: "/dashboard/finance-erp/payable/purchase-orders-list", Component: () => null },
+    { path: "/dashboard/legacy-erp/packing-lists", Component: () => null },
+    { path: "/dashboard/legacy-erp/packing-lists-list", Component: () => null },
     { path: "/dashboard/crm/deals/dashboards/create", Component: () => null },
   ];
   export const GENERATED_RECORD_ROUTES = [

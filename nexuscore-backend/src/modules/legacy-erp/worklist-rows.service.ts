@@ -162,6 +162,7 @@ const SOURCE_TABLE: Record<WorklistSourceKey, { table: string; filter?: Prisma.S
   // (like 'inventory-card' / 'inventory-card-list', so no LIST_SCREEN_TABLES entry); listed here
   // only for this Record's completeness.
   'work-order': { table: 'MA_WorkOrder' },
+  'packing-list': { table: 'IM_PackagingList' },
   // Joined-only targets for Subcontract Type/Receipt — see RELATIONSHIPS['purchase-receipt']
   // below. No filter/receiptScope needed: MD_SubcontractType/MD_SubcontractReceipt aren't
   // receipt-scoped tables, just plain masters (same shape as current-account/warehouse above).
