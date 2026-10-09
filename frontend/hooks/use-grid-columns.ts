@@ -144,6 +144,30 @@ function sanitizeOrder<K extends string>(saved: unknown, reorderableDefault: K[]
   return [...validSaved, ...missing];
 }
 
+/**
+ * The order to render: `order` (the user's current/saved order) plus every declared reorderable
+ * column it doesn't know yet, each inserted right after its nearest declared predecessor — i.e.
+ * where the caller declared it, not appended at the end. Needed for columns that appear AFTER the
+ * grid mounted (e.g. Packing List's per-Order size columns, which only exist once the Work Order
+ * has loaded): `order` state and saved preferences are seeded/sanitized against the mount-time
+ * column set, so without this such columns were silently never rendered. Returns `order` itself
+ * when nothing is missing, so grids with a static column set behave exactly as before.
+ */
+export function mergeDeclaredOrder<K extends string>(order: K[], declared: K[]): K[] {
+  const missing = declared.filter((k) => !order.includes(k));
+  if (!missing.length) return order;
+  const result = [...order];
+  for (const key of missing) {
+    let insertAt = 0;
+    for (let i = declared.indexOf(key) - 1; i >= 0; i--) {
+      const at = result.indexOf(declared[i]);
+      if (at >= 0) { insertAt = at + 1; break; }
+    }
+    result.splice(insertAt, 0, key);
+  }
+  return result;
+}
+
 function sanitizeHidden<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
   return Array.isArray(saved) ? saved.filter((k): k is K => reorderableDefault.includes(k as K)) : [];
 }
@@ -223,6 +247,10 @@ export function useGridColumns<K extends string>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
+  // Columns declared after mount (or unknown to a restored preference) join at their declared
+  // position — see mergeDeclaredOrder. Identical to `columnOrder` for a static column set.
+  const effectiveOrder = useMemo(() => mergeDeclaredOrder(columnOrder, reorderableDefault), [columnOrder, reorderableDefault]);
+
   const displayColumnDefs = useMemo(
     // `.filter((k) => columnByKey.has(k))` guards against `columnOrder` (state, only ever
     // updated via drag-reorder or the Manage Columns modal) briefly or permanently disagreeing
@@ -232,10 +260,10 @@ export function useGridColumns<K extends string>({
     // missing from the current `columns` would resolve through `columnByKey.get(k)!` to
     // `undefined`, and every consumer here maps over this array assuming real column defs —
     // `undefined.key` throws.
-    () => [...fixedColumns, ...columnOrder.filter((k) => !hiddenColumns.has(k))]
+    () => [...fixedColumns, ...effectiveOrder.filter((k) => !hiddenColumns.has(k))]
       .filter((k) => columnByKey.has(k))
       .map((k) => columnByKey.get(k)!),
-    [columnOrder, hiddenColumns, fixedColumns, columnByKey],
+    [effectiveOrder, hiddenColumns, fixedColumns, columnByKey],
   );
 
   const getWidth = useCallback((key: K) => colWidths[key] ?? columnByKey.get(key)?.defaultWidth ?? 120, [colWidths, columnByKey]);
@@ -322,12 +350,12 @@ export function useGridColumns<K extends string>({
   const [modalDragOver, setModalDragOver] = useState<K | null>(null);
 
   const openModal = useCallback(() => {
-    setModalOrder(columnOrder);
+    setModalOrder(effectiveOrder);
     setModalHidden(new Set(hiddenColumns));
     setSearch("");
     setResetWidthsPending(false);
     setOpen(true);
-  }, [columnOrder, hiddenColumns]);
+  }, [effectiveOrder, hiddenColumns]);
   const closeModal = useCallback(() => setOpen(false), []);
 
   const getRowDragProps = useCallback((key: K): HeaderDragProps => ({
@@ -421,7 +449,7 @@ export function useGridColumns<K extends string>({
   return {
     fixedColumns,
     displayColumnDefs,
-    columnOrder,
+    columnOrder: effectiveOrder,
     hiddenColumns,
     colWidths,
     getWidth,

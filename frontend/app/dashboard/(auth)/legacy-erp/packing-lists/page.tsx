@@ -502,7 +502,7 @@ export default function PackingListPage() {
           <div className="max-h-[52vh] overflow-auto">
             <Table className="table-fixed" style={{ width: gridColumns.totalWidth(DEL_W), minWidth: "100%" }}>
               <colgroup>
-                {displayColumns.map((c) => <col key={c.key} style={{ width: gridColumns.colWidths[c.key] }} />)}
+                {displayColumns.map((c) => <col key={c.key} style={{ width: gridColumns.getWidth(c.key) }} />)}
                 <col style={{ width: DEL_W }} />
               </colgroup>
               <TableHeader className="sticky top-0 z-10">
