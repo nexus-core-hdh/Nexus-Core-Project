@@ -11,6 +11,7 @@
     "test:workspace-tabs": "node --test scripts/workspace-record-tabs.test.mjs",
     "test:screen-search": "node --test scripts/screen-search.test.mjs",
     "test:grid-columns": "node --test scripts/grid-columns.test.mjs",
+    "test:bom-transfer": "node --test scripts/work-order-bom-lines.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "prebuild": "node scripts/check-production-env.mjs && node scripts/generate-workspace-registry.mjs && node -e \"require('fs').rmSync('.next/dev/types',{recursive:true,force:true})\"",
     "build": "next build",

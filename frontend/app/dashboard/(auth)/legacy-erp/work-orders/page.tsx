@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -260,6 +260,13 @@ export default function WorkOrderPage() {
   // BOM rows/tab state now live entirely inside BomTab (mounted below in "workOrder" mode) — no
   // parallel bomLines/bomTab state here anymore.
   const [bomReloadTick, setBomReloadTick] = useState(0);
+  const [bomTransfer, setBomTransfer] = useState<{ token: number; linesByType: Record<string, any[]> } | null>(null);
+  const [bomDirty, setBomDirty] = useState(false);
+  const bomSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const registerBomSave = useCallback((fn: (() => Promise<boolean>) | null) => { bomSaveRef.current = fn; }, []);
+  // BomTab mounts on the first visit to the BOM tab and then stays mounted (hidden) so an unsaved
+  // transfer/edit survives switching tabs until Save.
+  const [bomTabVisited, setBomTabVisited] = useState(false);
 
   // Material x Production Color columns for the C/S Details grid — an INDEPENDENT read (and,
   // for the Choose-Color cells, write) of the Work Order's own real BOM (MA_RecipeItem via
@@ -732,7 +739,7 @@ export default function WorkOrderPage() {
   }, [initialId, initialStyleCardId]);
 
   const set = (key: keyof typeof header, value: any) => setHeader((p) => ({ ...p, [key]: value }));
-  const isDirty = !readOnly && (JSON.stringify(header) !== JSON.stringify(lastSaved));
+  const isDirty = !readOnly && (JSON.stringify(header) !== JSON.stringify(lastSaved) || bomDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
   useWorkspaceRecordLabel(woId ? header.workOrderNo || undefined : undefined);
 
@@ -876,10 +883,10 @@ export default function WorkOrderPage() {
     barcode: r.lot || "",
   })));
   // ── Save ─────────────────────────────────────────────────────────────────────────────────
-  // BOM is intentionally NOT part of this save — BomTab (the reused Sample BOM component,
-  // mounted below in "workOrder" mode) owns its own Save action, exactly like it already does for
-  // Style Card/Sample Card. Two Save buttons (header vs. BOM) is the existing Sample BOM
-  // behavior, not a new inconsistency introduced for Work Order.
+  // Also persists the BOM grid's unsaved changes (incl. a Transfer from Style Card) through
+  // BomTab's own save() — the same upsertBom path as the BOM toolbar's Save button, not a second
+  // mechanism. BomTab (the reused Sample BOM component, mounted below in "workOrder" mode) keeps
+  // that Save button too, exactly like it does for Style Card/Sample Card.
   const save = async () => {
     setSaving(true);
     try {
@@ -901,6 +908,11 @@ export default function WorkOrderPage() {
       const primId = Array.isArray(savedItems) ? savedItems[0]?.id : undefined;
       setPrimaryItemId(primId);
       if (primId) await legacyErpApi.workOrders.upsertItemVariants(primId, buildVariantRows());
+      if (bomDirty && bomSaveRef.current) {
+        if (!(await bomSaveRef.current())) throw new Error("The BOM could not be saved");
+        setBomTransfer(null);
+        setBomDirty(false);
+      }
 
       toast.success("Work order saved");
       setLastSaved(header);
@@ -1055,16 +1067,19 @@ export default function WorkOrderPage() {
   // adding one would mean touching its internals just for this — a key-based remount reuses what
   // already exists).
   const [transferring, setTransferring] = useState(false);
+  // Transfer is an UNSAVED edit: the read-only transfer API returns the Style Card BOM mapped to
+  // this Work Order's BOM line shape, BomTab loads it into its grid (in memory), and nothing is
+  // written until this screen's Save — which persists the BOM through BomTab's own save()
+  // (registered below). Closing without Save leaves the saved BOM untouched.
   const transferFromStyleCard = async () => {
     const styleCardId = styleRows[0]?.styleCardId;
     if (!styleCardId) return toast.error("Select a Style first");
     if (!woId) return toast.error("Save the work order first, then Transfer from Style Card");
     setTransferring(true);
     try {
-      await legacyErpApi.workOrders.transferBomFromStyleCard(woId, styleCardId);
-      setBomReloadTick((t) => t + 1);
-      loadBomMaterialGroups(woId);
-      toast.success("BOM transferred from Style Card");
+      const preview: any = await legacyErpApi.workOrders.previewBomTransferFromStyleCard(woId, styleCardId);
+      setBomTransfer({ token: Date.now(), linesByType: preview?.lines ?? {} });
+      toast.success("BOM transferred from Style Card — Save the Work Order to keep it");
     } catch (e: any) {
       toast.error(e.message || "Transfer failed");
     } finally {
@@ -1243,7 +1258,7 @@ export default function WorkOrderPage() {
             />
 
             {/* Secondary tabs */}
-            <Tabs defaultValue="C/S Details" onValueChange={(v) => { if (v === "C/S Details" && woId) loadBomMaterialGroups(woId); }}>
+            <Tabs defaultValue="C/S Details" onValueChange={(v) => { if (v === "BOM") setBomTabVisited(true); if (v === "C/S Details" && woId) loadBomMaterialGroups(woId); }}>
               <TabsList className="h-7 flex-wrap justify-start overflow-x-auto">
                 {SECONDARY_TABS.map((t) => <TabsTrigger key={t} value={t} className="h-6 whitespace-nowrap px-2 text-[11px]">{t}</TabsTrigger>)}
               </TabsList>
@@ -1303,7 +1318,7 @@ export default function WorkOrderPage() {
                 <p className="text-[11.5px] text-muted-foreground">No existing Work Order revenue data structure identified — not implemented this pass.</p>
               </TabsContent>
 
-              <TabsContent value="BOM" className="pt-2 space-y-2">
+              <TabsContent value="BOM" forceMount className="pt-2 space-y-2 data-[state=inactive]:hidden">
                 {/* Reuses the EXACT existing Sample BOM component (BomTab, from
                     plm/style-cards/[id]/_components/bom-tab.tsx — the same one plm/sample-cards
                     already mounts) in "workOrder" mode: same columns, calculations, column
@@ -1311,11 +1326,14 @@ export default function WorkOrderPage() {
                     MA_RecipeItem instead of StyleBomLine). Not a second BOM implementation. */}
                 {!woId ? (
                   <p className="text-[11.5px] text-muted-foreground">Save the Work Order first — BOM lines persist under this Work Order's own record (MA_Recipe.WorkOrderId).</p>
-                ) : (
+                ) : bomTabVisited && (
                   <BomTab
                     key={bomReloadTick}
                     workOrder={{
                       workOrderId: woId,
+                      transfer: bomTransfer,
+                      onDirtyChange: setBomDirty,
+                      registerSave: registerBomSave,
                       toolbarExtra: (
                         <div className="flex gap-1.5">
                           <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled={readOnly || transferring} onClick={transferFromStyleCard}>

@@ -13,6 +13,7 @@ import { plmApi, legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { GridInput, GridCheckbox, uid, num } from "./grid-input";
+import { workOrderLineToBomRow, workOrderRowToRecipeLine } from "./work-order-bom-lines";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/card-lookup-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -25,7 +26,7 @@ import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
 
-type BomRow = {
+export type BomRow = {
   id: string;
   lineType: string;
   // The actual binding to the selected Fabric/Trim Card (IM_Item.RecId, via
@@ -584,6 +585,16 @@ interface WorkOrderBomAdapter {
    *  Card" / "Transfer Customer Trims" buttons, kept screen-specific rather than folded into this
    *  shared component's own logic. */
   toolbarExtra?: React.ReactNode;
+  /** "Transfer from Style Card" result (Style BOM already mapped to MA_RecipeItem line shape, per
+   *  lineType — WorkOrderService.previewBomTransferFromStyleCard). Each new `token` replaces the
+   *  grid's rows of those line types IN MEMORY only — an unsaved edit like any other, persisted by
+   *  save() (the host's Save calls it through registerSave). */
+  transfer?: { token: number; linesByType: Record<string, any[]> } | null;
+  /** Reports whether the grid holds BOM changes not yet saved (host dirty state / close warning). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Hands the host this grid's own save() (resolves true on success), so the host's Save persists
+   *  the BOM through exactly the same path as the grid's own Save button. Called with null on unmount. */
+  registerSave?: (save: (() => Promise<boolean>) | null) => void;
 }
 
 export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrder }: {
@@ -604,6 +615,8 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<BomRow[]>([]);
+  // Work Order mode: persisted projection of the last loaded/saved rows (see bomDirty below).
+  const savedSnapshotRef = useRef<string | null>(null);
   // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
   // Quantity/Unit Price cells below, via the shared decimalKey mechanism.
   const { round, ensureLoaded: ensureDecimalParamsLoaded } = useDecimalParameters();
@@ -726,6 +739,11 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   // with none entered yet simply has nothing to map (the material stays a plain/common row).
   const [productionColors, setProductionColors] = useState<{ color: string; quantity: number }[]>([]);
 
+  // Work Order / MA_RecipeItem line (listBom row, or a Transfer-from-Style-Card line of the same
+  // shape) → grid row. fabricCode/fabricName/unit have no denormalized column there; they are
+  // resolved live from fabricCardCacheRef (unit text is patched in once ensureItemUnits resolves).
+  const workOrderLineToRow = (l: any): BomRow => workOrderLineToBomRow(l, fabricCardCacheRef.current);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -793,37 +811,10 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           };
         });
       } else {
-        loadedRows = rawLines.map((l: any): BomRow => {
-          // Work Order / MA_RecipeItem — fabricCode/fabricName/unit have no denormalized column
-          // here, resolved live from the just-populated fabricCardCacheRef (unit text is patched
-          // in separately below, once ensureItemUnits resolves for this card).
-          const src = l.inventoryId != null ? fabricCardCacheRef.current[String(l.inventoryId)] : null;
-          return {
-            id: l.id, lineType: l.lineType, fabricInventoryId: l.inventoryId ?? null,
-            fabricCode: src?.inventoryCode || "", fabricName: src?.inventoryName || "",
-            explanation: l.explanation || "", placement: l.uD_Placement || "", process: l.uD_Remarks || "",
-            variant: l.variant1 || "", variant2: l.variant2 || "", rowColumn: "", colorCardId: l.colorCardId || "",
-            // No relation join available here (MA_RecipeItem is a raw legacy table) — the display
-            // label is backfilled from `colors` once it loads, same as Work Order mode already does
-            // for `unit` below via itemUnitsByCard.
-            color: "",
-            extraColorCardIds: [],
-            willBeCut: !!l.isCutting, mainFabric: !!l.isMaster, unitId: l.unitId ?? null, unit: "",
-            marketLength: num(l.markerLength), marketWidth: num(l.markerWidth), marketWeight: num(l.m2Weight),
-            quantity: num(l.quantity),
-            wastePct: num(l.wastage), dyeWastagePct: 0, otherWastagePct: 0,
-            unitPrice: num(l.price), component: l.uD_Component || "", dia: l.uD_Dia || "", gauge: l.uD_Guage || "",
-            finishWidth: l.uD_FinishWidth || "", finishRoute: l.uD_FinishRoute || "", revision: l.uD_Revision || "",
-            // NOT for Requirement / Use Fix Quantity: MA_RecipeItem.NotForRequirement/IsFixQuantity
-            // (the Work Order's effective value, inherited from the Style Card unless changed here).
-            // The rest of this extension has no MA_RecipeItem column — blank here, never sent.
-            notForRequirement: !!l.notForRequirement, useFixQuantity: !!l.isFixQuantity, printWastagePct: 0, forex: "", manProductCode: "",
-            orderCondition: "", condition: "", reasonRevision: "", dyeingInstruction: "", remarks: "",
-            category: "", bodyColor: "", printColor: "", dyeingProcess: "",
-          };
-        });
+        loadedRows = rawLines.map(workOrderLineToRow);
       }
       setRows(loadedRows);
+      if (isWorkOrderMode) savedSnapshotRef.current = persistedSnapshot(loadedRows);
       setProductionColors(Array.isArray((mfgQty as any)?.byColor) ? (mfgQty as any).byColor : []);
       setColors(Array.isArray(colorList) ? colorList : (colorList as any)?.data || []);
       setProcessCards(Array.isArray(pc) ? pc : (pc as any)?.data || []);
@@ -984,7 +975,12 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       return [base, ...extraColorCardIds.map((colorCardId) => ({ ...base, colorCardId }))];
     });
 
-  const save = async () => {
+  // Work Order mode: grid row → the MA_RecipeItem line save() persists (upsertBom). Also the
+  // projection unsaved-change tracking compares, so only persisted fields count as a change.
+  const toRecipeLine = workOrderRowToRecipeLine;
+  const persistedSnapshot = (rs: BomRow[]) => JSON.stringify(rs.map((r) => [r.lineType, toRecipeLine(r)]));
+
+  const save = async (): Promise<boolean> => {
     setSaving(true);
     try {
       // Decimal Parameters rounding happens HERE (not just via each cell's own GridInput
@@ -995,23 +991,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       const roundedRows = rows.map((r) => ({ ...r, quantity: round(r.quantity, "quantity"), unitPrice: round(r.unitPrice, "unit-price") }));
       if (isWorkOrderMode) {
         for (const lt of BOM_LINE_TYPE_VALUES) {
-          const linesOfType = roundedRows.filter((r) => r.lineType === lt).map((r) => ({
-            inventoryId: r.fabricInventoryId ?? undefined, explanation: r.explanation || undefined,
-            variant1: r.variant || undefined, variant2: r.variant2 || undefined, isCutting: r.willBeCut ? 1 : 0, isMaster: r.mainFabric ? 1 : 0,
-            unitId: r.unitId ?? undefined, quantity: r.quantity, price: r.unitPrice,
-            // Real ColorCard.id (text/uuid) as of the 20260909130000 migration — previously this
-            // was wrongly cast with Number(), which silently produced NaN for every UUID and meant
-            // Work Order's own "Choose Color" selection never actually persisted.
-            colorCardId: r.colorCardId || undefined,
-            // Same combined-total mapping transferBomFromStyleCard uses — see RECIPE_ITEM_COLUMNS'
-            // own comment on why only one Wastage column exists here.
-            wastage: (r.wastePct || 0) + (r.dyeWastagePct || 0) + (r.otherWastagePct || 0) + (r.printWastagePct || 0),
-            uD_Component: r.component || undefined, uD_Dia: r.dia || undefined, uD_Guage: r.gauge || undefined,
-            uD_FinishWidth: r.finishWidth || undefined, uD_FinishRoute: r.finishRoute || undefined,
-            uD_Revision: r.revision || undefined, uD_Placement: r.placement || undefined, uD_Remarks: r.process || undefined,
-            markerWidth: r.marketWidth || undefined, markerLength: r.marketLength || undefined, m2Weight: r.marketWeight || undefined,
-            notForRequirement: r.notForRequirement ? 1 : 0, isFixQuantity: r.useFixQuantity ? 1 : 0,
-          }));
+          const linesOfType = roundedRows.filter((r) => r.lineType === lt).map(toRecipeLine);
           await legacyErpApi.workOrders.upsertBom(workOrder!.workOrderId, lt, linesOfType);
         }
       } else if (isSampleMode) {
@@ -1029,12 +1009,39 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       toast.success("BOM saved");
       onReloadCard?.();
       load();
+      return true;
     } catch (e: any) {
       toast.error(e.message || "Failed to save BOM");
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  // ── Work Order mode: unsaved-change tracking, host Save, Transfer from Style Card ─────────────
+  // Dirty = the persisted projection (toRecipeLine) differs from what was last loaded/saved, so
+  // display-only patches (unit text, color label) never count as a change.
+  const bomDirty = isWorkOrderMode && savedSnapshotRef.current !== null && persistedSnapshot(rows) !== savedSnapshotRef.current;
+  useEffect(() => { workOrder?.onDirtyChange?.(bomDirty); }, [bomDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (!workOrder?.registerSave) return;
+    workOrder.registerSave(() => saveRef.current());
+    return () => workOrder.registerSave?.(null);
+  }, [workOrder?.registerSave]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Applies each new transfer once, after load() has settled: the transferred line types are
+  // replaced in the grid (the same replace-per-type the transfer has always meant) — no API write.
+  const appliedTransferRef = useRef<number | null>(null);
+  useEffect(() => {
+    const t = workOrder?.transfer;
+    if (!isWorkOrderMode || !t || loading || appliedTransferRef.current === t.token) return;
+    appliedTransferRef.current = t.token;
+    const types = Object.keys(t.linesByType);
+    const incoming = types.flatMap((lt) => (t.linesByType[lt] ?? []).map((l: any) => ({ ...workOrderLineToRow({ ...l, lineType: lt }), id: uid() })));
+    setRows((rs) => [...rs.filter((r) => !types.includes(r.lineType)), ...incoming]);
+    new Set(incoming.map((r) => r.fabricInventoryId).filter((id): id is number => id != null)).forEach((id) => { ensureItemUnits(id); });
+  }, [workOrder?.transfer, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const grouped = useMemo(() => {
     const g: Record<string, BomRow[]> = { fabric: [], trim: [], ornament: [], process: [] };

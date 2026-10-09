@@ -1,5 +1,5 @@
 import { ListPaging, runLegacyList } from './list-paging.util';
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
@@ -684,7 +684,7 @@ export class WorkOrderService {
   // StyleBomLine/StyleCard, satisfying "Work Order BOM is a Work-Order-specific COPY".
   // Key names here must match camel(col) exactly (upsertBom looks each column up via
   // line[camel(c)]) — a UD_ column camelizes to "uD_Xxx" (first char lowercased, rest untouched),
-  // not "udXxx". Extracted out of transferBomFromStyleCard so transferBomFromStyleCardForType
+  // not "udXxx". Shared by previewBomTransferFromStyleCard and transferBomFromStyleCardForType
   // (fabric-yarn-requirements.service.ts's own per-line Material Color edit) can reuse the exact
   // same field mapping for a single lineType instead of duplicating this list.
   private styleLineToRecipeLine(l: any) {
@@ -781,26 +781,35 @@ export class WorkOrderService {
     return lines;
   }
 
-  async transferBomFromStyleCard(workOrderId: number, styleCardId: string, userId: number) {
+  // "Transfer from Style Card" — READ ONLY. Returns the Style Card's BOM already mapped into this
+  // Work Order's own MA_RecipeItem line shape (the same styleLineToRecipeLine field mapping and
+  // Production Color cycling the transfer has always applied), keyed by lineType, and writes
+  // NOTHING. The Work Order screen loads these lines into its BOM grid as an unsaved edit; they are
+  // persisted only by the Work Order's own Save (BomTab's save → upsertBom), exactly like any other
+  // BOM change — so closing without Save leaves the saved BOM untouched. `lineType` narrows the
+  // result to one type; omitted, every type is returned.
+  async previewBomTransferFromStyleCard(workOrderId: number, styleCardId: string, lineType?: BomLineType) {
+    if (!styleCardId) throw new BadRequestException('styleCardId is required');
+    if (lineType && !BOM_LINE_TYPES.includes(lineType)) throw new BadRequestException(`Unknown BOM line type "${lineType}"`);
     await this.get(workOrderId);
+    const lineTypes = lineType ? [lineType] : [...BOM_LINE_TYPES];
     const [styleLines, productionColors] = await Promise.all([
-      this.prisma.styleBomLine.findMany({ where: { styleCardId } }),
+      this.prisma.styleBomLine.findMany({ where: { styleCardId, lineType: { in: lineTypes } }, orderBy: { sortOrder: 'asc' } }),
       this.resolveProductionColors(workOrderId),
     ]);
-    const result: Record<string, any[]> = {};
-    for (const lineType of BOM_LINE_TYPES) {
-      const lines = this.assignProductionColorCycle(
-        styleLines.filter((l) => l.lineType === lineType).map((l) => this.styleLineToRecipeLine(l)),
+    const lines: Record<string, any[]> = {};
+    for (const lt of lineTypes) {
+      lines[lt] = this.assignProductionColorCycle(
+        styleLines.filter((l) => l.lineType === lt).map((l) => this.styleLineToRecipeLine(l)),
         productionColors,
       );
-      result[lineType] = await this.upsertBom(workOrderId, lineType, lines, userId);
     }
-    return result;
+    return { styleCardId, lineTypes, lines };
   }
 
   // Scoped, single-lineType version of the above — transfers ONLY the given lineType's Style BOM
   // lines into the Work Order's own real BOM, never touching the other three types (a full
-  // transferBomFromStyleCard() would silently overwrite an already-owned Trim/Ornament/Process
+  // all-types transfer would silently overwrite an already-owned Trim/Ornament/Process
   // BOM the user separately edited, just because Fabric needed to be promoted). Used by
   // fabric-yarn-requirements.service.ts's setMaterialColorForLine() to implicitly promote a
   // Style-Card-fallback Requirements row into a real, independently-editable BOM line the moment

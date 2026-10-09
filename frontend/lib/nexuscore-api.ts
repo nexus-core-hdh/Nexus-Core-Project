@@ -647,7 +647,10 @@ export const legacyErpApi = {
     removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/work-orders/${id}/${tab}/${lineId}`),
     listBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process") => api.get(`/legacy-erp/work-orders/${id}/bom/${lineType}`),
     upsertBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process", lines: any[]) => api.put(`/legacy-erp/work-orders/${id}/bom/${lineType}`, lines),
-    transferBomFromStyleCard: (id: number, styleCardId: string) => api.post(`/legacy-erp/work-orders/${id}/bom/transfer-from-style-card`, { styleCardId }),
+    // Read only — the Style Card BOM mapped into this Work Order's BOM line shape, per lineType.
+    // Nothing is written; the lines are persisted by the Work Order's Save (BomTab → upsertBom).
+    previewBomTransferFromStyleCard: (id: number, styleCardId: string, lineType?: "fabric" | "trim" | "ornament" | "process") =>
+      api.get(`/legacy-erp/work-orders/${id}/bom/style-card-transfer?styleCardId=${encodeURIComponent(styleCardId)}${lineType ? `&lineType=${lineType}` : ""}`),
     // Cutting Card / Cutting Entry — one per (Work Order, Production Color, Fabric); see
     // cutting-card.service.ts. get() is also the get-or-create call (idempotent, safe to call on
     // every screen open — it never creates a duplicate card for the same Work Order + Color + Fabric).
