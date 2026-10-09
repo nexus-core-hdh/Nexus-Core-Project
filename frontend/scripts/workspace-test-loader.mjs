@@ -10,7 +10,15 @@ const FRONTEND_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), ".
 
 const STUBS = {
   // Tests set globalThis.__workspaceSettings to simulate what the backend has persisted.
-  "@/lib/api": "export const settingsApi = { getCurrentSettings: async () => globalThis.__workspaceSettings ?? {}, updateCurrentSettings: async () => ({}) };",
+  "@/lib/api": `export const settingsApi = { getCurrentSettings: async () => globalThis.__workspaceSettings ?? {}, updateCurrentSettings: async () => ({}) };
+    // screen-search.test.mjs: the live GET /menu-items response and the permission batch check.
+    export const menuItemsApi = { getMenuItems: async () => (globalThis.__menuItemsCalls = (globalThis.__menuItemsCalls ?? 0) + 1, globalThis.__menuItems ?? []) };
+    export const permissionSettingsApi = { checkResourcePermissionsBatch: async (paths) => ({ permissions: Object.fromEntries(paths.map((p) => [p, true])) }) };`,
+  "@/lib/auth": "export const getCurrentUser = () => globalThis.__currentUser ?? null;",
+  // Same shape transformMenuItem produces (title/href/isComing/items); icons are irrelevant here.
+  "@/components/layout/sidebar/nav-main": `export const transformMenuItem = (i) => ({ title: i.title, href: i.href, isComing: !!i.isComing, isNew: !!i.isNew, ...(i.items?.length ? { items: i.items.map(transformMenuItem) } : {}) });
+    export const mergeAdministrationExtras = (g) => g;`,
+  "@/lib/finance-erp/nav": "export const mergeFinanceErpModule = (g) => g;",
   "next/navigation": "export const usePathname = () => null; export const useSearchParams = () => new URLSearchParams();",
   // Same shape as the real generated file; record routes mirror real app routes.
   "./registry.generated": `export const GENERATED_WORKSPACE_MODULES = [

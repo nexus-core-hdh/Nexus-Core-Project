@@ -54,7 +54,7 @@ export function GlobalScreenSearch() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const router = useRouter();
-  const { entries, loading, ensureLoaded } = useGlobalScreenSearch();
+  const { entries, loading, refresh } = useGlobalScreenSearch();
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -72,10 +72,12 @@ export function GlobalScreenSearch() {
     return () => document.removeEventListener("keydown", down);
   }, []);
 
+  // Re-read the menu each time the palette opens (previous results stay listed meanwhile), so a
+  // screen added to the menu since the page loaded is searchable without a full reload.
   useEffect(() => {
-    if (open) ensureLoaded();
+    if (open) refresh();
     else setQuery("");
-  }, [open, ensureLoaded]);
+  }, [open, refresh]);
 
   const groups = useMemo(() => {
     const byModule = new Map<string, ScreenEntry[]>();
@@ -136,7 +138,7 @@ export function GlobalScreenSearch() {
                     <CommandItem
                       key={entry.href}
                       value={entry.title}
-                      keywords={[entry.moduleTitle]}
+                      keywords={[entry.moduleTitle, ...(entry.keywords ?? [])]}
                       onSelect={() => select(entry)}
                     >
                       {Icon ? <Icon /> : <SearchIcon className="opacity-50" />}
