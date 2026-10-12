@@ -22,6 +22,8 @@ import { YarnRecipeDialog } from "@/components/legacy-erp/yarn-recipe-dialog";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { applyWaste } from "@/lib/legacy-erp/waste-calc";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useGridUdf, isUdfColumnKey, type UdfColumnKey } from "@/hooks/use-grid-udf";
+import { UdfGridCell } from "@/components/custom-fields/udf-grid-cell";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
@@ -355,6 +357,11 @@ type ColKey =
   | "routeCodeLine" | "routeNameLine";
 
 type ColumnDef = { key: ColKey; label: string; align?: "left" | "right" | "center" };
+// Grid-level User Defined Fields ("BomLine" — Style Card and Sample Card BOM, hooks/use-grid-udf.ts)
+// join as `udf:<code>` columns. Not in Work Order mode: Work Order BOM rows have no stable row key
+// yet (see nexuscore-backend/src/modules/entities/custom-field-grids.ts), so no UDF columns there.
+type GridKey = ColKey | UdfColumnKey;
+type DisplayColumn = Omit<ColumnDef, "key"> & { key: GridKey };
 
 const COLUMNS: ColumnDef[] = [
   { key: "itemNo", label: "Item No", align: "center" },
@@ -482,7 +489,7 @@ const TRIM_HIDDEN_COLS: ColKey[] = [
 // tabs — only the Trim tab's rendered subset + the Code/Name header labels change per active
 // tab, so switching Fabric <-> Trim swaps grid column definitions without a second column config
 // or a duplicated grid component.
-function columnDefsForTab(lineType: string, columnDefs: ColumnDef[], isWorkOrderMode: boolean): ColumnDef[] {
+function columnDefsForTab(lineType: string, columnDefs: DisplayColumn[], isWorkOrderMode: boolean): DisplayColumn[] {
   let defs = columnDefs;
   if (!isWorkOrderMode) defs = defs.filter((c) => c.key !== "variant2");
   // Variant-1 is NEVER relabeled or repurposed — it stays this row's own Material Variant/Type
@@ -499,7 +506,7 @@ function columnDefsForTab(lineType: string, columnDefs: ColumnDef[], isWorkOrder
   if (isWorkOrderMode) defs = defs.map((c) => (c.key === "variant2" ? { ...c, label: "Production Color" } : c));
   if (lineType !== "trim") return defs;
   return defs
-    .filter((c) => !TRIM_HIDDEN_COLS.includes(c.key))
+    .filter((c) => !(TRIM_HIDDEN_COLS as GridKey[]).includes(c.key))
     .map((c) =>
       c.key === "fabricCode" ? { ...c, label: "Trim Code" } :
       c.key === "fabricName" ? { ...c, label: "Trim Name" } : c
@@ -615,6 +622,10 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<BomRow[]>([]);
+  // Grid UDF ("BomLine") — Style/Sample Card only. Values attach to a row's server id, so only rows
+  // that came back from the server (persistedIdsRef) can hold them; new rows get theirs after Save.
+  const udf = useGridUdf({ grid: "BomLine", parentId: isSampleMode ? sampleCardId : styleCardId, enabled: !isWorkOrderMode });
+  const persistedIdsRef = useRef<Set<string>>(new Set());
   // Work Order mode: persisted projection of the last loaded/saved rows (see bomDirty below).
   const savedSnapshotRef = useRef<string | null>(null);
   // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
@@ -813,6 +824,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       } else {
         loadedRows = rawLines.map(workOrderLineToRow);
       }
+      persistedIdsRef.current = isWorkOrderMode ? new Set() : new Set(loadedRows.map((r) => r.id));
       setRows(loadedRows);
       if (isWorkOrderMode) savedSnapshotRef.current = persistedSnapshot(loadedRows);
       setProductionColors(Array.isArray((mfgQty as any)?.byColor) ? (mfgQty as any).byColor : []);
@@ -972,7 +984,10 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     rs.flatMap((r) => {
       const { extraColorCardIds, ...base } = r;
       if (!extraColorCardIds.length) return [base];
-      return [base, ...extraColorCardIds.map((colorCardId) => ({ ...base, colorCardId }))];
+      // Clones get no id: the visible row's id stays its own (the BOM row key grid UDF values
+      // attach to — style-extras.service.ts keeps it through the save); colour siblings are new.
+      const { id: _visibleRowId, ...clone } = base as typeof base & { id?: string };
+      return [base, ...extraColorCardIds.map((colorCardId) => ({ ...clone, colorCardId } as unknown as typeof base))];
     });
 
   // Work Order mode: grid row → the MA_RecipeItem line save() persists (upsertBom). Also the
@@ -981,6 +996,9 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
   const persistedSnapshot = (rs: BomRow[]) => JSON.stringify(rs.map((r) => [r.lineType, toRecipeLine(r)]));
 
   const save = async (): Promise<boolean> => {
+    // Grid UDF Required check over the saved rows still on the grid, before anything is written.
+    const udfRowIds = isWorkOrderMode ? [] : rows.filter((r) => persistedIdsRef.current.has(r.id)).map((r) => r.id);
+    if (!udf.validate(udfRowIds)) return false;
     setSaving(true);
     try {
       // Decimal Parameters rounding happens HERE (not just via each cell's own GridInput
@@ -997,6 +1015,7 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
       } else if (isSampleMode) {
         // No header strip in this mode (see the prop comment above) — just the lines themselves.
         await plmApi.sampleBom.upsertLines(sampleCardId!, expandMultiColorRows(roundedRows));
+        await udf.save(sampleCardId!, udfRowIds);
       } else {
         await Promise.all([
           // bomRouteCardId must be sent as an explicit null (not "", and not simply omitted) to
@@ -1005,6 +1024,8 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           plmApi.styleCards.update(styleCardId!, { ...header, bomRouteCardId: header.bomRouteCardId || null }),
           plmApi.styleBom.upsertLines(styleCardId!, expandMultiColorRows(roundedRows)),
         ]);
+        // The saved rows kept their ids through the replace, so their grid UDF values follow them.
+        await udf.save(styleCardId!, udfRowIds);
       }
       toast.success("BOM saved");
       onReloadCard?.();
@@ -1163,15 +1184,18 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
   const gridColumnDefs = useMemo(
-    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
-    [],
+    () => [
+      ...COLUMNS.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+      ...udf.columnDefs,
+    ],
+    [udf.columnDefs],
   );
   // Screen-specific storageKey (user- and screen-specific preferences, per the task's own
   // requirement) — Work Order gets its own saved column layout/order/widths, separate from
   // Style/Sample Card's "bomLineGrid", even though the column SET/definitions are identical.
   // Same useGridColumns hook/tablePreferences infrastructure either way — not a second
   // column-manager implementation.
-  const gridColumns = useGridColumns<ColKey>({
+  const gridColumns = useGridColumns<GridKey>({
     storageKey: isWorkOrderMode ? "workOrderBomGrid" : isSampleMode ? "sampleBomLineGrid" : "bomLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
@@ -1180,10 +1204,9 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
     defaultHidden: NEW_COLUMNS_DEFAULT_HIDDEN,
   });
   const displayColumnDefs = useMemo(
-    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    () => gridColumns.displayColumnDefs.map((c): DisplayColumn => COLUMN_BY_KEY.get(c.key as ColKey) ?? { key: c.key, label: c.label }),
     [gridColumns.displayColumnDefs],
   );
-  const colWidths = gridColumns.colWidths;
   const startResize = gridColumns.startResize;
   const resetColumnWidth = gridColumns.resetWidth;
   const totalTableWidth = gridColumns.totalWidth(DEL_W);
@@ -1741,13 +1764,13 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             <div className="rounded-md border overflow-x-auto">
               <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
                 <colgroup>
-                  {tabColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+                  {tabColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.getWidth(col.key) }} />)}
                   <col style={{ width: DEL_W }} />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
                     {tabColumnDefs.map((col) => {
-                      const fixed = FIXED_COLS.includes(col.key);
+                      const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
                       return (
                         <TableHead
                           key={col.key}
@@ -1786,11 +1809,26 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
                     const rowActions = getRowActions(r);
                     const row = (
                       <TableRow className="[&>td]:border-r [&>td]:p-0">
-                        {tabColumnDefs.map((col) => (
-                          <TableCell key={col.key} className={cellClassFor(col.key)}>
-                            {renderCell(r, col.key)}
-                          </TableCell>
-                        ))}
+                        {tabColumnDefs.map((col) => {
+                          if (!isUdfColumnKey(col.key)) {
+                            return <TableCell key={col.key} className={cellClassFor(col.key)}>{renderCell(r, col.key)}</TableCell>;
+                          }
+                          const field = udf.fieldForColumn(col.key);
+                          const saved = persistedIdsRef.current.has(r.id);
+                          return (
+                            <TableCell key={col.key} className="h-8">
+                              {field && (
+                                <UdfGridCell
+                                  field={field}
+                                  value={saved ? udf.valueOf(r.id, field.id) : null}
+                                  onChange={(v) => saved && udf.setValue(r.id, field.id, v)}
+                                  unsavedRow={!saved}
+                                  invalid={udf.isMissing(r.id, field.id)}
+                                />
+                              )}
+                            </TableCell>
+                          );
+                        })}
                         <TableCell className="p-0 text-center"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeRow(r.id)}><Trash2 className="h-3.5 w-3.5 text-muted-foreground" /></Button></TableCell>
                       </TableRow>
                     );

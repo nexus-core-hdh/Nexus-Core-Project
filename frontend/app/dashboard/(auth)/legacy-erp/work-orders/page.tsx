@@ -32,6 +32,7 @@ import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
+import { CustomizedFieldsPanel, type CustomizedFieldsHandle } from "@/components/custom-fields/customized-fields-panel";
 
 const CURRENT_ACCOUNTS_LIST_PATH = "/dashboard/legacy-erp/current-accounts-list";
 const OUTER_TABS = ["General", "Detail", "General Explanation", "Customized Fields"];
@@ -265,6 +266,11 @@ export default function WorkOrderPage() {
   const [bomTransfer, setBomTransfer] = useState<{ token: number; linesByType: Record<string, any[]> } | null>(null);
   const [bomDirty, setBomDirty] = useState(false);
   const bomSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  // Customized Fields (User Defined Fields, entity "WorkOrder") — stored by this screen's Save
+  // below, after the header and before the reload, same as the BOM.
+  const udfRef = useRef<CustomizedFieldsHandle>(null);
+  const [udfDirty, setUdfDirty] = useState(false);
+  const [outerTab, setOuterTab] = useState("General");
   const registerBomSave = useCallback((fn: (() => Promise<boolean>) | null) => { bomSaveRef.current = fn; }, []);
   // BomTab mounts on the first visit to the BOM tab and then stays mounted (hidden) so an unsaved
   // transfer/edit survives switching tabs until Save.
@@ -741,7 +747,7 @@ export default function WorkOrderPage() {
   }, [initialId, initialStyleCardId]);
 
   const set = (key: keyof typeof header, value: any) => setHeader((p) => ({ ...p, [key]: value }));
-  const isDirty = !readOnly && (JSON.stringify(header) !== JSON.stringify(lastSaved) || bomDirty);
+  const isDirty = !readOnly && (JSON.stringify(header) !== JSON.stringify(lastSaved) || bomDirty || udfDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
   useWorkspaceRecordLabel(woId ? header.workOrderNo || undefined : undefined);
 
@@ -890,6 +896,8 @@ export default function WorkOrderPage() {
   // mechanism. BomTab (the reused Sample BOM component, mounted below in "workOrder" mode) keeps
   // that Save button too, exactly like it does for Style Card/Sample Card.
   const save = async () => {
+    // Required Customized Fields are checked before anything is written.
+    if (udfRef.current && !udfRef.current.validate()) { setOuterTab("Customized Fields"); return; }
     setSaving(true);
     try {
       const dto = buildHeaderDto();
@@ -915,6 +923,8 @@ export default function WorkOrderPage() {
         setBomTransfer(null);
         setBomDirty(false);
       }
+      // A refused value is reported by the panel itself and stays on screen, unsaved.
+      await udfRef.current?.save(String(id));
 
       toast.success("Work order saved");
       setLastSaved(header);
@@ -1157,7 +1167,7 @@ export default function WorkOrderPage() {
             </Alert>
           )}
 
-          <Tabs defaultValue="General">
+          <Tabs value={outerTab} onValueChange={setOuterTab}>
         <TabsList className="h-8 flex-wrap">{OUTER_TABS.map((t) => <TabsTrigger key={t} value={t} className="h-7 text-xs">{t}</TabsTrigger>)}</TabsList>
 
         <TabsContent value="General" className="pt-2 space-y-2">
@@ -1517,8 +1527,10 @@ export default function WorkOrderPage() {
         <TabsContent value="General Explanation" className="pt-2">
           <p className="text-[11.5px] text-muted-foreground">See the Explanation tab under General's secondary tab bar (MA_WorkOrderExplanation).</p>
         </TabsContent>
-        <TabsContent value="Customized Fields" className="pt-2">
-          <p className="text-[11.5px] text-muted-foreground">No existing custom-fields structure identified for Work Order — not implemented this pass.</p>
+        {/* Usable before the first Save (stored with it); kept mounted so unsaved values survive
+            switching tabs. */}
+        <TabsContent value="Customized Fields" forceMount className="pt-2 data-[state=inactive]:hidden">
+          <CustomizedFieldsPanel ref={udfRef} entity="WorkOrder" entityId={woId ? String(woId) : null} readOnly={readOnly} saveWithDocument onDirtyChange={setUdfDirty} />
         </TabsContent>
           </Tabs>
         </div>

@@ -283,7 +283,7 @@ export default function BpmRequestTypesPage() {
   };
 
   // Only entities whose screens render User Defined Fields can get one (the server refuses others).
-  const udfEntity = UDF_ENTITIES.find((e) => e.key === resolvedEntityName && e.capability === "supported");
+  const udfEntity = UDF_ENTITIES.find((e) => e.key === resolvedEntityName && e.level === "screen" && e.capability === "supported");
 
   const handleAddCustomField = async () => {
     if (!resolvedEntityName) { toast.error("Select an entity first"); return; }
@@ -610,7 +610,7 @@ export default function BpmRequestTypesPage() {
                     {/* Add custom field form — User Defined Fields, only for screens that render them */}
                     {!udfEntity ? (
                       <p className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
-                        Custom fields can only be added for screens that display them ({UDF_ENTITIES.filter((e) => e.capability === "supported").map((e) => e.label).join(", ")}).
+                        Custom fields can only be added for screens that display them ({UDF_ENTITIES.filter((e) => e.level === "screen" && e.capability === "supported").map((e) => e.label).join(", ")}).
                         They are managed in{" "}
                         <a href={UDF_ADMIN_PATH} className="font-medium text-primary underline-offset-2 hover:underline">Administration › User Defined Fields</a>.
                       </p>

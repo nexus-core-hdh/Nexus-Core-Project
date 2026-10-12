@@ -137,9 +137,15 @@ const permOrderKey = (storageKey: string) => `${storageKey}ColumnOrder`;
 const permHiddenKey = (storageKey: string) => `${storageKey}HiddenColumns`;
 const permWidthsKey = (storageKey: string) => `${storageKey}ColumnWidths`;
 
-function sanitizeOrder<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
+// Grid-level User Defined Field columns (`udf:<field code>`, hooks/use-grid-udf.ts) are declared
+// only once their definitions load — after this hook has already restored the saved preference.
+// Their saved position/visibility/width is kept instead of being dropped as unknown;
+// displayColumnDefs still renders only columns that are actually declared.
+const isLateColumn = (k: unknown) => typeof k === "string" && k.startsWith("udf:");
+
+export function sanitizeOrder<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
   if (!Array.isArray(saved)) return reorderableDefault;
-  const validSaved = saved.filter((k): k is K => reorderableDefault.includes(k as K));
+  const validSaved = saved.filter((k): k is K => reorderableDefault.includes(k as K) || isLateColumn(k));
   const missing = reorderableDefault.filter((k) => !validSaved.includes(k));
   return [...validSaved, ...missing];
 }
@@ -168,11 +174,11 @@ export function mergeDeclaredOrder<K extends string>(order: K[], declared: K[]):
   return result;
 }
 
-function sanitizeHidden<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
-  return Array.isArray(saved) ? saved.filter((k): k is K => reorderableDefault.includes(k as K)) : [];
+export function sanitizeHidden<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
+  return Array.isArray(saved) ? saved.filter((k): k is K => reorderableDefault.includes(k as K) || isLateColumn(k)) : [];
 }
 
-function sanitizeWidths<K extends string>(
+export function sanitizeWidths<K extends string>(
   saved: unknown,
   columnByKey: Map<K, GridColumnDef<K>>,
 ): Partial<Record<K, number>> {
@@ -180,8 +186,8 @@ function sanitizeWidths<K extends string>(
   const out: Partial<Record<K, number>> = {};
   for (const [k, v] of Object.entries(saved as Record<string, unknown>)) {
     const col = columnByKey.get(k as K);
-    if (!col || typeof v !== "number" || !Number.isFinite(v)) continue;
-    out[k as K] = Math.max(col.minWidth, v);
+    if ((!col && !isLateColumn(k)) || typeof v !== "number" || !Number.isFinite(v)) continue;
+    out[k as K] = Math.max(col?.minWidth ?? 40, v);
   }
   return out;
 }

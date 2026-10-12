@@ -231,7 +231,13 @@ describe('security', () => {
       ['InventoryReceipt', w.records.deletedReceipt], ['InventoryReceipt', w.records.unknownTypeReceipt], ['InventoryReceipt', '-1'],
       ['FiReceipt', '999999'],
       ['StyleCard', '00000000-0000-0000-0000-000000000000'], ['SampleCard', w.records.styleCardA1],
-      ['WorkOrder', '1'], ['__proto__', '1'], ['constructor', '1'],
+      ['WorkOrder', w.records.deletedWorkOrder], ['WorkOrder', '999999999'], ['WorkOrder', w.records.purchaseOrder + 'x'],
+      // Purchase and Subcontract Orders share IM_OrderReceipt: each entity only reaches its own type.
+      ['PurchaseOrder', w.records.subcontractOrder], ['SubcontractOrder', w.records.purchaseOrder], ['PurchaseOrder', w.records.otherTypeOrder],
+      ['Contract', w.records.unknownTypeContract], ['Contract', '0'],
+      // Grid keys are not screen entities.
+      ['OrderLine', w.lines.po[0]], ['BomLine', w.records.styleCardA1],
+      ['CostingSheet', '1'], ['__proto__', '1'], ['constructor', '1'],
     ] as [string, string][]) {
       await expectHttpError(w.svc.getValues(u, entity, id), 404);
       await expectHttpError(w.svc.upsertValues(u, entity, id, []), 404);
@@ -255,6 +261,13 @@ describe('security', () => {
     const ir = (await w.svc.create(w.users.adminA1, fieldDto('InventoryReceipt', 'UD_SecIr', 'textbox'))).id;
     await w.svc.upsertValues(w.users.purchaseReceiptsOnlyA1, 'InventoryReceipt', w.records.purchaseReceipt, [{ customFieldId: ir, value: 'ok' }]);
     await expectHttpError(w.svc.upsertValues(w.users.purchaseReceiptsOnlyA1, 'InventoryReceipt', w.records.purchaseReturn, [{ customFieldId: ir, value: 'no' }]), 403);
+    // Purchase Orders are written under "purchase-orders", Subcontract Orders under "orders".
+    const po = (await w.svc.create(w.users.adminA1, fieldDto('PurchaseOrder', 'UD_SecPo', 'textbox'))).id;
+    const so = (await w.svc.create(w.users.adminA1, fieldDto('SubcontractOrder', 'UD_SecSo', 'textbox'))).id;
+    await w.svc.upsertValues(w.users.purchaseOrdersOnlyA1, 'PurchaseOrder', w.records.purchaseOrder, [{ customFieldId: po, value: 'ok' }]);
+    await expectHttpError(w.svc.upsertValues(w.users.purchaseOrdersOnlyA1, 'SubcontractOrder', w.records.subcontractOrder, [{ customFieldId: so, value: 'no' }]), 403);
+    await expectHttpError(w.svc.upsertValues(w.users.purchaseOrdersOnlyA1, 'WorkOrder', w.records.workOrder, []), 403);
+    await expectHttpError(w.svc.upsertValues(w.users.purchaseOrdersOnlyA1, 'Contract', w.records.purchaseContract, []), 403);
     // Reading needs no write permission (the owning screens' reads need none either).
     assert.ok(Array.isArray(await w.svc.getValues(w.users.noPermsA1, 'YarnCard', w.records.yarnCard)));
   });
@@ -331,6 +344,10 @@ describe('runtime screens and BPM regression', () => {
     ['YarnCard', () => w.records.yarnCard],
     ['StyleCard', () => w.records.styleCardA1],
     ['SampleCard', () => w.records.sampleCardA1],
+    ['WorkOrder', () => w.records.workOrder],
+    ['PurchaseOrder', () => w.records.purchaseOrder],
+    ['SubcontractOrder', () => w.records.subcontractOrder],
+    ['Contract', () => w.records.saleContract],
   ];
 
   for (const [entity, id] of screens) {

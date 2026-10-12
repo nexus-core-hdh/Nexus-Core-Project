@@ -4,6 +4,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { AuditService } from '../../src/modules/audit/audit.service';
 import { CustomFieldsService } from '../../src/modules/entities/custom-fields.service';
 import { EntitiesService } from '../../src/modules/entities/entities.service';
+import { StyleExtrasService } from '../../src/modules/style-extras/style-extras.service';
 
 useTestDatabase();
 
@@ -13,6 +14,8 @@ export interface World {
   prisma: PrismaService;
   svc: CustomFieldsService;
   entities: EntitiesService;
+  /** The real Style/Sample Card BOM save (unit lookups stubbed: the suite's lines carry no Fabric/Trim Card). */
+  styleExtras: StyleExtrasService;
   users: {
     adminA1: Actor; adminA2: Actor; adminB1: Actor;
     /** Company A, branch A1, no permissions at all. */
@@ -23,15 +26,25 @@ export interface World {
     purchaseReceiptsOnlyA1: Actor;
     /** Company A, no branch. */
     adminANoBranch: Actor;
+    /** Company A, branch A1, purchase-orders:update only (not "orders", which Subcontract Orders need). */
+    purchaseOrdersOnlyA1: Actor;
   };
   records: {
     purchaseReceipt: string; purchaseReturn: string; deletedReceipt: string; unknownTypeReceipt: string;
     fiReceipt: string; yarnCard: string; nonYarnItem: string;
     styleCardA1: string; styleCardA2: string; styleCardB1: string; sampleCardA1: string;
+    workOrder: string; deletedWorkOrder: string;
+    purchaseOrder: string; purchaseOrder2: string; subcontractOrder: string; otherTypeOrder: string;
+    purchaseContract: string; saleContract: string; unknownTypeContract: string;
+  };
+  /** Live (and one soft-deleted) line rows of the documents above, per logical grid. */
+  lines: {
+    po: string[]; po2: string[]; poDeleted: string; so: string[];
+    contract: string[]; irPurchase: string[]; fi: string[];
   };
 }
 
-const MODULE_UPDATES = ['inventory-receipts', 'receipts', 'financial-receipts', 'yarn-cards', 'plm'];
+const MODULE_UPDATES = ['inventory-receipts', 'receipts', 'financial-receipts', 'yarn-cards', 'plm', 'work-orders', 'purchase-orders', 'orders', 'contracts'];
 const SETTINGS = ['create', 'update', 'delete'];
 
 export async function createWorld(): Promise<World> {
@@ -62,6 +75,7 @@ export async function createWorld(): Promise<World> {
   const adminRole = await role('UDF Admin', [...SETTINGS.map((a) => ['settings', a] as [string, string]), ...MODULE_UPDATES.map((m) => [m, 'update'] as [string, string])]);
   const crmRole = await role('CRM only', [['crm', 'update']]);
   const prRole = await role('Purchase receipts only', [['inventory-receipts', 'update']]);
+  const poRole = await role('Purchase orders only', [['purchase-orders', 'update']]);
 
   let n = 0;
   const user = async (companyId: string, branchId: string | null, roleId?: string): Promise<Actor> => {
@@ -80,6 +94,7 @@ export async function createWorld(): Promise<World> {
     crmOnlyA1: await user(companyA.id, a1.id, crmRole.id),
     purchaseReceiptsOnlyA1: await user(companyA.id, a1.id, prRole.id),
     adminANoBranch: await user(companyA.id, null, adminRole.id),
+    purchaseOrdersOnlyA1: await user(companyA.id, a1.id, poRole.id),
   };
 
   const legacy = async (sql: string) => String((await prisma.$queryRawUnsafe<{ id: bigint }[]>(sql))[0].id);
@@ -103,8 +118,36 @@ export async function createWorld(): Promise<World> {
     })).id,
   };
 
+  Object.assign(records, {
+    workOrder: await legacy(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","Quantity") VALUES ('WO-1',100) RETURNING "RecId" AS id`),
+    deletedWorkOrder: await legacy(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","IsDeleted") VALUES ('WO-DEL',1) RETURNING "RecId" AS id`),
+    purchaseOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (1,'PO-1') RETURNING "RecId" AS id`),
+    purchaseOrder2: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (1,'PO-2') RETURNING "RecId" AS id`),
+    subcontractOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (3,'SC-1') RETURNING "RecId" AS id`),
+    otherTypeOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (2,'X-1') RETURNING "RecId" AS id`),
+    purchaseContract: await legacy(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (1,'PC-1') RETURNING "RecId" AS id`),
+    saleContract: await legacy(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (2,'SLC-1') RETURNING "RecId" AS id`),
+    unknownTypeContract: await legacy(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (9,'C-9') RETURNING "RecId" AS id`),
+  });
+  const r = records as World['records'];
+  const lineRows = async (table: string, parentColumn: string, parentId: string, n: number, deleted = 0) => {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) ids.push(await legacy(`INSERT INTO "${table}" ("${parentColumn}","IsDeleted") VALUES (${parentId},${deleted}) RETURNING "RecId" AS id`));
+    return ids;
+  };
+  const lines = {
+    po: await lineRows('IM_OrderReceiptItem', 'OrderReceiptId', r.purchaseOrder, 3),
+    po2: await lineRows('IM_OrderReceiptItem', 'OrderReceiptId', r.purchaseOrder2, 1),
+    poDeleted: (await lineRows('IM_OrderReceiptItem', 'OrderReceiptId', r.purchaseOrder, 1, 1))[0],
+    so: await lineRows('IM_OrderReceiptItem', 'OrderReceiptId', r.subcontractOrder, 2),
+    contract: await lineRows('SM_ContractItem', 'ReceiptId', r.purchaseContract, 2),
+    irPurchase: await lineRows('IM_ReceiptItem', 'InventoryReceiptId', r.purchaseReceipt, 2),
+    fi: await lineRows('FI_ReceiptItem', 'CurrentAccountReceiptId', r.fiReceipt, 2),
+  };
+
   const audit = new AuditService(prisma);
-  return { prisma, svc: new CustomFieldsService(prisma, audit), entities: new EntitiesService(prisma), users, records };
+  const styleExtras = new StyleExtrasService(prisma, {} as any);
+  return { prisma, svc: new CustomFieldsService(prisma, audit), entities: new EntitiesService(prisma), styleExtras, users, records: r, lines };
 }
 
 /** Empties the tables this suite writes — test database only (checked again here). */
@@ -114,6 +157,9 @@ export async function resetDatabase(prisma: PrismaService) {
   await prisma.customFieldValue.deleteMany();
   await prisma.customField.deleteMany();
   await prisma.auditLog.deleteMany();
+  await prisma.styleBomLine.deleteMany();
+  await prisma.sampleBomLine.deleteMany();
+  await prisma.colorCard.deleteMany();
   await prisma.sampleCard.deleteMany();
   await prisma.styleCard.deleteMany();
   await prisma.styleSampleType.deleteMany();
@@ -123,7 +169,9 @@ export async function resetDatabase(prisma: PrismaService) {
   await prisma.user.deleteMany();
   await prisma.branch.deleteMany();
   await prisma.company.deleteMany();
-  for (const t of ['IM_Receipt', 'FI_Receipt', 'IM_Item']) await prisma.$executeRawUnsafe(`DELETE FROM "${t}"`);
+  for (const t of ['IM_Receipt', 'FI_Receipt', 'IM_Item', 'MA_WorkOrder', 'IM_OrderReceipt', 'SM_Contract', 'IM_ReceiptItem', 'IM_OrderReceiptItem', 'SM_ContractItem', 'FI_ReceiptItem']) {
+    await prisma.$executeRawUnsafe(`DELETE FROM "${t}"`);
+  }
 }
 
 /** A field definition payload as Administration > User Defined Fields sends it. */

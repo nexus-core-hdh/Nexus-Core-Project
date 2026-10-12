@@ -198,6 +198,31 @@ export class EntitiesController {
     return this.customFields.upsertValues(user, body?.entity, body?.entityId, body?.values);
   }
 
+  // What the UDF runtime renders (screens with a Customized Fields tab, grids with UDF columns) —
+  // read-only metadata, no tenant data.
+  @Get('custom-field-targets')
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'List the screen entities and logical grids the UDF runtime supports' })
+  getCustomFieldTargets() {
+    return this.customFields.listTargets();
+  }
+
+  // Grid-level values: every row of one document at once (custom-field-grids.ts). Same rule as
+  // above — the parent document's owning module is resolved and checked by the service.
+  @Get('custom-field-values/grid')
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Get grid UDF values for every live row of one document (parent reach + row ownership + field scope enforced)' })
+  getGridCustomFieldValues(@Query('grid') grid: string, @Query('parentId') parentId: string, @CurrentUser() user: any) {
+    return this.customFields.getGridValues(user, grid, parentId);
+  }
+
+  @Put('custom-field-values/grid')
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Set grid UDF values on rows of one document (owning module update permission, row ownership, validated)' })
+  upsertGridCustomFieldValues(@Body() body: { grid: string; parentId: string; rows: unknown }, @CurrentUser() user: any) {
+    return this.customFields.upsertGridValues(user, body?.grid, body?.parentId, body?.rows);
+  }
+
   // ── Form Sections ──────────────────────────────────────────────────────────
 
   @Get('sections')

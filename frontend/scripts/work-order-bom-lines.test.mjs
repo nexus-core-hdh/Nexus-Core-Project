@@ -117,8 +117,15 @@ describe("screen wiring", () => {
 
   it("the Work Order's Save persists the BOM through BomTab's own save(), and BOM changes make the Work Order dirty", () => {
     assert.match(page, /if \(bomDirty && bomSaveRef\.current\) \{\s*if \(!\(await bomSaveRef\.current\(\)\)\) throw new Error/);
-    assert.match(page, /const isDirty = !readOnly && \(JSON\.stringify\(header\) !== JSON\.stringify\(lastSaved\) \|\| bomDirty\);/);
+    assert.match(page, /const isDirty = !readOnly && \(JSON\.stringify\(header\) !== JSON\.stringify\(lastSaved\) \|\| bomDirty \|\| udfDirty\);/);
     assert.match(page, /transfer: bomTransfer,\s*onDirtyChange: setBomDirty,\s*registerSave: registerBomSave,/);
+  });
+
+  it("Customized Fields are validated before the Work Order is written and stored by the same Save, before the reload", () => {
+    assert.match(page, /const save = async \(\) => \{\s*\/\/[^\n]*\n\s*if \(udfRef\.current && !udfRef\.current\.validate\(\)\) \{ setOuterTab\("Customized Fields"\); return; \}\s*setSaving\(true\);/);
+    assert.match(page, /await udfRef\.current\?\.save\(String\(id\)\);[\s\S]*?toast\.success\("Work order saved"\);[\s\S]*?await load\(id!\);/);
+    assert.match(page, /<CustomizedFieldsPanel ref=\{udfRef\} entity="WorkOrder" entityId=\{woId \? String\(woId\) : null\} readOnly=\{readOnly\} saveWithDocument onDirtyChange=\{setUdfDirty\} \/>/);
+    assert.doesNotMatch(page, /No existing custom-fields structure identified for Work Order/);
   });
 
   it("the BOM tab stays mounted once visited, so an unsaved transfer survives switching tabs", () => {

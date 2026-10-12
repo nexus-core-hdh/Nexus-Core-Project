@@ -22,6 +22,7 @@ import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
 import { ContractLineGrid, type ContractLineGridHandle } from "@/components/legacy-erp/contract-line-grid";
+import { CustomizedFieldsPanel, type CustomizedFieldsHandle } from "@/components/custom-fields/customized-fields-panel";
 import { getContractTypeConfig } from "@/lib/legacy-erp/contract-types";
 
 // "00-Purchase Contract" / "00-Sale Contract" — same generic-receipt-type architecture as
@@ -34,7 +35,7 @@ import { getContractTypeConfig } from "@/lib/legacy-erp/contract-types";
 // has fewer of them), Attachments, Certificates — mirroring Purchase Order's own screen
 // structure; its "Explanation" tab has no equivalent here (no SM_ContractExplanation table
 // exists in the migrated schema, so it isn't replicated rather than inventing one).
-const TABS = ["General", "Attachments", "Certificates"];
+const TABS = ["General", "Attachments", "Certificates", "Customized Fields"];
 const CURRENT_ACCOUNTS_LIST_PATH = "/dashboard/legacy-erp/current-accounts-list";
 
 const emptyForm: Record<string, any> = {
@@ -86,6 +87,11 @@ export default function ContractPage() {
   // surface when starting a New record of a different contract type in this same shared screen.
   const { clearDraft } = useDraftForm({ storageKey: `contractDraft_${receiptType}`, enabled: contractId == null, form, setForm });
   const lineGridRef = useRef<ContractLineGridHandle>(null);
+  // User Defined Fields — screen-level (Customized Fields tab, entity "Contract": Purchase and Sale
+  // Contracts alike) and the line grid's own (logical grid "ContractLine"), both stored by Save.
+  const udfRef = useRef<CustomizedFieldsHandle>(null);
+  const [udfDirty, setUdfDirty] = useState(false);
+  const [gridUdfDirty, setGridUdfDirty] = useState(false);
 
   useEffect(() => {
     if (!contractId) {
@@ -160,6 +166,9 @@ export default function ContractPage() {
   const save = async () => {
     if (!form.currentAccountId) return toast.error("Current Account is required");
     if (!form.warehouseId) return toast.error("Warehouse is required");
+    // Required User Defined Fields are checked before anything is written.
+    if (udfRef.current && !udfRef.current.validate()) { setActiveTab("Customized Fields"); return; }
+    if (contractId && lineGridRef.current && !lineGridRef.current.validateUdf()) { setActiveTab("General"); return; }
     setSaving(true);
     try {
       const dto: Record<string, any> = {
@@ -177,6 +186,9 @@ export default function ContractPage() {
         });
         setForm(f);
         lastSavedRef.current = f;
+        // Lines of an existing contract already have their ids; their grid UDF values go with this Save.
+        await lineGridRef.current?.saveUdf(contractId);
+        await udfRef.current?.save(String(contractId));
         toast.success("Updated");
       } else {
         const r: any = await client.create(dto);
@@ -190,6 +202,7 @@ export default function ContractPage() {
         setContractId(r.id);
         setCodeInput(r.receiptNo);
         await lineGridRef.current?.commitDrafts(r.id);
+        await udfRef.current?.save(String(r.id));
         clearDraft();
         toast.success("Created");
       }
@@ -200,7 +213,7 @@ export default function ContractPage() {
     }
   };
 
-  const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
+  const isDirty = !readOnly && (JSON.stringify(form) !== JSON.stringify(lastSavedRef.current) || udfDirty || gridUdfDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Query-driven screen (receiptType selects the contract type/cfg.label at runtime, e.g. "Sales
   // Contract") — the static menu registry only knows the generic "Contracts" entry, so this needs
@@ -265,7 +278,8 @@ export default function ContractPage() {
           <ScrollableTabsList tabs={TABS} activeTab={activeTab} />
 
           <div className="p-6">
-            <TabsContent value="General" className="space-y-4">
+            {/* Kept mounted while another tab is open: the line grid holds unsaved grid UDF edits. */}
+            <TabsContent value="General" forceMount className="space-y-4 data-[state=inactive]:hidden">
               <fieldset disabled={readOnly} className="contents">
                 <IdentitySection>
                   <fieldset disabled={!!contractId} className="contents">
@@ -302,8 +316,14 @@ export default function ContractPage() {
                   <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
                 </div>
-                <ContractLineGrid ref={lineGridRef} contractId={contractId} readOnly={readOnly} api={client} />
+                <ContractLineGrid ref={lineGridRef} contractId={contractId} readOnly={readOnly} api={client} onUdfDirtyChange={setGridUdfDirty} />
               </div>
+            </TabsContent>
+
+            {/* Customized Fields — usable before the first Save (stored with it); kept mounted so
+                unsaved values survive switching tabs. */}
+            <TabsContent value="Customized Fields" forceMount className="data-[state=inactive]:hidden">
+              <CustomizedFieldsPanel ref={udfRef} entity="Contract" entityId={contractId ? String(contractId) : null} readOnly={readOnly} saveWithDocument onDirtyChange={setUdfDirty} />
             </TabsContent>
 
             {!contractId ? (

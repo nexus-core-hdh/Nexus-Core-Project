@@ -121,6 +121,28 @@ describe('Transfer from Style Card is read only', () => {
   });
 });
 
+describe('grid User Defined Fields on the Style Card BOM ("BomLine") never travel with a transfer', () => {
+  test('unsaved and saved transfers write no UDF value, and the Style Card row keeps its own', async () => {
+    const w = await world();
+    const styleRow = await prisma.styleBomLine.findFirstOrThrow({ where: { styleCardId: w.styleCardId, lineType: 'fabric' } });
+    const field = await prisma.customField.create({ data: { entity: 'BomLine', code: uniq('UD_BomT').replace(/-/g, '_'), name: 'Bom note', type: 'text' } });
+    await prisma.customFieldValue.create({ data: { customFieldId: field.id, entity: 'BomLine', entityId: styleRow.id, value: 'style row note' } });
+    const valueRows = () => prisma.customFieldValue.findMany({ where: { customFieldId: field.id } });
+
+    const { lines } = await svc.previewBomTransferFromStyleCard(w.woId, w.styleCardId);
+    assert.ok(!JSON.stringify(lines).includes('style row note'), 'the transfer carries no UDF values');
+    assert.deepEqual((await valueRows()).map((v) => v.entityId), [styleRow.id], 'an unsaved transfer writes nothing');
+
+    for (const lt of BOM_LINE_TYPES) await svc.upsertBom(w.woId, lt, lines[lt], USER);
+    const values = await valueRows();
+    assert.equal(values.length, 1, 'saving the Work Order BOM writes no UDF value (Work Order BOM is not a BomLine usage)');
+    assert.equal(values[0].entityId, styleRow.id);
+    assert.equal(values[0].value, 'style row note');
+    await prisma.customFieldValue.deleteMany({ where: { customFieldId: field.id } });
+    await prisma.customField.delete({ where: { id: field.id } });
+  });
+});
+
 describe('the Work Order Save persists the transferred BOM', () => {
   test('transfer → Save (upsertBom per type, as BomTab.save does) → reload: transferred BOM is saved', async () => {
     const w = await world();

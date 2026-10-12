@@ -8,7 +8,7 @@ import { register } from "node:module";
 import { describe, it } from "node:test";
 
 register("./workspace-test-loader.mjs", import.meta.url);
-const { mergeDeclaredOrder } = await import("@/hooks/use-grid-columns");
+const { mergeDeclaredOrder, sanitizeOrder, sanitizeHidden, sanitizeWidths } = await import("@/hooks/use-grid-columns");
 
 // Packing List's reorderable columns, as packing-lists/page.tsx declares them around the sizes.
 const BEFORE = ["styleWeight", "packageWeight"];
@@ -67,6 +67,30 @@ describe("grids with a static column set are unchanged", () => {
   });
   it("a declared column with no known predecessor goes first", () => {
     assert.deepEqual(mergeDeclaredOrder(["b", "c"], ["a", "b", "c"]), ["a", "b", "c"]);
+  });
+});
+
+describe("grid-level User Defined Field columns (udf:<code>) declared after the saved preference loads", () => {
+  // Order Lines at mount: static columns only; the UDF definitions arrive a moment later.
+  const STATIC = ["quantity", "rate", "price"];
+  const byKey = new Map(STATIC.map((k) => [k, { key: k, label: k, defaultWidth: 100, minWidth: 60 }]));
+
+  it("a saved order keeps the UDF column where the user put it, then renders it once declared", () => {
+    const saved = ["quantity", "udf:UD_Note", "rate", "price"];
+    const restored = sanitizeOrder(saved, STATIC);
+    assert.deepEqual(restored, ["quantity", "udf:UD_Note", "rate", "price"]);
+    assert.deepEqual(mergeDeclaredOrder(restored, [...STATIC, "udf:UD_Note"]), ["quantity", "udf:UD_Note", "rate", "price"]);
+  });
+  it("a UDF column the user hid stays hidden", () => {
+    assert.deepEqual(sanitizeHidden(["udf:UD_Note", "rate"], STATIC), ["udf:UD_Note", "rate"]);
+  });
+  it("a UDF column's saved width is kept (floored at 40 until its definition is known)", () => {
+    assert.deepEqual(sanitizeWidths({ "udf:UD_Note": 180, "udf:UD_Tiny": 10, rate: 120 }, byKey), { "udf:UD_Note": 180, "udf:UD_Tiny": 40, rate: 120 });
+  });
+  it("unknown non-UDF keys are still dropped, as before", () => {
+    assert.deepEqual(sanitizeOrder(["gone", "rate"], STATIC), ["rate", "quantity", "price"]);
+    assert.deepEqual(sanitizeHidden(["gone"], STATIC), []);
+    assert.deepEqual(sanitizeWidths({ gone: 99 }, byKey), {});
   });
 });
 

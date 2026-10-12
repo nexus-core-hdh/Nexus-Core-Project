@@ -7,8 +7,10 @@
 //     prisma/schema.prisma, executed with `prisma db execute --url <test db>`. The CustomField code
 //     index is created NULLS NOT DISTINCT, exactly as migration
 //     20261003000000_add_custom_field_administration creates it in real databases.
-//  3. Minimal stand-ins for the three legacy tables UDF record resolution reads (IM_Receipt,
-//     FI_Receipt, IM_Item) — just the columns custom-field-records.ts selects.
+//  3. Minimal stand-ins for the legacy tables UDF record and grid-row resolution reads (IM_Receipt,
+//     FI_Receipt, IM_Item, MA_WorkOrder, IM_OrderReceipt, SM_Contract and their line tables) —
+//     just the columns custom-field-records.ts / custom-field-grids.ts select, plus one business
+//     column each so the suite can prove UDF writes never touch them.
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -34,6 +36,30 @@ CREATE TABLE IF NOT EXISTS "FI_Receipt" (
 CREATE TABLE IF NOT EXISTS "IM_Item" (
   "RecId" BIGSERIAL PRIMARY KEY, "AccessCode" VARCHAR(20), "InventoryCode" VARCHAR(50),
   "CompanyId" INTEGER NOT NULL DEFAULT 1, "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "MA_WorkOrder" (
+  "RecId" BIGSERIAL PRIMARY KEY, "WorkOrderNo" VARCHAR(50), "Quantity" NUMERIC(14,4),
+  "CompanyId" INTEGER NOT NULL DEFAULT 1, "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "IM_OrderReceipt" (
+  "RecId" BIGSERIAL PRIMARY KEY, "ReceiptType" SMALLINT NOT NULL, "ReceiptNo" VARCHAR(50),
+  "CompanyId" INTEGER NOT NULL DEFAULT 1, "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "SM_Contract" (
+  "RecId" BIGSERIAL PRIMARY KEY, "ReceiptType" SMALLINT NOT NULL, "ReceiptNo" VARCHAR(50),
+  "CompanyId" INTEGER NOT NULL DEFAULT 1, "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "IM_ReceiptItem" (
+  "RecId" BIGSERIAL PRIMARY KEY, "InventoryReceiptId" BIGINT NOT NULL, "Quantity" NUMERIC(14,4), "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "IM_OrderReceiptItem" (
+  "RecId" BIGSERIAL PRIMARY KEY, "OrderReceiptId" BIGINT NOT NULL, "Quantity" NUMERIC(14,4), "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "SM_ContractItem" (
+  "RecId" BIGSERIAL PRIMARY KEY, "ReceiptId" BIGINT NOT NULL, "Quantity" NUMERIC(14,4), "IsDeleted" SMALLINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS "FI_ReceiptItem" (
+  "RecId" BIGSERIAL PRIMARY KEY, "CurrentAccountReceiptId" BIGINT NOT NULL, "Amount" NUMERIC(14,4), "IsDeleted" SMALLINT NOT NULL DEFAULT 0
 );
 `;
 

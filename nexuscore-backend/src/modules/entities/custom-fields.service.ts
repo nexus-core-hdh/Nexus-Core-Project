@@ -4,11 +4,13 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { resolveUdfRecord } from './custom-field-records';
+import { UDF_GRIDS, liveGridRowIds, resolveUdfGrid } from './custom-field-grids';
 
 // User Defined Fields — the CustomField (definition) + CustomFieldValue (per-record value) engine
-// behind Administration > User Defined Fields and every screen's "Customized Fields" tab.
+// behind Administration > User Defined Fields, every screen's "Customized Fields" tab and the UDF
+// columns of the shared detail grids (custom-field-grids.ts).
 //
-// Runtime contract (unchanged for the five screens that render it): GET custom-fields?entity=X
+// Runtime contract (unchanged for the screens that render it): GET custom-fields?entity=X
 // returns the caller's ACTIVE fields in sortOrder with `type` one of the runtime types
 // (CONTROL_TYPES' values) and `options` a plain array of option labels; a dropdown's saved value
 // is the label itself.
@@ -19,12 +21,22 @@ import { resolveUdfRecord } from './custom-field-records';
 // at all yet (see refuseGlobal) — enforced here, server-side, not by the screen.
 
 /** Entities whose screens render CustomField definitions today (their "Customized Fields" tab). */
-export const RUNTIME_ENTITIES: Record<string, string> = {
+export const SCREEN_ENTITIES: Record<string, string> = {
   InventoryReceipt: 'Inventory Receipts',
   FiReceipt: 'Financial Receipts',
   YarnCard: 'Yarn Cards',
   StyleCard: 'Style Cards',
   SampleCard: 'Sample Cards',
+  WorkOrder: 'Work Orders',
+  PurchaseOrder: 'Purchase Orders',
+  SubcontractOrder: 'Subcontract Orders',
+  Contract: 'Contracts',
+};
+
+/** Every target fields can be created for: the screen entities above plus the registered logical grids. */
+export const RUNTIME_ENTITIES: Record<string, string> = {
+  ...SCREEN_ENTITIES,
+  ...Object.fromEntries(Object.entries(UDF_GRIDS).map(([key, g]) => [key, g.label])),
 };
 
 /** The control types the runtime renders, mapped to the runtime `type` each one is stored as. */
@@ -123,6 +135,20 @@ export class CustomFieldsService {
   ) {}
 
   // ── Reads ────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * The targets the runtime actually renders — what Administration > User Defined Fields offers as
+   * supported: screen entities (a Customized Fields tab) and logical grids (UDF columns), each
+   * grid with the screens that show it and the usages that cannot hold values yet.
+   */
+  listTargets() {
+    return {
+      screens: Object.entries(SCREEN_ENTITIES).map(([key, label]) => ({ key, label })),
+      grids: Object.entries(UDF_GRIDS).map(([key, g]) => ({
+        key, label: g.label, usages: g.sources.map((s) => s.usage), unsupportedUsages: g.unsupported ?? [],
+      })),
+    };
+  }
 
   /** Runtime: the caller's active fields for one entity, in display order (the existing contract). */
   async listForRuntime(user: ActingUser, entity?: string) {
@@ -274,9 +300,72 @@ export class CustomFieldsService {
    */
   async upsertValues(user: ActingUser, entity: string, entityId: string, values: unknown) {
     const record = await this.requireRecord(user, entity, entityId);
-    if (!(await this.userHasPermission(user.id, record.permissionModule, 'update'))) {
-      throw new ForbiddenException('Insufficient permissions');
+    await this.requireUpdate(user, record.permissionModule);
+    const sent = this.parseValues(values);
+    await this.applyValues(user, entity, [{ entityId, sent }], {
+      screenKey: record.screenKey, documentNo: record.documentNo,
+      parentOf: () => ({ parentEntityType: entity, parentEntityId: entityId }),
+    });
+    return this.readValues(user, entity, entityId);
+  }
+
+  // ── Grid values (the UDF columns of a shared detail grid, custom-field-grids.ts) ─────────────
+  //
+  // Same rules as a screen's values, applied per row: the parent document is resolved through its
+  // screen entity (reach + `<owning module>:update`), every row must be a live row of that
+  // document, and each row is validated (types, Required) exactly like one record. All rows of
+  // the document are read or written in a fixed number of queries, however many rows it has.
+
+  /** Every value of the live rows of one document, limited to the fields the caller can see. */
+  async getGridValues(user: ActingUser, grid: string, parentId: string) {
+    const resolved = await this.requireGrid(user, grid, parentId);
+    const rowIds = await liveGridRowIds(this.prisma, resolved);
+    return this.readGridValues(user, resolved.grid, rowIds);
+  }
+
+  /**
+   * Sets values on some rows of one document — rows: [{ rowId, values: [{ customFieldId, value }] }].
+   * Values of fields or rows not sent are kept untouched. Returns the stored values of the rows sent.
+   */
+  async upsertGridValues(user: ActingUser, grid: string, parentId: string, rows: unknown) {
+    const resolved = await this.requireGrid(user, grid, parentId);
+    await this.requireUpdate(user, resolved.parent.permissionModule);
+    if (!Array.isArray(rows) || !rows.length) throw new BadRequestException('rows must be a non-empty list of { rowId, values }.');
+    const live = new Set(await liveGridRowIds(this.prisma, resolved));
+    const targets: { entityId: string; sent: Map<string, unknown> }[] = [];
+    for (const r of rows) {
+      const rowId = r && typeof r === 'object' ? (r as any).rowId : undefined;
+      if (typeof rowId !== 'string' && typeof rowId !== 'number') throw new BadRequestException('Every row needs a rowId.');
+      const id = String(rowId);
+      // Not "not found": the document is reachable, so naming the bad row reveals nothing new.
+      if (!live.has(id)) throw new BadRequestException('A row does not belong to this document or has been deleted.');
+      if (targets.some((t) => t.entityId === id)) throw new BadRequestException('A row is listed more than once.');
+      targets.push({ entityId: id, sent: this.parseValues((r as any).values) });
     }
+    await this.applyValues(user, resolved.grid, targets, {
+      screenKey: resolved.parent.screenKey, documentNo: resolved.parent.documentNo,
+      parentOf: (rowId) => ({ parentEntityType: resolved.grid, parentEntityId: rowId }),
+    });
+    return this.readGridValues(user, resolved.grid, targets.map((t) => t.entityId));
+  }
+
+  private async readGridValues(user: ActingUser, grid: string, rowIds: string[]) {
+    if (!rowIds.length) return [];
+    return this.prisma.customFieldValue.findMany({
+      where: { entity: grid, entityId: { in: rowIds }, customField: { entity: grid, ...visibleScopeWhere(user.companyId, user.branchId) } },
+      select: { entityId: true, customFieldId: true, value: true },
+    });
+  }
+
+  private async requireGrid(user: ActingUser, grid: string, parentId: string) {
+    const resolved = await resolveUdfGrid(this.prisma, grid, parentId, user);
+    if (!resolved) throw new NotFoundException('Record not found.');
+    return resolved;
+  }
+
+  // ── Shared value core ────────────────────────────────────────────────────────────────────────
+
+  private parseValues(values: unknown) {
     if (!Array.isArray(values)) throw new BadRequestException('values must be a list of { customFieldId, value }.');
     const sent = new Map<string, unknown>();
     for (const v of values) {
@@ -287,69 +376,97 @@ export class CustomFieldsService {
       if (sent.has(id)) throw new BadRequestException('A field is listed more than once.');
       sent.set(id, (v as any).value);
     }
+    return sent;
+  }
 
+  /**
+   * Validates and writes the sent values of one or more records of one entity (a screen record, or
+   * rows of a grid): one definitions query, one stored-values query, one transaction for every
+   * change, one audit event per real change. Nothing is written unless every record passes.
+   */
+  private async applyValues(
+    user: ActingUser,
+    entity: string,
+    targets: { entityId: string; sent: Map<string, unknown> }[],
+    audit: { screenKey: string; documentNo: string | null; parentOf: (entityId: string) => { parentEntityType: string; parentEntityId: string } },
+  ) {
+    const sentIds = [...new Set(targets.flatMap((t) => [...t.sent.keys()]))];
     // Every active field of this entity the caller can see (for the required check), plus any
     // sent field — unknown, other-entity or out-of-scope ids find no definition and are refused.
     const defs = await this.prisma.customField.findMany({
-      where: { entity, AND: [visibleScopeWhere(user.companyId, user.branchId), { OR: [{ isActive: true }, { id: { in: [...sent.keys()] } }] }] },
+      where: { entity, AND: [visibleScopeWhere(user.companyId, user.branchId), { OR: [{ isActive: true }, { id: { in: sentIds } }] }] },
     });
     const defById = new Map(defs.map((d) => [d.id, d]));
-    const unknown = [...sent.keys()].filter((id) => !defById.has(id));
+    const unknown = sentIds.filter((id) => !defById.has(id));
     if (unknown.length) throw new BadRequestException(`${unknown.length === 1 ? 'A field does' : `${unknown.length} fields do`} not exist for this record.`);
-    const inactive = [...sent.keys()].map((id) => defById.get(id)!).filter((d) => !d.isActive);
+    const inactive = sentIds.map((id) => defById.get(id)!).filter((d) => !d.isActive);
     if (inactive.length) throw new BadRequestException(`${inactive.map((d) => `"${d.name}"`).join(', ')} ${inactive.length === 1 ? 'is' : 'are'} inactive and cannot be changed.`);
 
-    const stored = await this.prisma.customFieldValue.findMany({ where: { entity, entityId, customFieldId: { in: defs.map((d) => d.id) } } });
-    const storedById = new Map<string, Prisma.JsonValue>();
-    for (const s of stored) if (!storedById.has(s.customFieldId)) storedById.set(s.customFieldId, s.value);
+    const stored = await this.prisma.customFieldValue.findMany({
+      where: { entity, entityId: { in: targets.map((t) => t.entityId) }, customFieldId: { in: defs.map((d) => d.id) } },
+    });
+    const storedOf = new Map<string, Map<string, Prisma.JsonValue>>();
+    for (const s of stored) {
+      const m = storedOf.get(s.entityId) ?? new Map<string, Prisma.JsonValue>();
+      if (!m.has(s.customFieldId)) m.set(s.customFieldId, s.value);
+      storedOf.set(s.entityId, m);
+    }
 
     const errors: string[] = [];
-    const next = new Map<string, Prisma.JsonValue | null>(); // normalized value per sent field; null = clear
-    for (const [id, raw] of sent) {
-      const def = defById.get(id)!;
-      const before = storedById.has(id) ? storedById.get(id)! : null;
-      if (!isBlank(raw) && jsonEqual(raw, before)) { next.set(id, before); continue; }
-      const checked = validateFieldValue(def, raw);
-      if ('error' in checked) errors.push(checked.error);
-      else next.set(id, checked.value);
-    }
-    for (const def of defs) {
-      if (!def.isActive || !def.required || def.type === 'checkbox') continue;
-      const finalValue = next.has(def.id) ? next.get(def.id) : storedById.get(def.id) ?? null;
-      if (isBlank(finalValue)) errors.push(`"${def.name}" is required.`);
-    }
-    if (errors.length) throw new BadRequestException(errors.join(' '));
-
-    const changes: { def: (typeof defs)[number]; before: Prisma.JsonValue | null; after: Prisma.JsonValue | null }[] = [];
-    for (const [id, after] of next) {
-      const before = storedById.has(id) ? storedById.get(id)! : null;
-      if (!jsonEqual(before, after)) changes.push({ def: defById.get(id)!, before, after });
-    }
-    if (changes.length) {
-      await this.prisma.$transaction(async (tx) => {
-        for (const c of changes) {
-          const where = { entity, entityId, customFieldId: c.def.id };
-          if (c.after === null) await tx.customFieldValue.deleteMany({ where });
-          else if (c.before === null) await tx.customFieldValue.create({ data: { ...where, value: c.after as Prisma.InputJsonValue } });
-          else await tx.customFieldValue.updateMany({ where, data: { value: c.after as Prisma.InputJsonValue } });
-        }
-      });
-      const correlationId = randomUUID();
-      for (const c of changes) {
-        const action = c.before === null ? AUDIT_ACTIONS.CREATE : c.after === null ? AUDIT_ACTIONS.DELETE : AUDIT_ACTIONS.UPDATE;
-        const shape = (value: Prisma.JsonValue | null) => ({ field: c.def.code, caption: c.def.name, value: auditValue(value) });
-        await this.audit.recordSafe({
-          userId: user.id, companyId: user.companyId, screenKey: record.screenKey,
-          entityType: 'CustomFieldValue', entityId: c.def.id, action,
-          before: c.before === null ? undefined : shape(c.before),
-          after: c.after === null ? undefined : shape(c.after),
-          documentNo: c.def.code,
-          parentEntityType: entity, parentEntityId: entityId, parentDocumentNo: record.documentNo,
-          correlationId,
-        });
+    const changes: { entityId: string; def: (typeof defs)[number]; before: Prisma.JsonValue | null; after: Prisma.JsonValue | null }[] = [];
+    targets.forEach((t, i) => {
+      const storedById = storedOf.get(t.entityId) ?? new Map<string, Prisma.JsonValue>();
+      const rowErrors: string[] = [];
+      const next = new Map<string, Prisma.JsonValue | null>(); // normalized value per sent field; null = clear
+      for (const [id, raw] of t.sent) {
+        const def = defById.get(id)!;
+        const before = storedById.has(id) ? storedById.get(id)! : null;
+        if (!isBlank(raw) && jsonEqual(raw, before)) { next.set(id, before); continue; }
+        const checked = validateFieldValue(def, raw);
+        if ('error' in checked) rowErrors.push(checked.error);
+        else next.set(id, checked.value);
       }
-    }
-    return this.readValues(user, entity, entityId);
+      for (const def of defs) {
+        if (!def.isActive || !def.required || def.type === 'checkbox') continue;
+        const finalValue = next.has(def.id) ? next.get(def.id) : storedById.get(def.id) ?? null;
+        if (isBlank(finalValue)) rowErrors.push(`"${def.name}" is required.`);
+      }
+      if (rowErrors.length) errors.push(targets.length > 1 ? `Row ${i + 1}: ${rowErrors.join(' ')}` : rowErrors.join(' '));
+      for (const [id, after] of next) {
+        const before = storedById.has(id) ? storedById.get(id)! : null;
+        if (!jsonEqual(before, after)) changes.push({ entityId: t.entityId, def: defById.get(id)!, before, after });
+      }
+    });
+    if (errors.length) throw new BadRequestException(errors.join(' '));
+    if (!changes.length) return;
+
+    // Clears and new values are one statement each however many rows changed; only a changed
+    // stored value needs its own update (each carries its own value).
+    const key = (c: (typeof changes)[number]) => ({ entityId: c.entityId, customFieldId: c.def.id });
+    const clears = changes.filter((c) => c.after === null);
+    const creates = changes.filter((c) => c.after !== null && c.before === null);
+    const updates = changes.filter((c) => c.after !== null && c.before !== null);
+    await this.prisma.$transaction(async (tx) => {
+      if (clears.length) await tx.customFieldValue.deleteMany({ where: { entity, OR: clears.map(key) } });
+      if (creates.length) {
+        await tx.customFieldValue.createMany({ data: creates.map((c) => ({ entity, ...key(c), value: c.after as Prisma.InputJsonValue })) });
+      }
+      for (const c of updates) await tx.customFieldValue.updateMany({ where: { entity, ...key(c) }, data: { value: c.after as Prisma.InputJsonValue } });
+    });
+    const correlationId = randomUUID();
+    await this.audit.recordManySafe(changes.map((c) => {
+      const action = c.before === null ? AUDIT_ACTIONS.CREATE : c.after === null ? AUDIT_ACTIONS.DELETE : AUDIT_ACTIONS.UPDATE;
+      const shape = (value: Prisma.JsonValue | null) => ({ field: c.def.code, caption: c.def.name, value: auditValue(value) });
+      return {
+        userId: user.id, companyId: user.companyId, screenKey: audit.screenKey,
+        entityType: 'CustomFieldValue', entityId: c.def.id, action,
+        before: c.before === null ? undefined : shape(c.before),
+        after: c.after === null ? undefined : shape(c.after),
+        documentNo: c.def.code,
+        ...audit.parentOf(c.entityId), parentDocumentNo: audit.documentNo,
+        correlationId,
+      };
+    }));
   }
 
   private async readValues(user: ActingUser, entity: string, entityId: string) {
@@ -363,6 +480,10 @@ export class CustomFieldsService {
     const record = await resolveUdfRecord(this.prisma, entity, entityId, user);
     if (!record) throw new NotFoundException('Record not found.');
     return record;
+  }
+
+  private async requireUpdate(user: ActingUser, module: string) {
+    if (!(await this.userHasPermission(user.id, module, 'update'))) throw new ForbiddenException('Insufficient permissions');
   }
 
   /** Same Role -> RolePermission -> Permission(module, action) check RolesGuard applies to a route. */

@@ -7,35 +7,83 @@
 // administration only.
 
 export type EntityCapability = "supported" | "definitions-only";
+/** Screen = a record's Customized Fields tab; Grid = UDF columns of a shared detail grid. */
+export type UdfLevel = "screen" | "grid";
 
 export interface UdfEntity {
   key: string;
   label: string;
   hint: string;
   capability: EntityCapability;
+  level: UdfLevel;
   /** Where the fields appear — shown in Preview on Screen. */
   screen?: string;
+  /** Grid only: the screens that render this logical grid (one definition serves them all). */
+  usages?: string[];
+  /** Grid only: screens showing the same grid whose rows cannot hold values yet, and why. */
+  unsupportedUsages?: { usage: string; reason: string }[];
 }
 
-// Supported = the screen renders CustomField definitions today (its "Customized Fields" tab).
-// Definitions only = a real ERP entity whose screen has no renderer yet; fields cannot be created
-// for it (the server refuses too) until one exists.
+// Supported = the runtime renders CustomField definitions for it today: a screen's "Customized
+// Fields" tab, or a grid's UDF columns. Definitions only = a real ERP entity with no renderer yet;
+// fields cannot be created or activated for it (the server refuses too) until one exists.
+// Capability, usages and unsupported usages here are only the offline default — the screen
+// replaces them with what the server's runtime registry reports (GET entities/custom-field-targets,
+// see withRuntimeTargets), so "Supported" means "the runtime renders it", never merely "a
+// definition can be saved".
 export const UDF_ENTITIES: UdfEntity[] = [
-  { key: "InventoryReceipt", label: "Inventory Receipts", hint: "Purchase, Subcontract and every other receipt type", capability: "supported", screen: "Inventory Receipt" },
-  { key: "FiReceipt", label: "Financial Receipts", hint: "Financial receipt vouchers", capability: "supported", screen: "Financial Receipt" },
-  { key: "YarnCard", label: "Yarn Cards", hint: "Yarn inventory cards", capability: "supported", screen: "Yarn Card" },
-  { key: "StyleCard", label: "Style Cards", hint: "PLM style cards", capability: "supported", screen: "Style Card" },
-  { key: "SampleCard", label: "Sample Cards", hint: "PLM sample cards", capability: "supported", screen: "Sample Card" },
-  { key: "WorkOrder", label: "Work Orders", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "PurchaseOrder", label: "Purchase Orders", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "SubcontractOrder", label: "Subcontract Orders", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "Contract", label: "Contracts", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "CostingSheet", label: "Costing Sheets", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "FabricCard", label: "Fabric Cards", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "TrimCard", label: "Trim Cards", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
-  { key: "CurrentAccount", label: "Current Accounts", hint: "Customers and suppliers — no renderer yet", capability: "definitions-only" },
-  { key: "Warehouse", label: "Warehouses", hint: "No Customized Fields renderer yet", capability: "definitions-only" },
+  { key: "InventoryReceipt", label: "Inventory Receipts", hint: "Purchase, Subcontract and every other receipt type", capability: "supported", level: "screen", screen: "Inventory Receipt" },
+  { key: "FiReceipt", label: "Financial Receipts", hint: "Financial receipt vouchers", capability: "supported", level: "screen", screen: "Financial Receipt" },
+  { key: "YarnCard", label: "Yarn Cards", hint: "Yarn inventory cards", capability: "supported", level: "screen", screen: "Yarn Card" },
+  { key: "StyleCard", label: "Style Cards", hint: "PLM style cards", capability: "supported", level: "screen", screen: "Style Card" },
+  { key: "SampleCard", label: "Sample Cards", hint: "PLM sample cards", capability: "supported", level: "screen", screen: "Sample Card" },
+  { key: "WorkOrder", label: "Work Orders", hint: "Manufacturing work orders", capability: "supported", level: "screen", screen: "Work Order" },
+  { key: "PurchaseOrder", label: "Purchase Orders", hint: "Purchase orders", capability: "supported", level: "screen", screen: "Purchase Order" },
+  { key: "SubcontractOrder", label: "Subcontract Orders", hint: "Subcontract orders", capability: "supported", level: "screen", screen: "Subcontract Order" },
+  { key: "Contract", label: "Contracts", hint: "Purchase and Sale Contracts", capability: "supported", level: "screen", screen: "Contract" },
+  { key: "CostingSheet", label: "Costing Sheets", hint: "No Customized Fields renderer yet", capability: "definitions-only", level: "screen" },
+  { key: "FabricCard", label: "Fabric Cards", hint: "No Customized Fields renderer yet", capability: "definitions-only", level: "screen" },
+  { key: "TrimCard", label: "Trim Cards", hint: "No Customized Fields renderer yet", capability: "definitions-only", level: "screen" },
+  { key: "CurrentAccount", label: "Current Accounts", hint: "Customers and suppliers — no renderer yet", capability: "definitions-only", level: "screen" },
+  { key: "Warehouse", label: "Warehouses", hint: "No Customized Fields renderer yet", capability: "definitions-only", level: "screen" },
+  // Logical grids — keyed by what the rows are, not by page (backend custom-field-grids.ts).
+  { key: "InventoryReceiptLine", label: "Inventory Receipt Lines", hint: "Detail lines of every receipt type", capability: "supported", level: "grid", screen: "Inventory Receipt lines", usages: ["Inventory Receipts (every receipt type)"] },
+  { key: "OrderLine", label: "Order Lines", hint: "Purchase and Subcontract Order lines", capability: "supported", level: "grid", screen: "Order lines", usages: ["Purchase Orders", "Subcontract Orders"] },
+  { key: "ContractLine", label: "Contract Lines", hint: "Purchase and Sale Contract lines", capability: "supported", level: "grid", screen: "Contract lines", usages: ["Purchase Contracts, Sale Contracts"] },
+  { key: "FiReceiptLine", label: "Financial Receipt Lines", hint: "Financial receipt detail lines", capability: "supported", level: "grid", screen: "Financial Receipt lines", usages: ["Financial Receipts"] },
+  { key: "BomLine", label: "BOM Lines", hint: "Style and Sample Card BOM", capability: "supported", level: "grid", screen: "BOM lines", usages: ["Style Cards", "Sample Cards"], unsupportedUsages: [{ usage: "Work Orders", reason: "Work Order BOM rows have no stable row key yet." }] },
 ];
+
+/** What GET entities/custom-field-targets returns. */
+export interface UdfRuntimeTargets {
+  screens: { key: string; label: string }[];
+  grids: { key: string; label: string; usages: string[]; unsupportedUsages: { usage: string; reason: string }[] }[];
+}
+
+/**
+ * The entity list with capability and usages taken from the server's runtime registry: a target
+ * the server does not register is "definitions only", whatever the offline default says; a grid
+ * the server registers that this list does not know yet is still offered.
+ */
+export function withRuntimeTargets(entities: UdfEntity[], targets: UdfRuntimeTargets | null): UdfEntity[] {
+  if (!targets) return entities;
+  const screens = new Set(targets.screens.map((t) => t.key));
+  const grids = new Map(targets.grids.map((g) => [g.key, g]));
+  const known = new Set(entities.map((e) => e.key));
+  const merged = entities.map((e): UdfEntity => {
+    if (e.level === "grid") {
+      const g = grids.get(e.key);
+      return g ? { ...e, capability: "supported", usages: g.usages, unsupportedUsages: g.unsupportedUsages } : { ...e, capability: "definitions-only" };
+    }
+    return { ...e, capability: screens.has(e.key) ? "supported" : "definitions-only" };
+  });
+  for (const g of targets.grids) {
+    if (!known.has(g.key)) {
+      merged.push({ key: g.key, label: g.label, hint: g.usages.join(", "), capability: "supported", level: "grid", screen: g.label, usages: g.usages, unsupportedUsages: g.unsupportedUsages });
+    }
+  }
+  return merged;
+}
 
 export type DataType = "text" | "number" | "date" | "boolean" | "selection";
 export type ControlType = "textbox" | "textarea" | "email" | "number" | "date" | "checkbox" | "dropdown";

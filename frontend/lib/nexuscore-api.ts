@@ -135,6 +135,14 @@ export const entitiesApi = {
   getCustomFieldValues: (entity: string, entityId: string) => api.get(entities('/custom-field-values', { entity, entityId })),
   upsertCustomFieldValues: (entity: string, entityId: string, values: any[]) =>
     api.put(entities('/custom-field-values'), { entity, entityId, values }),
+  // What the UDF runtime renders: screen entities and logical grids (with their usages).
+  getCustomFieldTargets: () => api.get(entities('/custom-field-targets')),
+  // Grid-level values (custom-field-grids.ts): every live row of one document in one call; rows =
+  // [{ rowId, values: [{ customFieldId, value }] }]. Parent reach, row ownership, the owning
+  // module's update permission and validation are all enforced server-side.
+  getGridCustomFieldValues: (grid: string, parentId: string) => api.get(entities('/custom-field-values/grid', { grid, parentId })),
+  upsertGridCustomFieldValues: (grid: string, parentId: string, rows: any[]) =>
+    api.put(entities('/custom-field-values/grid'), { grid, parentId, rows }),
 };
 
 // PLM helpers

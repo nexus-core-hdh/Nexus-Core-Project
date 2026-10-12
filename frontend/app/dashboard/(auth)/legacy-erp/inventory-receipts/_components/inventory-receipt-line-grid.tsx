@@ -8,6 +8,8 @@ import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useGridUdf, isUdfColumnKey, type UdfColumnKey } from "@/hooks/use-grid-udf";
+import { UdfGridCell } from "@/components/custom-fields/udf-grid-cell";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -278,6 +280,12 @@ const COLUMNS: ColumnDef[] = [
 ];
 const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 
+// Grid-level User Defined Fields ("InventoryReceiptLine" — this grid for every receipt type,
+// hooks/use-grid-udf.ts) join the column set as `udf:<code>` columns: reorderable, hideable and
+// resizable like any other, outside the arrow-key cell cursor (their cells carry their own editor).
+type GridKey = ColKey | UdfColumnKey;
+type DisplayColumn = Omit<ColumnDef, "key"> & { key: GridKey };
+
 // Type/Code/Name are permanently first and unhideable — same rule as Purchase Order's own
 // FIXED_COLS (purchase-order-line-grid.tsx), applied here to the same three columns.
 const FIXED_COLS: ColKey[] = ["type", "code", "name"];
@@ -533,6 +541,8 @@ interface Props {
    *  its own real persisted lines via listItems() as before. Omitted (every existing caller), the
    *  grid behaves byte-for-byte as before: one blank starter row. */
   initialLines?: PlanningPrefillLine[];
+  /** Whether any grid UDF value has been edited and not saved yet (feeds the screen's dirty state). */
+  onUdfDirtyChange?: (dirty: boolean) => void;
 }
 
 // A Work Order header (MA_WorkOrder) -> the link a receipt line stores: its CURRENT live line
@@ -592,14 +602,20 @@ export interface InventoryReceiptLineGridHandle {
    *  itself being deleted, so the user's entered item/quantity isn't silently destroyed — it
    *  just becomes an ordinary manually-entered line. Returns counts for the caller's toast. */
   clearRelatedImportedLines: () => Promise<{ removedDrafts: number; detachedLines: number }>;
+  /** Grid UDF Required check over the saved lines — call before the document's Save writes anything. */
+  validateUdf: () => boolean;
+  /** Stores the grid UDF values of every saved line — part of the document's Save. */
+  saveUdf: (inventoryReceiptId: number) => Promise<boolean>;
 }
 
 export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandle, Props>(function InventoryReceiptLineGrid(
-  { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts, initialLines },
+  { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts, initialLines, onUdfDirtyChange },
   ref,
 ) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const udf = useGridUdf({ grid: "InventoryReceiptLine", parentId: inventoryReceiptId });
+  useEffect(() => { onUdfDirtyChange?.(udf.dirty); }, [udf.dirty]); // eslint-disable-line react-hooks/exhaustive-deps
   // Generate Serial Cards — opened from this grid's own right-click menu (see getLineRowActions
   // below); a modal, not a navigation, so it's local dialog state rather than a route. The dialog
   // now stays open after Produce and shows the generated rows inline (full ERP entry-screen
@@ -1170,10 +1186,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     return { removedDrafts: toDrop.length, detachedLines: toDetach.length };
   };
 
+  const savedRowIds = () => rows.map((r) => r.__rowId).filter((id): id is number => id != null);
   useImperativeHandle(ref, () => ({
     commitDrafts, importLines, getImportedOrderReceiptItemIds,
     importRelatedLines, getImportedPurchaseReceiptItemIds, clearRelatedImportedLines,
-  }), [rows, inventoryReceiptId, api]);
+    validateUdf: () => udf.validate(savedRowIds()),
+    saveUdf: (id: number) => udf.save(id, savedRowIds()),
+  }), [rows, inventoryReceiptId, api, udf]);
 
   const addRow = () => setRows((prev) => [...prev, emptyLine()]);
 
@@ -1244,10 +1263,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
   const gridColumnDefs = useMemo(
-    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
-    [],
+    () => [
+      ...COLUMNS.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+      ...udf.columnDefs,
+    ],
+    [udf.columnDefs],
   );
-  const gridColumns = useGridColumns<ColKey>({
+  const gridColumns = useGridColumns<GridKey>({
     storageKey: "irLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
@@ -1255,7 +1277,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     hideNewDefaultHiddenColumns: true,
   });
   const displayColumnDefs = useMemo(
-    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    () => gridColumns.displayColumnDefs.map((c): DisplayColumn =>
+      COLUMN_BY_KEY.get(c.key as ColKey) ?? { key: c.key, label: c.label, align: "left", editable: true, kind: "text" }),
     [gridColumns.displayColumnDefs],
   );
 
@@ -1266,7 +1289,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   // displayed column is navigable here (there's no PO-style `navigable` flag on this grid's
   // ColumnDef — every column, editable or read-only, is a stop, same as PO where every column
   // including its own computed Price/Item Amount cells is navigable too).
-  const navOrder = useMemo(() => displayColumnDefs.map((c) => c.key), [displayColumnDefs]);
+  const navOrder = useMemo(() => displayColumnDefs.filter((c) => !isUdfColumnKey(c.key)).map((c) => c.key as ColKey), [displayColumnDefs]);
   const cellRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const cellKey = (clientId: string, col: ColKey) => `${clientId}:${col}`;
   const registerCell = (key: string) => (el: HTMLDivElement | null) => {
@@ -1368,7 +1391,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   const gridRootRef = useRef<HTMLDivElement>(null);
   const colWidths = gridColumns.colWidths;
   const startResize = gridColumns.startResize;
-  const autoFitColumn = (key: ColKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
+  const autoFitColumn = (key: GridKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
 
   const totalTableWidth = gridColumns.totalWidth(!readOnly ? DEL_W : 0);
 
@@ -1437,13 +1460,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
 
       <Table role="grid" aria-label="Purchase receipt detail lines" className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
         <colgroup>
-          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.getWidth(col.key) }} />)}
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
           <TableRow className={cn(HEADER_H, "bg-background hover:bg-muted/60")}>
             {displayColumnDefs.map((col, i) => {
-              const fixed = FIXED_COLS.includes(col.key);
+              const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
               return (
                 <TableHead
                   key={col.key}
@@ -1491,6 +1514,24 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                 <TableRow key={r.clientId} className={cn(ROW_H, "group transition-colors [&>td]:p-0", "hover:bg-muted/60", rowBg)}>
                   {displayColumnDefs.map((col, i) => {
                     const firstBorder = i === 0 ? FIRST_COL_BORDER : undefined;
+
+                    if (isUdfColumnKey(col.key)) {
+                      const field = udf.fieldForColumn(col.key);
+                      return (
+                        <TableCell key={col.key} className={cn(CELL_BORDER, firstBorder)} data-col={col.key}>
+                          {field && (
+                            <UdfGridCell
+                              field={field}
+                              value={udf.valueOf(r.__rowId, field.id)}
+                              onChange={(v) => r.__rowId != null && udf.setValue(r.__rowId, field.id, v)}
+                              readOnly={readOnly}
+                              unsavedRow={r.__rowId == null}
+                              invalid={udf.isMissing(r.__rowId, field.id)}
+                            />
+                          )}
+                        </TableCell>
+                      );
+                    }
 
                     if (col.key === "type") {
                       return (
@@ -1878,7 +1919,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                     }
 
                     // Every remaining catalog column: real-data-when-available, read-only cell.
-                    const value = extraValue(col, r.extra);
+                    const value = extraValue(col as ColumnDef, r.extra);
                     return (
                       <TableCell key={col.key} className={cellCls(r.clientId, col.key, firstBorder)}>
                         <div {...staticCellProps(r, col.key, value, col.align, value === "—")} />

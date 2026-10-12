@@ -62,7 +62,7 @@ describe('definitions', () => {
     const { users: u, svc } = w;
     await expectHttpError(svc.create(u.adminA1, fieldDto('YarnCard', '1Bad', 'textbox')), 400, /Field Code/);
     await expectHttpError(svc.create(u.adminA1, fieldDto('YarnCard', 'UD Bad', 'textbox')), 400, /Field Code/);
-    await expectHttpError(svc.create(u.adminA1, fieldDto('WorkOrder', 'UD_Wo', 'textbox')), 400, /entities whose screens/);
+    await expectHttpError(svc.create(u.adminA1, fieldDto('CostingSheet', 'UD_Cs', 'textbox')), 400, /entities whose screens/);
     await expectHttpError(svc.create(u.adminA1, fieldDto('YarnCard', 'UD_Phone', 'phone')), 400, /Unsupported control type/);
     await expectHttpError(svc.create(u.adminA1, fieldDto('YarnCard', 'UD_Dd', 'dropdown', { options: [] })), 400, /at least one option/);
     await expectHttpError(svc.create(u.adminA1, fieldDto('YarnCard', 'UD_Dd', 'dropdown', { options: dropdownOptions('A', 'a') })), 400, /listed twice/);

@@ -18,6 +18,8 @@ import {
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useGridUdf, isUdfColumnKey, type UdfColumnKey } from "@/hooks/use-grid-udf";
+import { UdfGridCell } from "@/components/custom-fields/udf-grid-cell";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -95,6 +97,12 @@ const COLUMNS: ColumnDef[] = [
   { key: "explanation", label: "Explanation", align: "left", editable: true },
 ];
 const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
+
+// Grid-level User Defined Fields ("ContractLine" — every Purchase and Sale Contract line grid,
+// hooks/use-grid-udf.ts) join the column set as `udf:<code>` columns: reorderable, hideable and
+// resizable like any other, outside the arrow-key cell cursor (their cells carry their own editor).
+type GridKey = ColKey | UdfColumnKey;
+type DisplayColumn = Omit<ColumnDef, "key"> & { key: GridKey };
 
 // Type/Code/Name identify the line and always stay first & visible — same rule as every other
 // migrated legacy-erp grid's own FIXED_COLS (purchase-order-line-grid.tsx etc).
@@ -189,17 +197,25 @@ interface Props {
   contractId: number | null;
   readOnly?: boolean;
   api: ReturnType<typeof legacyErpApi.contracts>;
+  /** Whether any grid UDF value has been edited and not saved yet (feeds the screen's dirty state). */
+  onUdfDirtyChange?: (dirty: boolean) => void;
 }
 
 export interface ContractLineGridHandle {
   commitDrafts: (newContractId: number) => Promise<void>;
+  /** Grid UDF Required check over the saved lines — call before the document's Save writes anything. */
+  validateUdf: () => boolean;
+  /** Stores the grid UDF values of every saved line — part of the document's Save. */
+  saveUdf: (contractId: number) => Promise<boolean>;
 }
 
 export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(function ContractLineGrid(
-  { contractId, readOnly = false, api },
+  { contractId, readOnly = false, api, onUdfDirtyChange },
   ref,
 ) {
   const [loading, setLoading] = useState(false);
+  const udf = useGridUdf({ grid: "ContractLine", parentId: contractId });
+  useEffect(() => { onUdfDirtyChange?.(udf.dirty); }, [udf.dirty]); // eslint-disable-line react-hooks/exhaustive-deps
   const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   // Decimal Parameters (Settings -> Screen Parameters -> Decimal) — round-on-blur for
@@ -380,7 +396,12 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
     await load(newContractId);
   };
 
-  useImperativeHandle(ref, () => ({ commitDrafts }), [rows]);
+  const savedRowIds = () => rows.map((r) => r.__rowId).filter((id): id is number => id != null);
+  useImperativeHandle(ref, () => ({
+    commitDrafts,
+    validateUdf: () => udf.validate(savedRowIds()),
+    saveUdf: (id: number) => udf.save(id, savedRowIds()),
+  }), [rows, udf]);
 
   const addRow = () => setRows((prev) => [...prev, emptyLine()]);
 
@@ -453,23 +474,27 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
   const gridColumnDefs = useMemo(
-    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
-    [],
+    () => [
+      ...COLUMNS.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+      ...udf.columnDefs,
+    ],
+    [udf.columnDefs],
   );
-  const gridColumns = useGridColumns<ColKey>({
+  const gridColumns = useGridColumns<GridKey>({
     storageKey: "contractLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
   });
   const displayColumnDefs = useMemo(
-    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    () => gridColumns.displayColumnDefs.map((c): DisplayColumn =>
+      COLUMN_BY_KEY.get(c.key as ColKey) ?? { key: c.key, label: c.label, align: "left", editable: true }),
     [gridColumns.displayColumnDefs],
   );
-  const navOrder = useMemo(() => displayColumnDefs.map((c) => c.key), [displayColumnDefs]);
+  const navOrder = useMemo(() => displayColumnDefs.filter((c) => !isUdfColumnKey(c.key)).map((c) => c.key as ColKey), [displayColumnDefs]);
   const gridRootRef = useRef<HTMLDivElement>(null);
   const colWidths = gridColumns.colWidths;
   const startResize = gridColumns.startResize;
-  const autoFitColumn = (key: ColKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
+  const autoFitColumn = (key: GridKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
   const totalTableWidth = gridColumns.totalWidth(DEL_W);
 
   // ---- Excel-style click-to-edit cell model — ported from purchase-order-line-grid.tsx -------
@@ -577,13 +602,13 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
       <div className="overflow-x-auto" style={{ maxHeight: 480 }}>
         <Table role="grid" aria-label="Contract detail lines" aria-rowcount={rows.length + 1} className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
           <colgroup>
-            {displayColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+            {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.getWidth(col.key) }} />)}
             {!readOnly && <col style={{ width: DEL_W }} />}
           </colgroup>
           <TableHeader>
             <TableRow className="border-b bg-background hover:bg-muted/60">
               {displayColumnDefs.map((col, i) => {
-                const fixed = FIXED_COLS.includes(col.key);
+                const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
                 return (
                   <TableHead
                     key={col.key}
@@ -629,6 +654,24 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                 {displayColumnDefs.map((col, i) => {
                   const firstBorder = i === 0 ? FIRST_COL_BORDER : undefined;
                   const r = row;
+
+                  if (isUdfColumnKey(col.key)) {
+                    const field = udf.fieldForColumn(col.key);
+                    return (
+                      <TableCell key={col.key} className={cn(CELL_BORDER, firstBorder)} data-col={col.key}>
+                        {field && (
+                          <UdfGridCell
+                            field={field}
+                            value={udf.valueOf(r.__rowId, field.id)}
+                            onChange={(v) => r.__rowId != null && udf.setValue(r.__rowId, field.id, v)}
+                            readOnly={readOnly}
+                            unsavedRow={r.__rowId == null}
+                            invalid={udf.isMissing(r.__rowId, field.id)}
+                          />
+                        )}
+                      </TableCell>
+                    );
+                  }
 
                   if (col.key === "type") {
                     return (
