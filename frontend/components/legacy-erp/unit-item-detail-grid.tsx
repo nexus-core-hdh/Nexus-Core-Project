@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { LookupDialog } from "@/components/legacy-erp/lookup-dialog";
 import { cn } from "@/lib/utils";
 
-// Extracted from the Unit Set screen (app/dashboard/(auth)/legacy-erp/unit-sets/page.tsx) so
+// Extracted from the Unit Set screen (app/[company]/(auth)/legacy-erp/unit-sets/page.tsx) so
 // it can be reused verbatim wherever a Unit Set item's full detail needs to be shown — today
 // that's the Unit Set screen itself and Fabric Card's Unit tab (which copies one item's values
 // in and lets them be edited independently). Nothing here is Unit-Set- or Fabric-Card-specific;

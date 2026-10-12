@@ -1,6 +1,7 @@
 /**
  * Authentication utility functions
  */
+import { setCompanySlugCookie } from "@/lib/company-path";
 
 export interface User {
   id: number;
@@ -64,8 +65,8 @@ export function logout(): void {
   localStorage.removeItem('user');
 
   // Session-scoped grid preferences ("Save for This Session" column order/visibility/width, set
-  // by the shared useGridColumns hook every grid in the app uses — hooks/use-grid-columns.ts)
-  // must reset on logout, not just on tab close — sessionStorage survives a full page
+  // by the shared useGridColumns hook every grid in the app uses â€” hooks/use-grid-columns.ts)
+  // must reset on logout, not just on tab close â€” sessionStorage survives a full page
   // navigation/reload within the same tab, which is exactly what this logout() causes, so
   // without this a different user logging into the same tab would inherit the previous user's
   // session-only grid layout. Pattern-matched by suffix (not a hardcoded key per grid) so this
@@ -80,9 +81,10 @@ export function logout(): void {
 
   // Clear cookie
   document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+  setCompanySlugCookie(null);
   
   // Redirect to login page
-  window.location.href = '/dashboard/login/v1';
+  window.location.href = '/login/v1';
 }
 
 /**

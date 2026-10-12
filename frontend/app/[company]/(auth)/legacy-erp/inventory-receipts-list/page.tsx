@@ -1,0 +1,277 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "@/lib/app-navigation";
+import { Button } from "@/components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Badge } from "@/components/ui/badge";
+import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { legacyErpApi } from "@/lib/nexuscore-api";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
+import { toast } from "sonner";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
+import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { getReceiptTypeConfig } from "@/lib/legacy-erp/receipt-types";
+import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, Truck, SearchX } from "lucide-react";
+import { formatCell } from "@/lib/legacy-erp/humanize";
+import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
+import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
+import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
+
+type SortKey = "receiptNo" | "documentNo" | "receiptDate";
+
+export default function InventoryReceiptListPage() {
+  const router = useRouter();
+  const searchParams = useWorkspaceSearchParams();
+  // Receipt Screen Replication — additive: absent/invalid/"2" resolve to Purchase Receipt's
+  // existing behavior exactly as before (see inventory-receipts/page.tsx for the matching
+  // treatment on the CRUD screen this list navigates into).
+  const receiptType = Number(searchParams.get("receiptType")) || 2;
+  const cfg = getReceiptTypeConfig(receiptType);
+  const client = receiptType === 2 ? legacyErpApi.inventoryReceipts : legacyErpApi.receipts(receiptType);
+  const [search, setSearch] = useState("");
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searched, setSearched] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
+  // Server-side paging + sorting: the API searches/sorts the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "receiptNo", defaultSortDir: "desc" });
+  // One shared worklist set across all 17 receipt types this page serves (via ?receiptType=),
+  // same convention Receipt & Master Data itself uses for its own 20-source dropdown — a
+  // worklist's fields carry their own source tag, so switching receiptType just re-resolves the
+  // same active worklist against the newly selected type's rows.
+  const wl = useWorklist({ storageKey: "inventoryReceiptsListWorklists" });
+
+  const load = async (term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
+    setLoading(true);
+    try {
+      const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
+      const r: any = worklist
+        ? await legacyErpApi.worklistFields.resolve(cfg.key, worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : receiptType === 2
+          ? await legacyErpApi.inventoryReceipts.list(term, req)
+          : await legacyErpApi.receipts(receiptType).list(term, undefined, req);
+      const list = paging.take(r);
+      setRows(worklist ? wl.normalizeRows(list) : list);
+    } catch (e: any) {
+      toast.error(e.message || `Failed to load ${cfg.label.toLowerCase()}s`);
+      setRows([]);
+    } finally {
+      setLoading(false);
+      setSearched(!!term);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
+
+  const doSearch = () => load(search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, paging.firstPage()); };
+
+  const onWorklistChange = (id: string) => {
+    const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
+    wl.setActiveWorklistId(id);
+    load(search.trim() || undefined, worklist, paging.firstPage());
+  };
+
+  const handleSaveWorklists = async (next: Worklist[]) => {
+    const { activeWorklist } = await wl.saveWorklists(next);
+    load(search.trim() || undefined, activeWorklist, paging.firstPage());
+  };
+
+  const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  // Unified column model for WorklistTable — see purchase-orders-list/page.tsx's own comment
+  // for the full rationale. Only the Standard columns are ever `sortable: true`.
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    // filterable — shared header-filter implementation (hooks/use-column-filters.ts); the
+    // customize-worklist branch above stays non-filterable (arbitrary/unknown-typed user-picked
+    // fields), same reasoning as purchase-orders-list's own comment.
+    return [
+      {
+        key: "receiptNo", label: "Receipt No", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.receiptNo}</span>,
+        filterable: true, filterValue: (row) => row.receiptNo,
+      },
+      {
+        key: "receiptDate", label: "Receipt Date", sortable: true,
+        render: (row: any) => (row.receiptDate ? new Date(row.receiptDate).toLocaleDateString() : "—"),
+        filterable: true, filterType: "date", filterValue: (row) => row.receiptDate,
+      },
+      {
+        key: "documentNo", label: "Document", sortable: true,
+        render: (row: any) => row.documentNo || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.documentNo,
+      },
+      {
+        key: "plateNumber", label: "Vehicle No",
+        render: (row: any) => row.plateNumber || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.plateNumber,
+      },
+      {
+        key: "driverName", label: "Driver Name",
+        render: (row: any) => row.driverName || <span className="text-muted-foreground">—</span>,
+        filterable: true, filterValue: (row) => row.driverName,
+      },
+    ] as WorklistTableColumn<any>[];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo }), destructive: true, separatorBefore: true },
+  ];
+
+  // Existing type-2 (Purchase Receipt) links stay parameter-free (byte-identical to before);
+  // other types append &receiptType=N so inventory-receipts/page.tsx opens on the matching
+  // generic client.
+  const typeParam = receiptType !== 2 ? `&receiptType=${receiptType}` : "";
+  const view = (id: number) => navigateOrOpenTab(router, `/legacy-erp/inventory-receipts?id=${id}&mode=view${typeParam}`);
+  const update = (id: number) => navigateOrOpenTab(router, `/legacy-erp/inventory-receipts?id=${id}&mode=edit${typeParam}`);
+  const createNew = () => navigateOrOpenTab(router, `/legacy-erp/inventory-receipts?mode=create${typeParam}`);
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await client.delete(deleteTarget.id);
+      toast.success(`${cfg.label} deleted`);
+      setDeleteTarget(null);
+      load(search.trim() || undefined);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
+
+  return (
+    <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
+      <ModuleHeader
+        icon={Truck}
+        title={`${cfg.label}s`}
+        subtitle={`${cfg.label}s`}
+        badges={
+          !loading && (
+            <Badge variant="secondary" className="h-5 text-[11px] font-normal">
+              {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
+            </Badge>
+          )
+        }
+      />
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <InputGroup className="h-9 w-72 shrink-0">
+            <InputGroupAddon>
+              <Search className="h-3.5 w-3.5 text-muted-foreground" />
+            </InputGroupAddon>
+            <InputGroupInput
+              placeholder="Search by Receipt No or Document No..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && doSearch()}
+              className="text-sm"
+            />
+          </InputGroup>
+          <Button variant="outline" size="sm" onClick={refresh} title="Refresh">
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <Button size="sm" onClick={createNew}>
+          <Plus className="h-3.5 w-3.5 mr-2" />Create New
+        </Button>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border shadow-sm">
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="inventoryReceiptsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
+          onRowDoubleClick={(row) => view(row.id)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
+          renderRowActions={(row) => (
+            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Truck />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : `No ${cfg.label.toLowerCase()}s yet`}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? `You can create a new ${cfg.label}.` : `Click "Create New" to add your first ${cfg.label}.`}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
+        <ListPager paging={paging} loading={loading} />
+      </div>
+
+      <WorklistBar
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        onActiveWorklistChange={onWorklistChange}
+        onDesignOpen={() => wl.setDesignOpen(true)}
+      />
+
+      <WorklistDesignModal
+        open={wl.designOpen}
+        onOpenChange={wl.setDesignOpen}
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        activeTableSource="purchase-receipt"
+        gridLabel="the Inventory Receipts List grid"
+        onSave={handleSaveWorklists}
+      />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {cfg.label}</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={confirmDelete}>Yes</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

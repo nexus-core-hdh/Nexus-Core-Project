@@ -63,7 +63,7 @@ export class ContractService {
   // confirmed live to exist exactly in this ?receiptType=N form, so AuditService.resolveScreen()
   // resolves Module/Menu from the real menu tree instead of a hardcoded label.
   screenKeyFor(receiptType: number): string {
-    return `/dashboard/legacy-erp/contracts-list?receiptType=${receiptType}`;
+    return `/legacy-erp/contracts-list?receiptType=${receiptType}`;
   }
 
   // Only fields whose target already has a registered LegacyMasterLookupService key are

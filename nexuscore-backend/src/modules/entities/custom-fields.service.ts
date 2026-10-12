@@ -37,7 +37,7 @@ const CONTROL_TYPES: Record<string, string> = {
 };
 
 const CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_]{1,63}$/;
-const SCREEN_KEY = '/dashboard/administration/user-defined-fields';
+const SCREEN_KEY = '/administration/user-defined-fields';
 
 type Scope = 'global' | 'company' | 'branch';
 interface ActingUser { id: string; companyId: string; branchId?: string | null }

@@ -93,7 +93,7 @@ export class PlmOperationsService {
       await this.audit.recordSafe({
         userId: changedBy,
         companyId,
-        screenKey: '/dashboard/plm/orders',
+        screenKey: '/plm/orders',
         entityType: 'PlmOrder',
         entityId: id,
         action: AUDIT_ACTIONS.UPDATE,

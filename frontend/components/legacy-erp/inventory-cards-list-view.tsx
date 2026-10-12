@@ -1,7 +1,7 @@
 "use client";
 
 import { cloneElement, isValidElement, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -42,12 +42,12 @@ import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 type SortKey = "inventoryCode" | "inventoryName" | "insertedAt" | "insertedBy";
 
-const INVENTORY_CARDS_LIST_PATH = "/dashboard/legacy-erp/inventory-cards-list";
+const INVENTORY_CARDS_LIST_PATH = "/legacy-erp/inventory-cards-list";
 
 const SOURCE_ROUTES: Record<string, string> = {
-  fabric: "/dashboard/legacy-erp/fabric-cards",
-  yarn: "/dashboard/legacy-erp/yarn-cards",
-  trim: "/dashboard/legacy-erp/trim-inventory-cards",
+  fabric: "/legacy-erp/fabric-cards",
+  yarn: "/legacy-erp/yarn-cards",
+  trim: "/legacy-erp/trim-inventory-cards",
 };
 
 export interface InventoryCardsListViewProps {
@@ -114,7 +114,7 @@ export function InventoryCardsListView({ mode, sourceTypeFilter, onSelect, onClo
 
   const viewStatement = (row: any) => navigateOrOpenTab(
     router,
-    `/dashboard/legacy-erp/item-statement?id=${row.id}&source=${encodeURIComponent(INVENTORY_CARDS_LIST_PATH)}&sourceLabel=${encodeURIComponent("Inventory Card List")}`,
+    `/legacy-erp/item-statement?id=${row.id}&source=${encodeURIComponent(INVENTORY_CARDS_LIST_PATH)}&sourceLabel=${encodeURIComponent("Inventory Card List")}`,
   );
 
   // Lookup mode: hand the picked row to the host (which returns it to the caller and closes).
@@ -135,7 +135,7 @@ export function InventoryCardsListView({ mode, sourceTypeFilter, onSelect, onClo
     }
   };
 
-  const addNew = () => navigateOrOpenTab(router, "/dashboard/legacy-erp/inventory-cards-new");
+  const addNew = () => navigateOrOpenTab(router, "/legacy-erp/inventory-cards-new");
 
   // Sorting and the optional sourceType narrowing are both applied server-side, before paging.
   const sortedRows = rows;

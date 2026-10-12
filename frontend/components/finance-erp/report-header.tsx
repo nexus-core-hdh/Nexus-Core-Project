@@ -23,7 +23,7 @@ export function ReportHeader({
     <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">{company}</div>
-        <h1 className="mt-0.5 text-xl font-bold tracking-tight">{title}</h1>
+        <h1 className="mt-0.5 text-lg font-bold tracking-tight">{title}</h1>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           {branch && <span>Branch: <span className="font-medium text-foreground">{branch}</span></span>}
           {period && <span>Period: <span className="font-medium text-foreground">{period}</span></span>}

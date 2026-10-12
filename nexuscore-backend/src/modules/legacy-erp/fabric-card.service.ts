@@ -309,7 +309,7 @@ export class FabricCardService {
         if (currentUserId && companyId) {
           const enriched = await enrichDisplayRefs(created, this.displayResolvers());
           this.audit.recordSafe({
-            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/fabric-cards-list',
+            userId: currentUserId, companyId, screenKey: '/legacy-erp/fabric-cards-list',
             entityType: 'FabricCard', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
             documentNo: created.inventoryCode, after: { 'Fabric Card (IM_Item)': enriched },
           });
@@ -374,7 +374,7 @@ export class FabricCardService {
       const resolvers = this.displayResolvers();
       const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/fabric-cards-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/fabric-cards-list',
         entityType: 'FabricCard', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
         documentNo: updated.inventoryCode,
         before: { 'Fabric Card (IM_Item)': enrichedBefore }, after: { 'Fabric Card (IM_Item)': enrichedAfter },
@@ -394,7 +394,7 @@ export class FabricCardService {
     if (currentUserId && companyId) {
       const enriched = await enrichDisplayRefs(before, this.displayResolvers());
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/fabric-cards-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/fabric-cards-list',
         entityType: 'FabricCard', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
         documentNo: before.inventoryCode, before: { 'Fabric Card (IM_Item)': enriched },
       });

@@ -153,7 +153,7 @@ export class TrimInventoryCardService {
         if (currentUserId && companyId) {
           const enriched = await enrichDisplayRefs(created, this.displayResolvers());
           this.audit.recordSafe({
-            userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/trim-inventory-cards-list',
+            userId: currentUserId, companyId, screenKey: '/legacy-erp/trim-inventory-cards-list',
             entityType: 'TrimInventoryCard', entityId: String(created.id), action: AUDIT_ACTIONS.CREATE,
             documentNo: created.inventoryCode, after: { 'Trim Card (IM_Item)': enriched },
           });
@@ -187,7 +187,7 @@ export class TrimInventoryCardService {
       const resolvers = this.displayResolvers();
       const [enrichedBefore, enrichedAfter] = await Promise.all([enrichDisplayRefs(current, resolvers), enrichDisplayRefs(updated, resolvers)]);
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/trim-inventory-cards-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/trim-inventory-cards-list',
         entityType: 'TrimInventoryCard', entityId: String(id), action: AUDIT_ACTIONS.UPDATE,
         documentNo: updated.inventoryCode,
         before: { 'Trim Card (IM_Item)': enrichedBefore }, after: { 'Trim Card (IM_Item)': enrichedAfter },
@@ -207,7 +207,7 @@ export class TrimInventoryCardService {
     if (currentUserId && companyId) {
       const enriched = await enrichDisplayRefs(before, this.displayResolvers());
       this.audit.recordSafe({
-        userId: currentUserId, companyId, screenKey: '/dashboard/legacy-erp/trim-inventory-cards-list',
+        userId: currentUserId, companyId, screenKey: '/legacy-erp/trim-inventory-cards-list',
         entityType: 'TrimInventoryCard', entityId: String(id), action: AUDIT_ACTIONS.DELETE,
         documentNo: before.inventoryCode, before: { 'Trim Card (IM_Item)': enriched },
       });

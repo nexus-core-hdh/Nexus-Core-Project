@@ -11,7 +11,7 @@ interface PermissionCheckResult {
 
 /**
  * Hook to check if the current user has permission to access a resource
- * @param resourcePath - The resource path to check (e.g., "/dashboard/crm/leads" or "crm.leads")
+ * @param resourcePath - The resource path to check (e.g., "/crm/leads" or "crm.leads")
  * @returns Object with hasPermission boolean and loading state
  */
 export function usePermission(resourcePath: string | null) {
@@ -46,8 +46,8 @@ export function usePermission(resourcePath: string | null) {
         }
 
         // Normalize the resource path
-        const normalizedPath = resourcePath.startsWith('/dashboard/')
-          ? resourcePath.replace('/dashboard/', '').replace(/\//g, '.')
+        const normalizedPath = resourcePath.startsWith('/')
+          ? resourcePath.replace('/', '').replace(/\//g, '.')
           : resourcePath.replace(/\//g, '.');
 
         const result: PermissionCheckResult = await permissionSettingsApi.checkResourcePermission(normalizedPath);
@@ -59,8 +59,8 @@ export function usePermission(resourcePath: string | null) {
           message: err.message,
           status: err.status,
           resourcePath,
-          normalizedPath: resourcePath.startsWith('/dashboard/')
-            ? resourcePath.replace('/dashboard/', '').replace(/\//g, '.')
+          normalizedPath: resourcePath.startsWith('/')
+            ? resourcePath.replace('/', '').replace(/\//g, '.')
             : resourcePath.replace(/\//g, '.')
         });
         setError(err.message || 'Failed to check permission');
@@ -113,8 +113,8 @@ export function usePermissions(resourcePaths: string[]) {
         // Check each permission
         const permissionPromises = resourcePaths.map(async (path) => {
           try {
-            const normalizedPath = path.startsWith('/dashboard/')
-              ? path.replace('/dashboard/', '').replace(/\//g, '.')
+            const normalizedPath = path.startsWith('/')
+              ? path.replace('/', '').replace(/\//g, '.')
               : path.replace(/\//g, '.');
             
             const result: PermissionCheckResult = await permissionSettingsApi.checkResourcePermission(normalizedPath);
@@ -179,8 +179,8 @@ export function usePermissionCheck() {
       }
 
       // Normalize the resource path
-      const normalizedPath = resourcePath.startsWith('/dashboard/')
-        ? resourcePath.replace('/dashboard/', '').replace(/\//g, '.')
+      const normalizedPath = resourcePath.startsWith('/')
+        ? resourcePath.replace('/', '').replace(/\//g, '.')
         : resourcePath.replace(/\//g, '.');
 
       const result: PermissionCheckResult = await permissionSettingsApi.checkResourcePermission(normalizedPath);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,8 @@ import {
   ChevronsUpDown, ListTree, SearchX, XCircle, MousePointerClick,
 } from "lucide-react";
 
+import { resolveTabKey } from "@/lib/workspace/registry";
+import { replaceWorkspaceUrl } from "@/lib/workspace/navigate";
 export interface MasterLookupRow {
   id: number;
   code: string;
@@ -226,11 +228,11 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
     // Prefer this instance's own real tab key (from the Workspace context every hosted
     // screen gets) over a hardcoded path — falls back to the static route path only when
     // rendered outside the Workspace (a direct link/bookmark, no tab to close).
-    closeTab(tabCtx?.tabKey ?? "/dashboard/legacy-erp/master-lookup");
+    closeTab(tabCtx?.tabKey ?? "/legacy-erp/master-lookup");
     if (returnTab) {
       const [returnPath] = returnTab.split("?");
-      activateTab(returnPath);
-      router.replace(returnTab, { scroll: false });
+      activateTab(resolveTabKey(returnPath, returnTab));
+      replaceWorkspaceUrl(router, returnTab);
     } else {
       router.back();
     }
@@ -259,7 +261,7 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
             <ListTree className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight">{label}</h1>
+            <h1 className="text-lg font-semibold leading-tight tracking-tight">{label}</h1>
             <div className="mt-0.5 flex items-center gap-2">
               <p className="text-xs text-muted-foreground">
                 {mode === "lookup" ? "Double-click or press Enter to select a record" : "Master data"}

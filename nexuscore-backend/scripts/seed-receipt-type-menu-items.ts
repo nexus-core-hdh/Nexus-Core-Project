@@ -26,7 +26,7 @@ import { RECEIPT_TYPES } from '../src/modules/legacy-erp/receipt-types.config';
 
 const prisma = new PrismaClient();
 
-const hrefFor = (receiptType: number) => `/dashboard/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
+const hrefFor = (receiptType: number) => `/legacy-erp/inventory-receipts-list?receiptType=${receiptType}`;
 
 // ReceiptType values that had a MenuItem row under the old placeholder mapping but do not
 // appear anywhere in the new 19-value mapping (checked against RECEIPT_TYPES + the untouched

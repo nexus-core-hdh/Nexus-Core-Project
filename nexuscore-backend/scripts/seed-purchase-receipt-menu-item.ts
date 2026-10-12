@@ -15,7 +15,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/inventory-receipts-list';
+  const href = '/legacy-erp/inventory-receipts-list';
   const found = await prisma.menuItem.findFirst({ where: { href: { in: [href, `${href}?receiptType=2`] } } });
   if (found) {
     console.log(`- skip (exists): ${found.title} -> ${found.href}`);

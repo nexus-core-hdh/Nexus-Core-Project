@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
+import { uniqueCompanySlug } from '../src/common/company-slug';
 
 const prisma = new PrismaClient();
 
@@ -26,12 +27,37 @@ async function main() {
   console.log('🌱 Seeding NexusCore database...');
 
   // ── Company ───────────────────────────────────────────────────────────────────
+  // The platform owner (Nexus Core): it manages the other companies and their billing, so it is
+  // never on a trial or subscription limit itself — Enterprise, Active, no trial/subscription end
+  // and no billing cycle. Those fields are enforced on every run (not only on create), so the
+  // owner can never drift back to the Free/trial defaults; its name is left as-is once created.
+  const platformOwner = {
+    isPlatformOwner: true,
+    plan: 'Enterprise' as const,
+    subscriptionStatus: 'Active' as const,
+    trialEndDate: null,
+    subscriptionEndDate: null,
+    billingCycle: null,
+  };
   const company = await prisma.company.upsert({
     where: { id: 'seed-company-id-001' },
-    create: { id: 'seed-company-id-001', name: process.env.SEED_COMPANY_NAME || 'NexusCore Demo' },
-    update: {},
+    create: {
+      id: 'seed-company-id-001',
+      name: process.env.SEED_COMPANY_NAME || 'Nexus Core',
+      subscriptionStartDate: new Date(),
+      ...platformOwner,
+    },
+    update: platformOwner,
   });
-  console.log(`✓ Company: ${company.name}`);
+  // Every company has a URL slug (`/nexus-core/default`); set once, kept stable afterwards.
+  if (!company.slug) {
+    company.slug = await uniqueCompanySlug(
+      process.env.SEED_COMPANY_SLUG || company.name,
+      async (slug) => !!(await prisma.company.findFirst({ where: { slug, id: { not: company.id } }, select: { id: true } })),
+    );
+    await prisma.company.update({ where: { id: company.id }, data: { slug: company.slug } });
+  }
+  console.log(`✓ Company: ${company.name} (/${company.slug})`);
 
   // ── Branch ────────────────────────────────────────────────────────────────────
   const branch = await prisma.branch.upsert({
@@ -529,7 +555,7 @@ async function main() {
   // 20260922000000_audit_log_lifecycle_fields inserts its own "Log Tracking" item, so on a fresh
   // database the count is never 0 and the whole base menu used to be skipped.
   const existingMenus = await prisma.menuItem.count();
-  const baseMenuSeeded = await prisma.menuItem.findFirst({ where: { href: '/dashboard/default', parentId: null }, select: { id: true } });
+  const baseMenuSeeded = await prisma.menuItem.findFirst({ where: { href: '/default', parentId: null }, select: { id: true } });
   if (!baseMenuSeeded) {
     type MenuNode = { title: string; href: string; icon?: string; isComing?: boolean; isNew?: boolean; isDataBadge?: string; newTab?: boolean; items?: MenuNode[] };
     type MenuGroup = { title: string; items: MenuNode[] };
@@ -538,98 +564,60 @@ async function main() {
       {
         title: 'Dashboards',
         items: [
-          { title: 'Default', href: '/dashboard/default', icon: 'ChartPie' },
-          { title: 'Collaboration', href: '#', icon: 'Users', items: [
-            { title: 'Messenger', href: '/dashboard/apps/chat', icon: 'MessageSquare' },
-            { title: 'Feed', href: '/dashboard/collaboration/feed', icon: 'FolderDot' },
-            { title: 'Collabs', href: '/dashboard/collaboration/collabs', icon: 'ClipboardMinus' },
-            { title: 'Online Documents', href: '/dashboard/collaboration/documents', icon: 'Component' },
-            { title: 'File Manager', href: '/dashboard/file-manager', icon: 'Folder', items: [
-              { title: 'Dashboard', href: '/dashboard/file-manager', icon: 'Folder' },
-              { title: 'File Manager', href: '/dashboard/apps/file-manager', icon: 'ArchiveRestore' },
-            ]},
-            { title: 'Work Groups', href: '/dashboard/collaboration/work-groups', icon: 'Group' },
-            { title: 'Boards', href: '/dashboard/collaboration/boards', icon: 'LayoutDashboard' },
+          { title: 'Default', href: '/default', icon: 'ChartPie' },
+        ],
+      },
+      {
+        title: 'Collaboration',
+        items: [
+          { title: 'Messenger', href: '/apps/chat', icon: 'MessageSquare' },
+          { title: 'Feed', href: '/collaboration/feed', icon: 'FolderDot' },
+          { title: 'Collabs', href: '/collaboration/collabs', icon: 'ClipboardMinus' },
+          { title: 'Online Documents', href: '/collaboration/documents', icon: 'Component' },
+          { title: 'File Manager', href: '/file-manager', icon: 'Folder', items: [
+            { title: 'Dashboard', href: '/file-manager', icon: 'Folder' },
+            { title: 'File Manager', href: '/apps/file-manager', icon: 'ArchiveRestore' },
           ]},
-          { title: 'E-commerce', href: '#', icon: 'ShoppingBag', items: [
-            { title: 'Dashboard', href: '/dashboard/ecommerce', icon: 'ChartPie' },
-            { title: 'Product List', href: '/dashboard/pages/products', icon: 'Package' },
-            { title: 'Add Product', href: '/dashboard/pages/products/create', icon: 'Plus' },
-            { title: 'Customers', href: '/dashboard/crm/customers', icon: 'Users' },
-            { title: 'Order List', href: '/dashboard/pages/orders', icon: 'ShoppingCart' },
-            { title: 'Order Detail', href: '/dashboard/pages/orders/detail', icon: 'FileText' },
-            { title: 'Returns', href: '/dashboard/pages/returns', icon: 'RotateCcw' },
-          ]},
-          { title: 'Sales', href: '/dashboard/sales', icon: 'BadgeDollarSign' },
-          { title: 'CRM', href: '#', icon: 'ChartBar', items: [
-            { title: 'Dashboard', href: '/dashboard/crm', icon: 'ChartPie' },
-            { title: 'Leads', href: '/dashboard/crm/leads', icon: 'User' },
-            { title: 'Contacts', href: '/dashboard/crm/contacts', icon: 'Users' },
-            { title: 'Deals', href: '/dashboard/crm/deals', icon: 'BadgeDollarSign' },
-            ]},
-          { title: 'Project Management', href: '/dashboard/project-management', icon: 'FolderDot', items: [
-            { title: 'Dashboard', href: '/dashboard/project-management', icon: 'LayoutDashboard' },
-            { title: 'Project List', href: '/dashboard/project-list', icon: 'List' },
-            { title: 'Tasks', href: '/dashboard/apps/tasks', icon: 'ClipboardCheck' },
-          ]},
-          { title: 'Payment Dashboard', href: '/dashboard/payment', icon: 'CreditCard', items: [
-            { title: 'Dashboard', href: '/dashboard/payment', icon: 'LayoutDashboard' },
-            { title: 'Transactions', href: '/dashboard/payment/transactions', icon: 'Wallet' },
-            { title: 'Customer Payments', href: '/dashboard/payment/customer-payments', icon: 'User' },
-            { title: 'Supplier Payments', href: '/dashboard/payment/supplier-payments', icon: 'Users' },
-          ]},
+          { title: 'Work Groups', href: '/collaboration/work-groups', icon: 'Group' },
+          { title: 'Boards', href: '/collaboration/boards', icon: 'LayoutDashboard' },
         ],
       },
       {
         title: 'Apps',
         items: [
-          { title: 'Users', href: '/dashboard/pages/users', icon: 'Users' },
-          { title: 'Companies', href: '/dashboard/pages/companies', icon: 'Building2' },
-          { title: 'Automation', href: '/dashboard/pages/business-processes', icon: 'Workflow' },
-          { title: 'Notes', href: '/dashboard/apps/notes', icon: 'StickyNote', isDataBadge: '8' },
-          { title: 'Mail', href: '/dashboard/apps/mail', icon: 'Mail' },
-          { title: 'Todo List App', href: '/dashboard/apps/todo-list-app', icon: 'SquareCheck' },
-          { title: 'Calendar', href: '/dashboard/apps/calendar', icon: 'Calendar' },
-          { title: 'Api Keys', href: '/dashboard/apps/api-keys', icon: 'Key' },
-          { title: 'POS App', href: '/dashboard/apps/pos-system', icon: 'Cookie' },
-          { title: 'Form Designer', href: '/dashboard/pages/form-builder', icon: 'Component' },
-          { title: 'Settings', href: '/dashboard/crm/settings', icon: 'Settings' },
+          { title: 'Users', href: '/pages/users', icon: 'Users' },
+          { title: 'Automation', href: '/pages/business-processes', icon: 'Workflow' },
+          { title: 'Notes', href: '/apps/notes', icon: 'StickyNote', isDataBadge: '8' },
+          { title: 'Mail', href: '/apps/mail', icon: 'Mail' },
+          { title: 'Todo List App', href: '/apps/todo-list-app', icon: 'SquareCheck' },
+          { title: 'Calendar', href: '/apps/calendar', icon: 'Calendar' },
+          { title: 'Form Designer', href: '/pages/form-builder', icon: 'Component' },
         ],
       },
       {
         title: 'AI Apps',
         items: [
-          { title: 'AI Chat', href: '/dashboard/apps/ai-chat', icon: 'Brain' },
-          { title: 'AI Chat V2', href: '/dashboard/apps/ai-chat-v2', icon: 'BrainCircuit', isNew: true },
-          { title: 'Image Generator', href: '/dashboard/apps/ai-image-generator', icon: 'Images' },
-          { title: 'Text to Speech', href: '/dashboard/apps/text-to-speech', icon: 'Speech', isComing: true },
+          { title: 'AI Chat', href: '/apps/ai-chat', icon: 'Brain' },
+          { title: 'AI Chat V2', href: '/apps/ai-chat-v2', icon: 'BrainCircuit', isNew: true },
+          { title: 'Image Generator', href: '/apps/ai-image-generator', icon: 'Images' },
+          { title: 'Text to Speech', href: '/apps/text-to-speech', icon: 'Speech', isComing: true },
         ],
       },
       {
         title: 'Pages',
         items: [
-          { title: 'Profile V2', href: '/dashboard/pages/user-profile', icon: 'User' },
+          { title: 'Profile V2', href: '/pages/user-profile', icon: 'User' },
           { title: 'Authentication', href: '/', icon: 'Fingerprint', items: [
-            { title: 'Login v1', href: '/dashboard/login/v1' },
-            { title: 'Login v2', href: '/dashboard/login/v2' },
-            { title: 'Register v1', href: '/dashboard/register/v1' },
-            { title: 'Register v2', href: '/dashboard/register/v2' },
-            { title: 'Forgot Password', href: '/dashboard/forgot-password' },
+            { title: 'Login v1', href: '/login/v1' },
+            { title: 'Login v2', href: '/login/v2' },
+            { title: 'Register v1', href: '/register/v1' },
+            { title: 'Register v2', href: '/register/v2' },
+            { title: 'Forgot Password', href: '/forgot-password' },
           ]},
           { title: 'Error Pages', href: '/', icon: 'Fingerprint', items: [
-            { title: '404', href: '/dashboard/pages/error/404' },
-            { title: '500', href: '/dashboard/pages/error/500' },
-            { title: '403', href: '/dashboard/pages/error/403' },
-          ]},
-        ],
-      },
-      {
-        title: 'Others',
-        items: [
-          { title: 'Widgets', href: '#', icon: 'Puzzle', items: [
-            { title: 'Fitness', href: '/dashboard/widgets/fitness' },
-            { title: 'E-commerce', href: '/dashboard/widgets/ecommerce' },
-            { title: 'Analytics', href: '/dashboard/widgets/analytics' },
+            { title: '404', href: '/error/404' },
+            { title: '500', href: '/error/500' },
+            { title: '403', href: '/pages/error/403' },
           ]},
         ],
       },
@@ -637,171 +625,171 @@ async function main() {
         title: 'PLM',
         items: [
           { title: 'Definitions', href: '#', icon: 'Scissors', items: [
-            { title: 'Style Cards', href: '/dashboard/plm/style-cards' },
-            { title: 'Sample Cards', href: '/dashboard/plm/sample-cards-list' },
-            { title: 'Mood Boards', href: '/dashboard/plm/mood-boards' },
-            { title: 'Swatch Cards', href: '/dashboard/plm/swatch-cards' },
-            { title: 'Product Cards', href: '/dashboard/plm/product-cards' },
-            { title: 'Costing Sheets', href: '/dashboard/plm/costing-sheets' },
-            { title: 'Cost Detail Entry', href: '/dashboard/plm/costing-sheets/cost-detail-entry' },
-            { title: 'Costing Profit Breakdown', href: '/dashboard/plm/costing-sheets/profit-breakdown' },
-            { title: 'PLM Templates', href: '/dashboard/plm/templates' },
+            { title: 'Style Cards', href: '/plm/style-cards' },
+            { title: 'Sample Cards', href: '/plm/sample-cards-list' },
+            { title: 'Mood Boards', href: '/plm/mood-boards' },
+            { title: 'Swatch Cards', href: '/plm/swatch-cards' },
+            { title: 'Product Cards', href: '/plm/product-cards' },
+            { title: 'Costing Sheets', href: '/plm/costing-sheets' },
+            { title: 'Cost Detail Entry', href: '/plm/costing-sheets/cost-detail-entry' },
+            { title: 'Costing Profit Breakdown', href: '/plm/costing-sheets/profit-breakdown' },
+            { title: 'PLM Templates', href: '/plm/templates' },
           ]},
           { title: 'General Definitions', href: '#', icon: 'Layers', items: [
-            { title: 'Style Sample Types', href: '/dashboard/plm/general-definitions/style-sample-types' },
-            { title: 'Design Detail Types', href: '/dashboard/plm/general-definitions/design-detail-types' },
-            { title: 'Fabric Type Cards', href: '/dashboard/plm/general-definitions/fabric-type-cards' },
-            { title: 'Measurement Definitions', href: '/dashboard/plm/general-definitions/measurement-definitions' },
-            { title: 'Measurement Charts', href: '/dashboard/plm/general-definitions/measurement-charts' },
-            { title: 'Department Cards', href: '/dashboard/plm/general-definitions/department-cards' },
-            { title: 'Process Cards', href: '/dashboard/plm/general-definitions/process-cards' },
-            { title: 'Employee Cards', href: '/dashboard/plm/general-definitions/employee-cards' },
-            { title: 'Resource Cards', href: '/dashboard/plm/general-definitions/resource-cards' },
-            { title: 'Study Template Cards', href: '/dashboard/plm/general-definitions/study-templates' },
-            { title: 'Activity Type Cards', href: '/dashboard/plm/general-definitions/activity-type-cards' },
-            { title: 'Color Cards', href: '/dashboard/plm/general-definitions/color-cards' },
-            { title: 'Company Cards', href: '/dashboard/plm/general-definitions/company-cards' },
-            { title: 'Sample Task Types', href: '/dashboard/plm/general-definitions/sample-task-types' },
-            { title: 'Route Cards', href: '/dashboard/plm/general-definitions/route-cards' },
+            { title: 'Style Sample Types', href: '/plm/general-definitions/style-sample-types' },
+            { title: 'Design Detail Types', href: '/plm/general-definitions/design-detail-types' },
+            { title: 'Fabric Type Cards', href: '/plm/general-definitions/fabric-type-cards' },
+            { title: 'Measurement Definitions', href: '/plm/general-definitions/measurement-definitions' },
+            { title: 'Measurement Charts', href: '/plm/general-definitions/measurement-charts' },
+            { title: 'Department Cards', href: '/plm/general-definitions/department-cards' },
+            { title: 'Process Cards', href: '/plm/general-definitions/process-cards' },
+            { title: 'Employee Cards', href: '/plm/general-definitions/employee-cards' },
+            { title: 'Resource Cards', href: '/plm/general-definitions/resource-cards' },
+            { title: 'Study Template Cards', href: '/plm/general-definitions/study-templates' },
+            { title: 'Activity Type Cards', href: '/plm/general-definitions/activity-type-cards' },
+            { title: 'Color Cards', href: '/plm/general-definitions/color-cards' },
+            { title: 'Company Cards', href: '/plm/general-definitions/company-cards' },
+            { title: 'Sample Task Types', href: '/plm/general-definitions/sample-task-types' },
+            { title: 'Route Cards', href: '/plm/general-definitions/route-cards' },
           ]},
           { title: 'Utilities', href: '#', icon: 'Workflow', items: [
-            { title: 'PLM Orders', href: '/dashboard/plm/orders' },
-            { title: 'PLM Tasks', href: '/dashboard/plm/tasks' },
-            { title: 'Critical Path Chart', href: '/dashboard/plm/critical-path' },
+            { title: 'PLM Orders', href: '/plm/orders' },
+            { title: 'PLM Tasks', href: '/plm/tasks' },
+            { title: 'Critical Path Chart', href: '/plm/critical-path' },
           ]},
           { title: 'Reports', href: '#', icon: 'BarChart3', items: [
-            { title: 'Delayed Task List', href: '/dashboard/plm/reports/delayed-tasks' },
-            { title: 'Daily Task List', href: '/dashboard/plm/reports/daily-tasks' },
-            { title: 'Cancelled Task List', href: '/dashboard/plm/reports/cancelled-tasks' },
-            { title: 'PLM Sample Cost', href: '/dashboard/plm/reports/sample-cost' },
-            { title: 'PLM Sample History', href: '/dashboard/plm/reports/sample-history' },
-            { title: 'PLM Analyse Cubes', href: '/dashboard/plm/reports/analyse-cubes' },
+            { title: 'Delayed Task List', href: '/plm/reports/delayed-tasks' },
+            { title: 'Daily Task List', href: '/plm/reports/daily-tasks' },
+            { title: 'Cancelled Task List', href: '/plm/reports/cancelled-tasks' },
+            { title: 'PLM Sample Cost', href: '/plm/reports/sample-cost' },
+            { title: 'PLM Sample History', href: '/plm/reports/sample-history' },
+            { title: 'PLM Analyse Cubes', href: '/plm/reports/analyse-cubes' },
           ]},
-          { title: 'Document Management', href: '/dashboard/plm/documents', icon: 'FolderDot' },
-          { title: 'Manufacture Sent Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=140', icon: 'Truck' },
-          { title: 'Service Purchase Return Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=139', icon: 'Truck' },
+          { title: 'Document Management', href: '/plm/documents', icon: 'FolderDot' },
+          { title: 'Manufacture Sent Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=140', icon: 'Truck' },
+          { title: 'Service Purchase Return Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=139', icon: 'Truck' },
         ],
       },
       {
         title: 'BPM',
         items: [
-          { title: 'Task Queue', href: '/dashboard/bpm/task-queue', icon: 'ClipboardCheck' },
-          { title: 'Request Types', href: '/dashboard/bpm/request-types', icon: 'Component' },
+          { title: 'Task Queue', href: '/bpm/task-queue', icon: 'ClipboardCheck' },
+          { title: 'Request Types', href: '/bpm/request-types', icon: 'Component' },
         ],
       },
       {
         title: 'Docket Management',
         items: [
           { title: 'Dockets', href: '#', icon: 'FolderOpen', items: [
-            { title: 'Style Dockets', href: '/dashboard/dockets/style-dockets', icon: 'Scissors' },
-            { title: 'Sample Dockets', href: '/dashboard/dockets/sample-dockets', icon: 'Layers' },
-            { title: 'Product Dockets', href: '/dashboard/dockets/product-dockets', icon: 'Package' },
-            { title: 'Order Dockets', href: '/dashboard/dockets/order-dockets', icon: 'ClipboardList' },
+            { title: 'Style Dockets', href: '/dockets/style-dockets', icon: 'Scissors' },
+            { title: 'Sample Dockets', href: '/dockets/sample-dockets', icon: 'Layers' },
+            { title: 'Product Dockets', href: '/dockets/product-dockets', icon: 'Package' },
+            { title: 'Order Dockets', href: '/dockets/order-dockets', icon: 'ClipboardList' },
           ]},
           { title: 'Document Control', href: '#', icon: 'FileText', items: [
-            { title: 'Approval Queue', href: '/dashboard/dockets/document-control/approval-queue', icon: 'SquareCheck' },
-            { title: 'Document Register', href: '/dashboard/dockets/document-control/register', icon: 'List' },
+            { title: 'Approval Queue', href: '/dockets/document-control/approval-queue', icon: 'SquareCheck' },
+            { title: 'Document Register', href: '/dockets/document-control/register', icon: 'List' },
           ]},
           { title: 'Docket Setup', href: '#', icon: 'Settings', items: [
-            { title: 'Document Types', href: '/dashboard/dockets/setup/document-types', icon: 'Component' },
-            { title: 'Docket Templates', href: '/dashboard/dockets/setup/docket-templates', icon: 'LayoutDashboard' },
-            { title: 'Approval Workflows', href: '/dashboard/dockets/setup/approval-workflows', icon: 'GitBranch' },
+            { title: 'Document Types', href: '/dockets/setup/document-types', icon: 'Component' },
+            { title: 'Docket Templates', href: '/dockets/setup/docket-templates', icon: 'LayoutDashboard' },
+            { title: 'Approval Workflows', href: '/dockets/setup/approval-workflows', icon: 'GitBranch' },
           ]},
           { title: 'Sharing', href: '#', icon: 'Share2', items: [
-            { title: 'Shared Links', href: '/dashboard/dockets/sharing/share-links', icon: 'FolderDot' },
-            { title: 'External Reviews', href: '/dashboard/dockets/sharing/external-review', icon: 'Mail' },
+            { title: 'Shared Links', href: '/dockets/sharing/share-links', icon: 'FolderDot' },
+            { title: 'External Reviews', href: '/dockets/sharing/external-review', icon: 'Mail' },
           ]},
           { title: 'Reports', href: '#', icon: 'BarChart3', items: [
-            { title: 'Completeness', href: '/dashboard/dockets/reports/completeness', icon: 'ChartPie' },
-            { title: 'Missing Documents', href: '/dashboard/dockets/reports/missing-documents', icon: 'AlertCircle' },
-            { title: 'Document Expiry', href: '/dashboard/dockets/reports/document-expiry', icon: 'Calendar' },
+            { title: 'Completeness', href: '/dockets/reports/completeness', icon: 'ChartPie' },
+            { title: 'Missing Documents', href: '/dockets/reports/missing-documents', icon: 'AlertCircle' },
+            { title: 'Document Expiry', href: '/dockets/reports/document-expiry', icon: 'Calendar' },
           ]},
         ],
       },
       {
         title: 'Legacy ERP',
         items: [
-          { title: 'Warehouses', href: '/dashboard/legacy-erp/warehouses', icon: 'Warehouse' },
-          { title: 'Current Account', href: '/dashboard/legacy-erp/current-accounts-list', icon: 'UserSquare2' },
-          { title: 'Customer Define Trims', href: '/dashboard/legacy-erp/trim-cards', icon: 'Scissors' },
-          { title: 'Yarn Cards', href: '/dashboard/legacy-erp/yarn-cards-list', icon: 'Layers' },
-          { title: 'Fabric Cards', href: '/dashboard/legacy-erp/fabric-cards-list', icon: 'Shirt' },
-          { title: 'Fab Type Master', href: '/dashboard/legacy-erp/master-lookup?key=fabric', icon: 'ListTree' },
-          { title: 'Group Code Master', href: '/dashboard/legacy-erp/master-lookup?key=group', icon: 'ListTree' },
-          { title: 'Finish GSM Master', href: '/dashboard/legacy-erp/master-lookup?key=finish-gsm', icon: 'ListTree' },
-          { title: 'Dye Type Master', href: '/dashboard/legacy-erp/master-lookup?key=dye-type', icon: 'ListTree' },
-          { title: 'Composition Master', href: '/dashboard/legacy-erp/master-lookup?key=composition', icon: 'ListTree' },
+          { title: 'Warehouses', href: '/legacy-erp/warehouses', icon: 'Warehouse' },
+          { title: 'Current Account', href: '/legacy-erp/current-accounts-list', icon: 'UserSquare2' },
+          { title: 'Customer Define Trims', href: '/legacy-erp/trim-cards', icon: 'Scissors' },
+          { title: 'Yarn Cards', href: '/legacy-erp/yarn-cards-list', icon: 'Layers' },
+          { title: 'Fabric Cards', href: '/legacy-erp/fabric-cards-list', icon: 'Shirt' },
+          { title: 'Fab Type Master', href: '/legacy-erp/master-lookup?key=fabric', icon: 'ListTree' },
+          { title: 'Group Code Master', href: '/legacy-erp/master-lookup?key=group', icon: 'ListTree' },
+          { title: 'Finish GSM Master', href: '/legacy-erp/master-lookup?key=finish-gsm', icon: 'ListTree' },
+          { title: 'Dye Type Master', href: '/legacy-erp/master-lookup?key=dye-type', icon: 'ListTree' },
+          { title: 'Composition Master', href: '/legacy-erp/master-lookup?key=composition', icon: 'ListTree' },
           // Subcontract Type / Subcontract Receipt — two deliberately separate masters (own
           // table, own nav entry each) on the same generic Master Lookup screen every other
           // *Master entry above already uses. See legacy-master-lookup.service.ts's TABLES
           // config comment for why these were confirmed to need new tables (neither concept
           // existed anywhere in the schema before).
-          { title: 'Subcontract Type Master', href: '/dashboard/legacy-erp/master-lookup?key=subcontract-type', icon: 'ListTree' },
-          { title: 'Subcontract Receipt Master', href: '/dashboard/legacy-erp/master-lookup?key=subcontract-receipt', icon: 'ListTree' },
-          { title: 'Inventory Card List', href: '/dashboard/legacy-erp/inventory-cards-list', icon: 'Boxes', isNew: true },
-          { title: '1 - Purchase Order', href: '/dashboard/legacy-erp/purchase-orders-list', icon: 'ShoppingCart', isNew: true },
-          { title: '3 - Subcontract Order', href: '/dashboard/legacy-erp/subcontract-orders-list', icon: 'Factory', isNew: true },
+          { title: 'Subcontract Type Master', href: '/legacy-erp/master-lookup?key=subcontract-type', icon: 'ListTree' },
+          { title: 'Subcontract Receipt Master', href: '/legacy-erp/master-lookup?key=subcontract-receipt', icon: 'ListTree' },
+          { title: 'Inventory Card List', href: '/legacy-erp/inventory-cards-list', icon: 'Boxes', isNew: true },
+          { title: '1 - Purchase Order', href: '/legacy-erp/purchase-orders-list', icon: 'ShoppingCart', isNew: true },
+          { title: '3 - Subcontract Order', href: '/legacy-erp/subcontract-orders-list', icon: 'Factory', isNew: true },
           // Work Order — MA_WorkOrder/MA_WorkOrderItem/MA_WorkOrderItemVariant, an already-
           // existing, already-migrated legacy manufacturing table family (161/100/21 real
           // columns, 0 rows — first writer). Not a new table.
-          { title: 'Work Order', href: '/dashboard/legacy-erp/work-orders-list', icon: 'ClipboardList', isNew: true },
+          { title: 'Work Order', href: '/legacy-erp/work-orders-list', icon: 'ClipboardList', isNew: true },
           // Fabric/Trim/Yarn Requirements — one screen/route (fabric-yarn-requirements.service.ts),
           // three leaves distinguished by ?type=, same "one screen, N leaves via query param"
           // convention as the Inventory Receipts submenu below. Each leaf's own explicit tab
           // title ("Fabric Requirements"/"Trim Requirements"/"Yarn Requirements") lets all three
           // be open as separate workspace tabs at once — see registry.tsx's MULTI_KEY_ROUTES.
           { title: 'Fabric/Trim/Yarn Requirements', href: '#', icon: 'ClipboardList', isNew: true, items: [
-            { title: 'Fabric Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=fabric' },
-            { title: 'Trim Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=trim' },
-            { title: 'Yarn Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=yarn' },
+            { title: 'Fabric Requirements', href: '/legacy-erp/fabric-yarn-requirements?type=fabric' },
+            { title: 'Trim Requirements', href: '/legacy-erp/fabric-yarn-requirements?type=trim' },
+            { title: 'Yarn Requirements', href: '/legacy-erp/fabric-yarn-requirements?type=yarn' },
           ]},
           // Curated subset of the existing "Inventory Receipts" 18-leaf submenu below (the four
           // "Outside Process" types — see frontend's SUBCONTRACT_RECEIPT_TYPES) surfaced as its
           // own nav entry with an in-page type dropdown, instead of 4 more individual leaves —
           // same existing generic Inventory Receipt screen/route either way, just a different
           // list page (subcontract-receipts-list) picking which type to show.
-          { title: 'Subcontract Receipts', href: '/dashboard/legacy-erp/subcontract-receipts-list', icon: 'Factory', isNew: true },
-          { title: 'Sizes', href: '/dashboard/legacy-erp/sizes-list', icon: 'Scaling', isNew: true },
+          { title: 'Subcontract Receipts', href: '/legacy-erp/subcontract-receipts-list', icon: 'Factory', isNew: true },
+          { title: 'Sizes', href: '/legacy-erp/sizes-list', icon: 'Scaling', isNew: true },
           { title: 'Inventory Receipts', href: '#', icon: 'Truck', isNew: true, items: [
-            { title: '2 - Purchase Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=2' },
-            { title: '122 - Purchase Return', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=122' },
-            { title: '16 - Counting Stock Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=16' },
-            { title: '101 - Counting Stockovers Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=101' },
-            { title: '17 - Warehouse Transfer Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=17' },
-            { title: '11 - Outside Process Receive Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=11' },
-            { title: '12 - Outside Process Return Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=12' },
-            { title: '134 - Outside Process Sent Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=134' },
-            { title: '133 - Outside Process Sent Return Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=133' },
-            { title: '140 - Manufacture Send Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=140' },
-            { title: '40 - Manufacture Return Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=40' },
-            { title: '10 - Outside Manufacture Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=10' },
-            { title: '132 - Special Purpose (Outflow) Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=132' },
-            { title: '18 - Special Purpose (Inflow) Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=18' },
-            { title: '22 - Service Purchase Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=22' },
-            { title: '139 - Service Purchase Return Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=139' },
-            { title: '120 - Wholesale Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=120' },
-            { title: '3 - Return Wholesale Receipt', href: '/dashboard/legacy-erp/inventory-receipts-list?receiptType=3' },
+            { title: '2 - Purchase Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=2' },
+            { title: '122 - Purchase Return', href: '/legacy-erp/inventory-receipts-list?receiptType=122' },
+            { title: '16 - Counting Stock Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=16' },
+            { title: '101 - Counting Stockovers Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=101' },
+            { title: '17 - Warehouse Transfer Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=17' },
+            { title: '11 - Outside Process Receive Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=11' },
+            { title: '12 - Outside Process Return Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=12' },
+            { title: '134 - Outside Process Sent Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=134' },
+            { title: '133 - Outside Process Sent Return Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=133' },
+            { title: '140 - Manufacture Send Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=140' },
+            { title: '40 - Manufacture Return Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=40' },
+            { title: '10 - Outside Manufacture Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=10' },
+            { title: '132 - Special Purpose (Outflow) Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=132' },
+            { title: '18 - Special Purpose (Inflow) Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=18' },
+            { title: '22 - Service Purchase Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=22' },
+            { title: '139 - Service Purchase Return Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=139' },
+            { title: '120 - Wholesale Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=120' },
+            { title: '3 - Return Wholesale Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=3' },
           ]},
-          { title: '1 - Purchase Contract', href: '/dashboard/legacy-erp/contracts-list', icon: 'FileSignature', isNew: true },
-          { title: '2 - Sale Contract', href: '/dashboard/legacy-erp/contracts-list?receiptType=2', icon: 'FileText', isNew: true },
-          { title: 'Financial Receipts', href: '/dashboard/legacy-erp/financial-receipt-master-data', icon: 'Landmark', isNew: true },
-          { title: 'Receipt & Master Data', href: '/dashboard/legacy-erp/receipt-master-data', icon: 'Receipt', isNew: true },
-          { title: 'Item Statement', href: '/dashboard/legacy-erp/item-statement', icon: 'FileClock', isNew: true },
-          { title: 'Trim Inventory Cards', href: '/dashboard/legacy-erp/trim-inventory-cards-list', icon: 'Package', isNew: true },
-          { title: 'Unit Sets', href: '/dashboard/legacy-erp/unit-sets-list', icon: 'Ruler', isNew: true },
-          { title: 'Warehouse Parameters', href: '/dashboard/legacy-erp/warehouse-parameters', icon: 'SlidersHorizontal', isNew: true },
-          { title: 'General Settings', href: '/dashboard/legacy-erp/general-settings', icon: 'Settings' },
+          { title: '1 - Purchase Contract', href: '/legacy-erp/contracts-list', icon: 'FileSignature', isNew: true },
+          { title: '2 - Sale Contract', href: '/legacy-erp/contracts-list?receiptType=2', icon: 'FileText', isNew: true },
+          { title: 'Financial Receipts', href: '/legacy-erp/financial-receipt-master-data', icon: 'Landmark', isNew: true },
+          { title: 'Receipt & Master Data', href: '/legacy-erp/receipt-master-data', icon: 'Receipt', isNew: true },
+          { title: 'Item Statement', href: '/legacy-erp/item-statement', icon: 'FileClock', isNew: true },
+          { title: 'Trim Inventory Cards', href: '/legacy-erp/trim-inventory-cards-list', icon: 'Package', isNew: true },
+          { title: 'Unit Sets', href: '/legacy-erp/unit-sets-list', icon: 'Ruler', isNew: true },
+          { title: 'Warehouse Parameters', href: '/legacy-erp/warehouse-parameters', icon: 'SlidersHorizontal', isNew: true },
+          { title: 'General Settings', href: '/legacy-erp/general-settings', icon: 'Settings' },
           // Settings -> Screen Parameters — centralized, per-screen typed parameter management.
           // Its own screenKey (this href) is deliberately excluded from the screen picker inside
           // that page itself (see screen-parameter admin page's own filter) — configuring
           // parameters "for" the parameter-configuration screen isn't a meaningful case.
-          { title: 'Screen Parameters', href: '/dashboard/legacy-erp/general-settings/screen-parameters', icon: 'SlidersHorizontal' },
+          { title: 'Screen Parameters', href: '/legacy-erp/general-settings/screen-parameters', icon: 'SlidersHorizontal' },
         ],
       },
-      // Finance / Projects — real existing pages (frontend/app/dashboard/(auth)/finance,
+      // Finance / Projects — real existing pages (frontend/app/[company]/(auth)/finance,
       // .../project-management), previously built but never linked into the sidebar at all.
-      { title: 'Finance', items: [{ title: 'Dashboard', href: '/dashboard/finance', icon: 'Wallet', isNew: true }] },
-      { title: 'Projects', items: [{ title: 'Dashboard', href: '/dashboard/project-management', icon: 'ClipboardList', isNew: true }] },
+      { title: 'Finance', items: [{ title: 'Dashboard', href: '/finance', icon: 'Wallet', isNew: true }] },
+      { title: 'Projects', items: [{ title: 'Dashboard', href: '/project-management', icon: 'ClipboardList', isNew: true }] },
     ];
 
     async function seedNodes(nodes: MenuNode[], group: string, parentId: string | null, startOrder: number) {

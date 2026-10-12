@@ -6,7 +6,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 // screenKey travels as a query param (never a ":screenKey" path segment) — same reasoning as
 // approval-configuration.controller.ts: a screen key is a MenuItem.href, which already contains
-// "/" and often its own "?query=" (e.g. "/dashboard/legacy-erp/inventory-receipts-list?receiptType=12"),
+// "/" and often its own "?query=" (e.g. "/legacy-erp/inventory-receipts-list?receiptType=12"),
 // neither of which survives being a single path segment.
 @ApiTags('General Settings - Screen Parameters')
 @Controller('general-settings/screen-parameters')
