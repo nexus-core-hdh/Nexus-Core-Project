@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
+import { useRouter } from "next/navigation";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,6 +112,17 @@ export default function ItemStatementPage() {
   const itemId = Number(params.get("id")) || null;
   const sourcePath = params.get("source") ? decodeURIComponent(params.get("source")!) : undefined;
   const sourceLabel = params.get("sourceLabel") ? decodeURIComponent(params.get("sourceLabel")!) : undefined;
+  const router = useRouter();
+
+  // Double-click a transaction → open its receipt in view mode, by the receipt's own id and type —
+  // the same route the Inventory Receipts list opens (Purchase Receipt = type 2 needs no type param).
+  // navigateOrOpenTab activates the receipt's existing tab instead of opening a second one.
+  const openReceipt = (row: any) => {
+    if (!row?.receiptId) return;
+    window.getSelection()?.removeAllRanges(); // the double-click's word selection
+    const typeParam = row.receiptType && row.receiptType !== 2 ? `&receiptType=${row.receiptType}` : "";
+    navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?id=${row.receiptId}&mode=view${typeParam}`);
+  };
 
   const [view, setView] = useState<ViewMode>("overall");
   const [data, setData] = useState<any>(null);
@@ -455,7 +468,7 @@ export default function ItemStatementPage() {
                 <div className="mt-3 overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow className="hover:bg-transparent">
+                      <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                         <TableHead className="h-8 text-[11px]">Item</TableHead>
                         <TableHead className="h-8 text-[11px]">Base Unit</TableHead>
                         <TableHead className="h-8 text-right text-[11px]">Opening</TableHead>
@@ -464,7 +477,7 @@ export default function ItemStatementPage() {
                         <TableHead className="h-8 text-right text-[11px]">Closing</TableHead>
                       </TableRow>
                     </TableHeader>
-                    <TableBody>
+                    <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                       {data.totalsByItem.map((t: any) => (
                         <TableRow key={t.itemId} className="hover:bg-muted/60">
                           <TableCell className="py-2 text-sm"><span className="font-mono text-xs">{t.itemCode}</span> {t.itemName}</TableCell>
@@ -522,14 +535,14 @@ export default function ItemStatementPage() {
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow className="hover:bg-transparent">
+                      <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                         {dimColor && <TableHead className="h-8 text-[11px]">Color</TableHead>}
                         {dimLot && <TableHead className="h-8 text-[11px]">Lot / Batch</TableHead>}
                         {dimWarehouse && <TableHead className="h-8 text-[11px]">Warehouse</TableHead>}
                         <TableHead className="h-8 text-right text-[11px]">Balance</TableHead>
                       </TableRow>
                     </TableHeader>
-                    <TableBody>
+                    <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                       {loading ? (
                         Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}><TableCell colSpan={dimCount + 1} className="py-2"><Skeleton className="h-4 w-full" /></TableCell></TableRow>
@@ -563,7 +576,7 @@ export default function ItemStatementPage() {
             )}
           </div>
           <div className="overflow-hidden rounded-xl border shadow-sm">
-            <div ref={gridRootRef} className="flex items-center justify-between border-b px-4 py-3 bg-slate-700 dark:bg-slate-800 text-white">
+            <div ref={gridRootRef} className="flex items-center justify-between border-b px-4 py-3">
               <div className="text-sm font-semibold">Transaction Details</div>
               <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
                 <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
@@ -575,14 +588,14 @@ export default function ItemStatementPage() {
                   {gridColumns.displayColumnDefs.map((c) => <col key={c.key} style={{ width: gridColumns.getWidth(c.key) }} />)}
                 </colgroup>
                 <TableHeader>
-                  <TableRow className="border-b bg-primary hover:bg-primary">
+                  <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                     {gridColumns.displayColumnDefs.map((c, i) => {
                       const dragProps = gridColumns.getHeaderDragProps(c.key);
                       const def = COLUMN_BY_KEY.get(c.key)!;
                       return (
                         <TableHead
                           key={c.key}
-                          className={cn("relative p-0", HEADER_CELL_BORDER, i === 0 && FIRST_COL_BORDER, gridColumns.dragOverColumn === c.key && "bg-primary-foreground/10")}
+                          className={cn("relative p-0", HEADER_CELL_BORDER, i === 0 && FIRST_COL_BORDER, gridColumns.dragOverColumn === c.key && "bg-primary/15")}
                           onDragOver={dragProps.onDragOver}
                           onDrop={dragProps.onDrop}
                         >
@@ -593,14 +606,14 @@ export default function ItemStatementPage() {
                             data-col={c.key}
                             title={def.label}
                             className={cn(
-                              HEADER_H, "flex w-full min-w-0 items-center truncate px-2 text-[11px] font-semibold uppercase tracking-wide text-primary-foreground/90 cursor-grab active:cursor-grabbing",
+                              HEADER_H, "flex w-full min-w-0 items-center truncate px-2 text-[11px] font-semibold uppercase tracking-wide text-white cursor-grab active:cursor-grabbing",
                               def.align === "right" && "justify-end",
                             )}
                           >
                             {def.label}
                           </div>
                           <div
-                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary-foreground/30"
+                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                             onMouseDown={gridColumns.startResize(c.key)}
                             onDoubleClick={() => gridColumns.autoFitColumn(c.key, gridRootRef.current)}
                             title="Drag to resize · double-click to auto-fit"
@@ -669,7 +682,12 @@ export default function ItemStatementPage() {
                       remarks: row.remarks || "—",
                     };
                     return (
-                      <TableRow key={i} className="hover:bg-muted/60">
+                      <TableRow
+                        key={i}
+                        className={cn("hover:bg-muted/60", row.receiptId && "cursor-pointer")}
+                        title={row.receiptId ? "Double-click to open this receipt" : undefined}
+                        onDoubleClick={() => openReceipt(row)}
+                      >
                         {gridColumns.displayColumnDefs.map((c) => (
                           <TableCell key={c.key} className={cn("py-3 text-sm truncate", COLUMN_BY_KEY.get(c.key)!.align === "right" && "text-right")}>
                             {cells[c.key]}

@@ -27,6 +27,8 @@ export interface ManageColumnsModalProps<K extends string> {
   state: ManageColumnsState<K>;
   fixedColumns: K[];
   columns: GridColumnDef<K>[];
+  /** Reorderable but never hidden (see useGridColumns' `requiredColumns`) — shown with a locked checkbox. */
+  requiredColumns?: K[];
   title?: string;
   description?: string;
 }
@@ -35,6 +37,7 @@ export function ManageColumnsModal<K extends string>({
   state,
   fixedColumns,
   columns,
+  requiredColumns = [],
   title = "Column Manager",
   description = "Show, hide and reorder columns.",
 }: ManageColumnsModalProps<K>) {
@@ -86,7 +89,8 @@ export function ManageColumnsModal<K extends string>({
           {state.orderFiltered.map((key) => {
             const col = columnByKey.get(key);
             if (!col) return null;
-            const visible = !state.hidden.has(key);
+            const required = requiredColumns.includes(key);
+            const visible = required || !state.hidden.has(key);
             return (
               <div
                 key={key}
@@ -100,8 +104,9 @@ export function ManageColumnsModal<K extends string>({
               >
                 <Checkbox
                   checked={visible}
+                  disabled={required}
                   onCheckedChange={(checked) => state.toggleHidden(key, checked === true)}
-                  aria-label={`Show ${col.label} column`}
+                  aria-label={required ? `${col.label} is a required column and cannot be hidden` : `Show ${col.label} column`}
                 />
                 {/* Drag source is this handle only — not the row — so the checkbox's own
                     click never gets swallowed by a draggable ancestor. */}
@@ -114,6 +119,11 @@ export function ManageColumnsModal<K extends string>({
                   <GripVertical className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                 </span>
                 <span className="flex-1 text-[13px] font-medium">{col.label}</span>
+                {required && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Required
+                  </span>
+                )}
               </div>
             );
           })}
