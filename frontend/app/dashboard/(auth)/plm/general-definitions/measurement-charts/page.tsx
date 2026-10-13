@@ -97,8 +97,8 @@ export default function MeasurementChartsPage() {
                   ) : (
                     <div className="overflow-x-auto">
                       <Table>
-                        <TableHeader><TableRow><TableHead>Measurement</TableHead>{SIZES.map((s) => <TableHead key={s} className="text-center">{s.toUpperCase()}</TableHead>)}<TableHead></TableHead></TableRow></TableHeader>
-                        <TableBody>
+                        <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Measurement</TableHead>{SIZES.map((s) => <TableHead key={s} className="text-center">{s.toUpperCase()}</TableHead>)}<TableHead></TableHead></TableRow></TableHeader>
+                        <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                           {chart.lines.map((line) => (
                             <TableRow key={line.id}>
                               <TableCell className="font-medium">{line.definition?.name || line.measurementDefinitionId}</TableCell>

@@ -1115,7 +1115,7 @@ export default function WorkOrderPage() {
   };
 
   const titleText = woId ? `Work Order ${header.workOrderNo}` : "New Work Order";
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   const detailInput = "h-7 w-full rounded border bg-background px-1.5 text-xs outline-none disabled:opacity-60";
@@ -1202,7 +1202,7 @@ export default function WorkOrderPage() {
             {/* Style Info grid */}
             <div className="rounded-md border overflow-x-auto">
               <table className="w-full min-w-[1500px] table-fixed border-collapse text-[11.5px]">
-                <thead><tr>
+                <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                   <th className={th} style={{ width: 120 }}>Style Code</th>
                   <th className={th} style={{ width: 200 }}>Style Name</th>
                   <th className={th} style={{ width: 220 }}>Explanation</th>
@@ -1666,7 +1666,7 @@ function ManufacturingQuantitiesGrid({
   // that doesn't pass it (e.g. a future reuse with no Cutting Card concept at all).
   onOpenCutting?: (row: QtyRow) => void;
 }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   const rowTotal = (r: QtyRow) => round(selectedSizes.reduce((s, sz) => s + num(r.sizes[sz]), 0), "quantity");
@@ -1695,7 +1695,7 @@ function ManufacturingQuantitiesGrid({
   return (
     <div className="rounded-md border overflow-x-auto">
       <table className="w-full min-w-[1600px] table-fixed border-collapse text-[11.5px]">
-        <thead><tr>
+        <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
           <th className={th} style={{ width: 140 }}>Color</th>
           <th className={th} style={{ width: 130 }}>Customer Order No</th>
           <th className={th} style={{ width: 120 }}>Part Order No</th>
@@ -1795,14 +1795,14 @@ function ManufacturingQuantitiesGrid({
 function LotByColorGrid({ readOnly, qtyRows, setQtyRows, selectedSizes }: {
   readOnly: boolean; qtyRows: QtyRow[]; setQtyRows: (fn: (rs: QtyRow[]) => QtyRow[]) => void; selectedSizes: string[];
 }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   if (!selectedSizes.length) return <p className="text-[11.5px] text-muted-foreground">No sizes selected.</p>;
   return (
     <div className="rounded-md border overflow-x-auto">
       <table className="w-full min-w-[600px] table-fixed border-collapse text-[11.5px]">
-        <thead><tr>
+        <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
           <th className={th} style={{ width: 160 }}>Color</th>
           <th className={th} style={{ width: 120 }}>Lot</th>
           {selectedSizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
@@ -1825,13 +1825,13 @@ function LotByColorGrid({ readOnly, qtyRows, setQtyRows, selectedSizes }: {
 }
 
 function QtySurplusGrid({ readOnly, qtyRows, setQtyRows }: { readOnly: boolean; qtyRows: QtyRow[]; setQtyRows: (fn: (rs: QtyRow[]) => QtyRow[]) => void }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   return (
     <div className="rounded-md border overflow-x-auto">
       <table className="w-full min-w-[400px] table-fixed border-collapse text-[11.5px]">
-        <thead><tr><th className={th} style={{ width: 200 }}>Color</th><th className={`${th} text-right`} style={{ width: 140 }}>Cutting/Mfg Surplus</th></tr></thead>
+        <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white"><th className={th} style={{ width: 200 }}>Color</th><th className={`${th} text-right`} style={{ width: 140 }}>Cutting/Mfg Surplus</th></tr></thead>
         <tbody>
           {qtyRows.map((r) => (
             <tr key={r.id}>
@@ -1857,7 +1857,7 @@ function QtySurplusGrid({ readOnly, qtyRows, setQtyRows }: { readOnly: boolean; 
 function WillCutQtyGrid({ qtyRows, selectedSizes, extraCuttingPercent }: {
   qtyRows: QtyRow[]; selectedSizes: string[]; extraCuttingPercent: number;
 }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   if (!selectedSizes.length) return <p className="text-[11.5px] text-muted-foreground">No sizes selected.</p>;
   const rowCut = (r: QtyRow) => selectedSizes.map((s) => willBeCutQty(num(r.sizes[s]), extraCuttingPercent));
@@ -1870,7 +1870,7 @@ function WillCutQtyGrid({ qtyRows, selectedSizes, extraCuttingPercent }: {
       </p>
       <div className="rounded-md border overflow-x-auto">
         <table className="w-full min-w-[900px] table-fixed border-collapse text-[11.5px]">
-          <thead><tr>
+          <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
             <th className={th} style={{ width: 160 }}>Color</th>
             {selectedSizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
             <th className={`${th} text-right`} style={{ width: 100 }}>Total</th>

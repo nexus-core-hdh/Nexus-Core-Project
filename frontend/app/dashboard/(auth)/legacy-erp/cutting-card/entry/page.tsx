@@ -269,7 +269,7 @@ export default function CuttingEntryPage() {
 
   const close = () => closeTab(tabCtx?.tabKey ?? "/dashboard/legacy-erp/cutting-card/entry");
 
-  const th = "border-r border-border/70 bg-muted/50 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-7 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-white h-7 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const labelTd = "border-r border-b border-border/50 px-2 text-[11.5px] font-medium";
   const sideLabel = "text-[11px] text-muted-foreground";
@@ -344,15 +344,15 @@ export default function CuttingEntryPage() {
                 Summary's own "Cut" row below is always the live SUM of these, never a second
                 editable number. */}
             <div>
-              <div className="mb-1 flex items-center justify-between bg-slate-700 dark:bg-slate-800 text-white">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-white">Cutting Entries</p>
+              <div className="mb-1 flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Cutting Entries</p>
                 <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={addEntry} disabled={addingEntry}>
                   <Plus className="h-3 w-3 mr-1" />{addingEntry ? "Adding..." : "Add Cutting Entry"}
                 </Button>
               </div>
               <div className="rounded-md border overflow-x-auto">
                 <table className="w-full min-w-[900px] table-fixed border-collapse text-[11.5px]">
-                  <thead><tr>
+                  <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                     <th className={th} style={{ width: 110 }}>Date</th>
                     <th className={th} style={{ width: 130 }}>Factory</th>
                     <th className={th} style={{ width: 140 }}>Factory Name</th>
@@ -411,12 +411,12 @@ export default function CuttingEntryPage() {
             </div>
 
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
-                Cutting Summary{!!card && <span className="ml-1.5 font-normal normal-case text-white/70">(Extra Cutting {card.extraCuttingPercent}% applied, rounded up per size — Cut is the sum of the Cutting Entries above)</span>}
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                Cutting Summary{!!card && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(Extra Cutting {card.extraCuttingPercent}% applied, rounded up per size — Cut is the sum of the Cutting Entries above)</span>}
               </p>
               <div className="rounded-md border overflow-x-auto">
                 <table className="w-full min-w-[700px] table-fixed border-collapse text-[11.5px]">
-                  <thead><tr>
+                  <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                     <th className={th} style={{ width: 140 }} />
                     {card.sizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 85 }}>{s}</th>)}
                     <th className={`${th} text-right`} style={{ width: 110 }}>Total Quantity</th>

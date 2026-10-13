@@ -260,11 +260,11 @@ export function AttachmentsTab({ accountId, readOnly = false }: Props) {
         </div>
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Name</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Type</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Upload Date</TableHead>
-              <TableHead className="h-10 w-32 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Actions</TableHead>
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">File Name</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">File Type</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Upload Date</TableHead>
+              <TableHead className="h-10 w-32 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -283,7 +283,7 @@ export function AttachmentsTab({ accountId, readOnly = false }: Props) {
             ) : (
               <>
                 {stagedDocs.map((s) => (
-                  <TableRow key={s.localId} className="group">
+                  <TableRow key={s.localId} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                     <TableCell className="py-3">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -301,7 +301,7 @@ export function AttachmentsTab({ accountId, readOnly = false }: Props) {
                   </TableRow>
                 ))}
                 {documents.map((d) => (
-                  <TableRow key={d.id} className="group">
+                  <TableRow key={d.id} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                     <TableCell className="py-3">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -335,12 +335,12 @@ export function AttachmentsTab({ accountId, readOnly = false }: Props) {
         </div>
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
-              <TableHead className="h-10 w-16 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Thumbnail</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Name</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Image Type</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Upload Date</TableHead>
-              <TableHead className="h-10 w-32 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Actions</TableHead>
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+              <TableHead className="h-10 w-16 text-[11px] font-semibold uppercase tracking-wide text-white">Thumbnail</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">File Name</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Image Type</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Upload Date</TableHead>
+              <TableHead className="h-10 w-32 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -359,7 +359,7 @@ export function AttachmentsTab({ accountId, readOnly = false }: Props) {
             ) : (
               <>
                 {stagedPics.map((s) => (
-                  <TableRow key={s.localId} className="group">
+                  <TableRow key={s.localId} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                     <TableCell className="py-3">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={s.previewUrl} alt={s.file.name} className="h-10 w-10 object-cover rounded-md border" />
@@ -380,7 +380,7 @@ export function AttachmentsTab({ accountId, readOnly = false }: Props) {
                   </TableRow>
                 ))}
                 {pictures.map((p) => (
-                  <TableRow key={p.id} className="group">
+                  <TableRow key={p.id} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                     <TableCell className="py-3">
                       {p.thumbnailBase64 ? (
                         // eslint-disable-next-line @next/next/no-img-element

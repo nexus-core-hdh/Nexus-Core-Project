@@ -148,13 +148,13 @@ export function SatelliteGridTab({ itemId, tab, fields, addLabel = "Add Row", re
             {!readOnly && <col style={{ width: DEL_W }} />}
           </colgroup>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
               {displayFields.map((f) => {
                 const fixed = fixedFieldKeys.includes(f.key);
                 return (
                   <TableHead
                     key={f.key}
-                    className={cn("relative h-10 p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80", gridColumns.dragOverColumn === f.key && "bg-primary/15")}
+                    className={cn("relative h-10 p-0 text-[11px] font-semibold uppercase tracking-wide text-white", gridColumns.dragOverColumn === f.key && "bg-primary/15")}
                     onDragOver={gridColumns.getHeaderDragProps(f.key).onDragOver}
                     onDrop={gridColumns.getHeaderDragProps(f.key).onDrop}
                   >
@@ -169,7 +169,7 @@ export function SatelliteGridTab({ itemId, tab, fields, addLabel = "Add Row", re
                       {f.label}
                     </span>
                     <div
-                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                       onMouseDown={gridColumns.startResize(f.key)}
                       onDoubleClick={() => gridColumns.autoFitColumn(f.key, gridRootRef.current)}
                       title="Drag to resize · double-click to auto-fit"
@@ -197,7 +197,7 @@ export function SatelliteGridTab({ itemId, tab, fields, addLabel = "Add Row", re
                 </TableCell>
               </TableRow>
             ) : rows.map((row) => (
-              <TableRow key={row.id} className="group">
+              <TableRow key={row.id} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                 {displayFields.map((f) => (
                   <TableCell key={f.key} className="py-3">
                     {f.type === "checkbox" ? (

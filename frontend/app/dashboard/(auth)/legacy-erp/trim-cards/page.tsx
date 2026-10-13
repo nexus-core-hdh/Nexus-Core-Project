@@ -586,14 +586,14 @@ export default function CustomerDefineTrimsPage() {
                   <col style={{ width: DEL_W }} />
                 </colgroup>
                 <TableHeader>
-                  <TableRow className="border-b bg-background hover:bg-muted/60">
+                  <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                     {displayColumnDefs.map((col) => {
                       const fixed = FIXED_COLS.includes(col.key);
                       return (
                         <TableHead
                           key={col.key}
                           className={cn(
-                            "relative h-10 p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80",
+                            "relative h-10 p-0 text-[11px] font-semibold uppercase tracking-wide text-white",
                             gridColumns.dragOverColumn === col.key && "bg-primary/15",
                           )}
                           onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
@@ -613,7 +613,7 @@ export default function CustomerDefineTrimsPage() {
                             {col.label}
                           </span>
                           <div
-                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                             onMouseDown={startResize(col.key)}
                             onDoubleClick={() => resetColumnWidth(col.key)}
                             title="Drag to resize · double-click to reset width"

@@ -74,8 +74,8 @@ export default function DocumentsPage() {
 
       <div className="rounded-md border">
         <Table>
-          <TableHeader><TableRow><TableHead>Document</TableHead><TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead>Version</TableHead><TableHead>Uploaded By</TableHead><TableHead>Date</TableHead></TableRow></TableHeader>
-          <TableBody>
+          <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Document</TableHead><TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead>Version</TableHead><TableHead>Uploaded By</TableHead><TableHead>Date</TableHead></TableRow></TableHeader>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {loading ? Array.from({ length: 8 }).map((_, i) => (
               <TableRow key={i}>{Array.from({ length: 6 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
             )) : data.length === 0 ? (

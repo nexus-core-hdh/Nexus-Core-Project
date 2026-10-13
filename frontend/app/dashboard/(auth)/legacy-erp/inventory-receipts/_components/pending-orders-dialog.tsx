@@ -192,20 +192,20 @@ export function PendingOrdersDialog({
             <div className="overflow-hidden rounded-lg border border-border">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-background hover:bg-muted/60">
-                    <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{sourceLabel}</TableHead>
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Item</TableHead>
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Colour</TableHead>
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Description</TableHead>
-                    <TableHead className="h-9 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Order Qty</TableHead>
-                    <TableHead className="h-9 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Pending Qty</TableHead>
-                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Unit</TableHead>
-                    <TableHead className="h-9 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Price</TableHead>
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+                    <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-white" />
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">{sourceLabel}</TableHead>
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Date</TableHead>
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Item</TableHead>
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Colour</TableHead>
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Description</TableHead>
+                    <TableHead className="h-9 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Order Qty</TableHead>
+                    <TableHead className="h-9 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Pending Qty</TableHead>
+                    <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Unit</TableHead>
+                    <TableHead className="h-9 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Price</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                   {visiblePos.map((po) => {
                     const state = poSelectionState(po);
                     return (

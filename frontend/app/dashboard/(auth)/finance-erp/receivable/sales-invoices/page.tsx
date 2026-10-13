@@ -150,8 +150,8 @@ export default function SalesInvoiceFormPage() {
             </div>
 
             <Table className="mt-6">
-              <TableHeader><TableRow><TableHead>Item</TableHead><TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Rate</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
-              <TableBody>
+              <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Item</TableHead><TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Rate</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
+              <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                 {doc.items.map((l) => (
                   <TableRow key={l.id}>
                     <TableCell>{l.itemName || l.itemCode || "—"}</TableCell>

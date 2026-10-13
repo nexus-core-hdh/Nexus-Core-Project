@@ -38,7 +38,7 @@ export function SizeSummary({
 }: {
   sizes: string[]; row: ReadRow | null; grand: GrandTotal | null; fmt: (n: number) => string;
 }) {
-  const th = "border border-border/70 bg-muted/60 px-1.5 h-6 text-[10.5px] font-semibold text-muted-foreground whitespace-nowrap";
+  const th = "border border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 h-6 text-[10.5px] font-semibold text-white whitespace-nowrap";
   const td = "border border-border/50 px-1.5 h-[22px] text-right font-mono text-[11px] whitespace-nowrap";
   const label = "border border-border/50 px-2 h-[22px] text-[11px] whitespace-nowrap";
   const block = (bySize: Record<string, QtyCell>, totals: QtyCell, keyPrefix: string) =>
@@ -56,13 +56,13 @@ export function SizeSummary({
     <div className="overflow-auto rounded-sm border border-border/70">
       <table className="border-collapse">
         <thead>
-          <tr>
+          <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
             <th className={cn(th, "min-w-[150px] text-left")} />
             {sizes.map((s) => <th key={s} className={cn(th, "min-w-[68px] text-right")}>{s}</th>)}
             <th className={cn(th, "min-w-[80px] text-right")}>Total</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
           {row ? block(row.bySize, row.totals, "sel") : (
             <tr><td className={cn(label, "text-muted-foreground")} colSpan={sizes.length + 2}>Select a row to see its size summary.</td></tr>
           )}

@@ -138,7 +138,7 @@ export function AttributesTab({ styleCardId, sampleCardId, card }: { styleCardId
             <col style={{ width: DEL_W }} />
           </colgroup>
           <TableHeader>
-            <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
               {displayColumnDefs.map((col) => {
                 const fixed = FIXED_COLS.includes(col.key);
                 return (
@@ -158,7 +158,7 @@ export function AttributesTab({ styleCardId, sampleCardId, card }: { styleCardId
                       {col.label}
                     </span>
                     <div
-                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                       onMouseDown={startResize(col.key)}
                       onDoubleClick={() => resetColumnWidth(col.key)}
                       title="Drag to resize · double-click to reset width"

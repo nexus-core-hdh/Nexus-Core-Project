@@ -97,11 +97,11 @@ function ArrayTable({ rows }: { rows: Record<string, any>[] }) {
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
         <thead className="bg-background">
-          <tr>{cols.map((c) => (
-            <th key={c} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">{formatFieldLabel(c, refCols.has(c))}</th>
+          <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">{cols.map((c) => (
+            <th key={c} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-white">{formatFieldLabel(c, refCols.has(c))}</th>
           ))}</tr>
         </thead>
-        <tbody>
+        <tbody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
           {rows.map((r, i) => (
             <tr key={i} className="border-t hover:bg-muted/60">
               {cols.map((c) => {
@@ -148,13 +148,13 @@ function ChangedFields({ before, after }: { before: Record<string, any>; after: 
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
         <thead className="bg-background">
-          <tr>
-            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">Field</th>
-            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">Previous Value</th>
-            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-muted-foreground">New Value</th>
+          <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-white">Field</th>
+            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-white">Previous Value</th>
+            <th className="whitespace-nowrap px-3 py-2 text-left font-semibold text-white">New Value</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
           {changed.map((k) => {
             const isRef = isDisplayRef(before[k]) || isDisplayRef(after[k]);
             return (

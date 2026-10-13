@@ -606,7 +606,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
             {!readOnly && <col style={{ width: DEL_W }} />}
           </colgroup>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
               {displayColumnDefs.map((col, i) => {
                 const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
                 return (
@@ -617,7 +617,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                     onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
                     onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
                     className={cn(
-                      "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80",
+                      "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-white",
                       CELL_BORDER, i === 0 && FIRST_COL_BORDER,
                       gridColumns.dragOverColumn === col.key && "bg-primary/15",
                     )}
@@ -636,7 +636,7 @@ export const ContractLineGrid = forwardRef<ContractLineGridHandle, Props>(functi
                       {col.label}
                     </span>
                     <div
-                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                       onMouseDown={startResize(col.key)}
                       onDoubleClick={() => autoFitColumn(col.key)}
                       title="Drag to resize · double-click to auto-fit"

@@ -131,7 +131,7 @@ export default function CuttingCardPage() {
 
   const close = () => closeTab(tabCtx?.tabKey ?? "/dashboard/legacy-erp/cutting-card");
 
-  const th = "border-r border-border/70 bg-muted/50 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-7 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-white h-7 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const labelTd = "border-r border-b border-border/50 px-2 text-[11.5px] font-medium";
 
@@ -181,12 +181,12 @@ export default function CuttingCardPage() {
       ) : (
         <>
           <div>
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
-              Production Colors{!!matrix.extraCuttingPercent && <span className="ml-1.5 font-normal normal-case text-white/70">(Will Be Cut — Extra Cutting {matrix.extraCuttingPercent}% applied, rounded up per size)</span>}
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+              Production Colors{!!matrix.extraCuttingPercent && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(Will Be Cut — Extra Cutting {matrix.extraCuttingPercent}% applied, rounded up per size)</span>}
             </p>
             <div className="rounded-md border overflow-x-auto">
               <table className="w-full min-w-[700px] table-fixed border-collapse text-[11.5px]">
-                <thead><tr>
+                <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                   <th className={th} style={{ width: 160 }}>Color</th>
                   {matrix.sizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
                   <th className={`${th} text-right`} style={{ width: 110 }}>Grand Total</th>
@@ -224,12 +224,12 @@ export default function CuttingCardPage() {
 
           {selectedRow && selectedSummary && (
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide bg-slate-700 dark:bg-slate-800 text-white">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                 {selectedRow.color} — Cutting Summary{loadingCutTotals && <span className="ml-1.5 font-normal normal-case">(loading Cut totals...)</span>}
               </p>
               <div className="rounded-md border overflow-x-auto">
                 <table className="w-full min-w-[700px] table-fixed border-collapse text-[11.5px]">
-                  <thead><tr>
+                  <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                     <th className={th} style={{ width: 140 }} />
                     {matrix.sizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
                     <th className={`${th} text-right`} style={{ width: 110 }}>Grand Total</th>

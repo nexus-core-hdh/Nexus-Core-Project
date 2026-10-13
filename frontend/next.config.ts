@@ -69,5 +69,14 @@ const nextConfig: NextConfig = {
 
 export default function config(phase: string): NextConfig {
   if (phase !== PHASE_DEVELOPMENT_SERVER) return nextConfig;
-  return { ...nextConfig, experimental: { ...nextConfig.experimental, turbopackMemoryLimit: devTurbopackMemoryLimit() } };
+  // Dev only: with NEXT_PUBLIC_NEXUSCORE_API_URL=/api/v1, `next dev` proxies the API to the local
+  // backend (the reverse proxy's job in production), so only :3000 needs exposing and the app works
+  // from any host. NEXT_DEV_ALLOWED_ORIGINS lists the extra hosts (LAN/public IPs) it is opened on.
+  const backend = (process.env.NEXUSCORE_BACKEND_URL || "http://localhost:4000").replace(/\/$/, "");
+  return {
+    ...nextConfig,
+    allowedDevOrigins: (process.env.NEXT_DEV_ALLOWED_ORIGINS || "").split(",").map((h) => h.trim()).filter(Boolean),
+    rewrites: async () => [{ source: "/api/v1/:path*", destination: `${backend}/api/v1/:path*` }],
+    experimental: { ...nextConfig.experimental, turbopackMemoryLimit: devTurbopackMemoryLimit() }
+  };
 }

@@ -143,7 +143,7 @@ export function PlmCrudTable<T extends { id: string }>({
             {hasActionsColumn && <col style={{ width: 96 }} />}
           </colgroup>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
               {displayColumns.map((c, i) => {
                 const key = String(c.key);
                 const dragProps = widthOnly ? {} : gridColumns.getHeaderDragProps(key);
@@ -169,7 +169,7 @@ export function PlmCrudTable<T extends { id: string }>({
                       {c.label}
                     </div>
                     <div
-                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                       onMouseDown={gridColumns.startResize(key)}
                       onDoubleClick={() => gridColumns.autoFitColumn(key, gridRootRef.current)}
                       title="Drag to resize · double-click to auto-fit"

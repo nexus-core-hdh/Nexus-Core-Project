@@ -14,13 +14,13 @@ export function StatementTable({ rows, showComparative, currentLabel = "Current 
   return (
     <Table>
       <TableHeader>
-        <TableRow>
+        <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
           <TableHead>Line Item</TableHead>
           <TableHead className="text-right">{currentLabel}</TableHead>
           {showComparative && <TableHead className="text-right">{priorLabel}</TableHead>}
         </TableRow>
       </TableHeader>
-      <TableBody>
+      <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
         {rows.map((r, i) => (
           <TableRow key={i} className={cn(r.isTotal && "border-t-2 bg-muted/20")}>
             <TableCell className={cn(r.bold && "font-semibold")} style={r.indent ? { paddingLeft: `${r.indent * 24 + 16}px` } : undefined}>

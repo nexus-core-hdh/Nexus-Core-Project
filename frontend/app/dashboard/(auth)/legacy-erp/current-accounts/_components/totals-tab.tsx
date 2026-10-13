@@ -53,12 +53,12 @@ export function TotalsTab({ accountId, mode }: Props) {
       <div className="rounded-xl border shadow-sm overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Fiscal Year</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Forex</TableHead>
-              <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Total Debit</TableHead>
-              <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Total Credit</TableHead>
-              <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Balance</TableHead>
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Fiscal Year</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Forex</TableHead>
+              <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Total Debit</TableHead>
+              <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Total Credit</TableHead>
+              <TableHead className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Balance</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -92,9 +92,9 @@ export function TotalsTab({ accountId, mode }: Props) {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow className="border-b bg-background hover:bg-muted/60">
+                <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                   <TableHead className="h-10"></TableHead>
-                  {MONTHS.map((m) => <TableHead key={m} className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{m}</TableHead>)}
+                  {MONTHS.map((m) => <TableHead key={m} className="h-10 text-right text-[11px] font-semibold uppercase tracking-wide text-white">{m}</TableHead>)}
                 </TableRow>
               </TableHeader>
               <TableBody>

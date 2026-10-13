@@ -57,7 +57,7 @@ export function CostTab({ styleCardId, sampleCardId }: { styleCardId?: string; s
       <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
               <TableHead>Costing No</TableHead>
               <TableHead>Date</TableHead>
               <TableHead>Category</TableHead>
@@ -71,7 +71,7 @@ export function CostTab({ styleCardId, sampleCardId }: { styleCardId?: string; s
               <TableHead className="w-10"></TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {!sheets.length ? (
               <TableRow><TableCell colSpan={11} className="text-center py-6 text-muted-foreground">No costing sheets yet</TableCell></TableRow>
             ) : sheets.map((s) => (

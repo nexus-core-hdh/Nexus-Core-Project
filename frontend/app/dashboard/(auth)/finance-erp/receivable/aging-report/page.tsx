@@ -84,8 +84,8 @@ export default function AgingReportPage() {
       ) : (
         <div className="overflow-hidden rounded-lg border">
           <Table>
-            <TableHeader><TableRow><TableHead>Customer</TableHead><TableHead>Invoice</TableHead><TableHead>Invoice Date</TableHead><TableHead>Due Date</TableHead><TableHead className="text-right">Invoice Amount</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Outstanding</TableHead><TableHead>Bucket</TableHead></TableRow></TableHeader>
-            <TableBody>
+            <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Customer</TableHead><TableHead>Invoice</TableHead><TableHead>Invoice Date</TableHead><TableHead>Due Date</TableHead><TableHead className="text-right">Invoice Amount</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Outstanding</TableHead><TableHead>Bucket</TableHead></TableRow></TableHeader>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {rows.map((r, i) => (
                 <TableRow key={i}>
                   <TableCell>{r.customer}</TableCell>

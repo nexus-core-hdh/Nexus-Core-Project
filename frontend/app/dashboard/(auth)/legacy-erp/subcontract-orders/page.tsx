@@ -511,9 +511,9 @@ export default function SubcontractOrderPage() {
               </fieldset>
 
               <div className="space-y-2">
-                <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
-                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
-                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
+                <div className="flex items-center gap-2">
+                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
                 </div>
                 <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={orderId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} onUdfDirtyChange={setGridUdfDirty} />
               </div>
@@ -737,9 +737,9 @@ function SubcontractOrderExplanationTab({ orderReceiptId, readOnly }: { orderRec
       <div className="rounded-xl border shadow-sm overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Explanation</TableHead>
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Date</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Explanation</TableHead>
               {!readOnly && <TableHead className="h-10 w-10" />}
             </TableRow>
           </TableHeader>

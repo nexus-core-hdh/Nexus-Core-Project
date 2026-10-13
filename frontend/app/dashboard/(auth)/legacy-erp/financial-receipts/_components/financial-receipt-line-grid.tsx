@@ -298,7 +298,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className="h-11 bg-background hover:bg-muted/60">
+          <TableRow className="h-11 bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
             {displayColumnDefs.map((col) => {
               const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
               return (
@@ -322,7 +322,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
                     {col.label}
                   </span>
                   <div
-                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                     onMouseDown={gridColumns.startResize(col.key)}
                     onDoubleClick={() => gridColumns.resetWidth(col.key)}
                     title="Drag to resize · double-click to reset width"

@@ -1464,7 +1464,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className={cn(HEADER_H, "bg-background hover:bg-muted/60")}>
+          <TableRow className={cn(HEADER_H, "bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white")}>
             {displayColumnDefs.map((col, i) => {
               const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
               return (
@@ -1475,7 +1475,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                   onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
                   onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
                   className={cn(
-                    "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
+                    "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-white",
                     CELL_BORDER, i === 0 && FIRST_COL_BORDER,
                     gridColumns.dragOverColumn === col.key && "bg-primary/15",
                   )}

@@ -325,18 +325,18 @@ export default function UserDefinedFieldsPage() {
                 {!entityFields.length && supported && <EmptyContent><Button size="sm" onClick={newField}><Plus className="mr-1.5 h-3.5 w-3.5" />Add Field</Button></EmptyContent>}
               </Empty>
             ) : (
-              <table className="w-full table-fixed border-collapse text-sm">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-slate-700 text-left text-[11px] font-semibold uppercase tracking-wide text-white dark:bg-slate-800">
-                    <th className="w-8 px-2 py-2" />
-                    <th className="px-3 py-2">Field Code</th>
-                    <th className="px-3 py-2">Caption</th>
-                    <th className="w-32 px-3 py-2">Data Type</th>
-                    <th className="w-24 px-3 py-2">Status</th>
-                    <th className="w-14 px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                <table className="w-full table-fixed border-collapse text-sm">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-slate-700 text-left text-[11px] font-semibold uppercase tracking-wide text-white dark:bg-slate-800">
+                      <th className="w-8 px-2 py-2" />
+                      <th className="px-3 py-2">Field Code</th>
+                      <th className="px-3 py-2">Caption</th>
+                      <th className="w-32 px-3 py-2">Data Type</th>
+                      <th className="w-24 px-3 py-2">Status</th>
+                      <th className="w-14 px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
                   <SortableContext items={shownFields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
                     <tbody>
                       {shownFields.map((f) => (
@@ -351,8 +351,8 @@ export default function UserDefinedFieldsPage() {
                       ))}
                     </tbody>
                   </SortableContext>
-                </DndContext>
-              </table>
+                </table>
+              </DndContext>
             )}
           </div>
           {!loading && !loadError && entityFields.length > 1 && (

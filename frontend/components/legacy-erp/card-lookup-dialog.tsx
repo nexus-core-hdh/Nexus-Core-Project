@@ -90,10 +90,10 @@ export function CardLookupDialog<T extends CardLookupRow>({ open, onOpenChange, 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Code</TableHead>
-                <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Name</TableHead>
-                <TableHead className="w-24 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
+              <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-white">Code</TableHead>
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wide text-white">Name</TableHead>
+                <TableHead className="w-24 text-[11px] font-semibold uppercase tracking-wide text-white">Status</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
@@ -118,7 +118,7 @@ export function CardLookupDialog<T extends CardLookupRow>({ open, onOpenChange, 
                 rows.map((row) => (
                   <TableRow
                     key={row.id}
-                    className="group cursor-pointer"
+                    className="group cursor-pointer [&>td]:border-r [&>td:last-child]:border-r-0"
                     onDoubleClick={() => choose(row)}
                   >
                     <TableCell className="py-2.5"><span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span></TableCell>

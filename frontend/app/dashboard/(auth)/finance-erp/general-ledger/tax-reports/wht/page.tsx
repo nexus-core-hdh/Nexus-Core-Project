@@ -43,14 +43,14 @@ export default function WhtReportPage() {
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
               <TableHead>Party</TableHead><TableHead>Type</TableHead><TableHead>Tax Type</TableHead>
               <TableHead className="text-right">Rate</TableHead><TableHead className="text-right">Gross</TableHead>
               <TableHead className="text-right">Tax Amount</TableHead><TableHead className="text-right">Net Amount</TableHead>
               <TableHead>Period</TableHead><TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {rows.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>{r.party}</TableCell>

@@ -167,12 +167,12 @@ export default function UsersRolesPage() {
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
               <thead className="bg-background">
-                <tr>
-                  <th className="p-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Module</th>
-                  {PERMISSION_ACTIONS.map((a) => <th key={a} className="p-2.5 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">{a}</th>)}
+                <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+                  <th className="p-2.5 text-left text-xs font-semibold uppercase tracking-wide text-white">Module</th>
+                  {PERMISSION_ACTIONS.map((a) => <th key={a} className="p-2.5 text-center text-xs font-semibold uppercase tracking-wide text-white">{a}</th>)}
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                 {PERMISSION_MODULES.map((mod) => (
                   <tr key={mod} className="border-t">
                     <td className="p-2.5 font-medium">{mod}</td>

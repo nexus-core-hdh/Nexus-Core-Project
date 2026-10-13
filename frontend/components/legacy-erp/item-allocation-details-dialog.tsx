@@ -71,7 +71,7 @@ export function ItemAllocationDetailsDialog({
     finally { setBusyId(null); }
   };
 
-  const th = "h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80";
+  const th = "h-8 text-[11px] font-semibold uppercase tracking-wide text-white";
   const lbl = "text-[11.5px] text-muted-foreground";
   const val = "text-[12.5px] font-medium";
 
@@ -110,7 +110,7 @@ export function ItemAllocationDetailsDialog({
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-background hover:bg-muted/60">
+                    <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                       <TableHead className={`${th} w-8`}>#</TableHead>
                       <TableHead className={th}>Work Order No</TableHead>
                       <TableHead className={th}>Line</TableHead>
