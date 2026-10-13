@@ -24,7 +24,7 @@ export class YarnCardController {
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {
-    return this.svc.getByCode(code);
+    return this.svc.getByCodeWithStock(code);
   }
 
   // Preview-only — lets the Create screen display the code it's about to get before Save
@@ -36,7 +36,7 @@ export class YarnCardController {
   }
 
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.get(id);
+    return this.svc.getWithStock(id);
   }
 
   @Post() create(@Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {

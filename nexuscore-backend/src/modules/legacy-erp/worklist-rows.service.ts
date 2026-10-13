@@ -296,6 +296,40 @@ for (const k of RECEIPT_TYPE_KEYS) RELATIONSHIPS[k] = RELATIONSHIPS['purchase-re
 const fieldAlias = (source: string, key: string) => `${source}:${key}`;
 const id = (name: string) => Prisma.raw(`"${name}"`);
 
+// Display value of a worklist column. Raw id columns that point at a master show that master's
+// name instead of the number (the raw id stays on the row via r.* for relationships/operations):
+//  - CurrentAccountId -> FI_Account.CurrentAccountName;
+//  - an item's UnitId (IM_Item) -> the item's Base Unit from its Unit tab (IM_ItemUnitItemSize ->
+//    MD_UnitSetItem.UnitName, Main Unit first — the same rule as the Inventory Card list's Unit,
+//    inventory-card.service.ts itemUnitNameLateral). The legacy IM_Item.UnitId column is empty on
+//    every current item (units are kept on the Unit tab), which is why Unit used to show blank;
+//    it is still honoured as a fallback (MD_UnitSet.SetName) for any record that has it;
+//  - a transaction line's UnitId (IM_ReceiptItem / IM_OrderReceiptItem) -> MD_UnitSetItem.UnitName,
+//    the per-item unit those lines reference.
+// A name that cannot be found falls back to the raw id as text, so no value is ever hidden. Each is
+// a correlated lookup by primary key inside the one list query (no extra round trips).
+const LINE_TABLES_WITH_ITEM_UNIT = new Set(['IM_ReceiptItem', 'IM_OrderReceiptItem', 'SM_ContractItem']);
+function displayColumnSql(table: string, alias: Prisma.Sql, key: string): Prisma.Sql {
+  const col = Prisma.sql`${alias}.${id(key)}`;
+  if (key === 'CurrentAccountId') {
+    return Prisma.sql`COALESCE((SELECT a."CurrentAccountName" FROM "FI_Account" a WHERE a."RecId" = ${col}), ${col}::text)`;
+  }
+  if (key === 'UnitId' && table === 'IM_Item') {
+    return Prisma.sql`COALESCE(
+      (SELECT usi."UnitName" FROM "IM_ItemUnitItemSize" iuis JOIN "MD_UnitSetItem" usi ON usi."RecId" = iuis."UnitItemId"
+        WHERE iuis."InventoryId" = ${alias}."RecId" AND iuis."IsDeleted" = 0
+        ORDER BY iuis."IsMainUnit" DESC NULLS LAST, iuis."RecId" ASC LIMIT 1),
+      (SELECT us."SetName" FROM "MD_UnitSet" us WHERE us."RecId" = ${col}),
+      ${col}::text)`;
+  }
+  if (key === 'UnitId' && LINE_TABLES_WITH_ITEM_UNIT.has(table)) {
+    return Prisma.sql`COALESCE((SELECT usi."UnitName" FROM "MD_UnitSetItem" usi WHERE usi."RecId" = ${col}), ${col}::text)`;
+  }
+  return col;
+}
+const isDisplayMapped = (table: string, key: string) =>
+  key === 'CurrentAccountId' || (key === 'UnitId' && (table === 'IM_Item' || LINE_TABLES_WITH_ITEM_UNIT.has(table)));
+
 @Injectable()
 export class WorklistRowsService {
   constructor(
@@ -329,7 +363,7 @@ export class WorklistRowsService {
     const selectParts: Prisma.Sql[] = [Prisma.sql`r.*`];
     for (const f of fields) {
       if (f.source === selfSource) {
-        selectParts.push(Prisma.sql`r.${id(f.key)} as ${id(fieldAlias(f.source, f.key))}`);
+        selectParts.push(Prisma.sql`${displayColumnSql(cfg.table, Prisma.raw('r'), f.key)} as ${id(fieldAlias(f.source, f.key))}`);
       }
     }
 
@@ -348,9 +382,9 @@ export class WorklistRowsService {
             ON ${alias}."RecId" = r.${id(strategy.fkColumn)} AND ${alias}."IsDeleted" = 0
             ${targetFilter ? Prisma.sql`AND ${alias}.${targetFilter}` : Prisma.sql``}
         `);
-        for (const key of keys) selectParts.push(Prisma.sql`${alias}.${id(key)} as ${id(fieldAlias(source, key))}`);
+        for (const key of keys) selectParts.push(Prisma.sql`${displayColumnSql(target.table, alias, key)} as ${id(fieldAlias(source, key))}`);
       } else if (strategy.kind === 'reverse') {
-        const aggCols = keys.map((key) => Prisma.sql`string_agg(DISTINCT c.${id(key)}, ', ') as ${id(key)}`);
+        const aggCols = keys.map((key) => Prisma.sql`string_agg(DISTINCT ${isDisplayMapped(target.table, key) ? displayColumnSql(target.table, Prisma.raw('c'), key) : Prisma.sql`c.${id(key)}`}, ', ') as ${id(key)}`);
         joinParts.push(Prisma.sql`
           LEFT JOIN LATERAL (
             SELECT ${Prisma.join(aggCols, ', ')}
@@ -361,7 +395,7 @@ export class WorklistRowsService {
         `);
         for (const key of keys) selectParts.push(Prisma.sql`${alias}.${id(key)} as ${id(fieldAlias(source, key))}`);
       } else {
-        const aggCols = keys.map((key) => Prisma.sql`string_agg(DISTINCT t.${id(key)}, ', ') as ${id(key)}`);
+        const aggCols = keys.map((key) => Prisma.sql`string_agg(DISTINCT ${isDisplayMapped(target.table, key) ? displayColumnSql(target.table, Prisma.raw('t'), key) : Prisma.sql`t.${id(key)}`}, ', ') as ${id(key)}`);
         joinParts.push(Prisma.sql`
           LEFT JOIN LATERAL (
             SELECT ${Prisma.join(aggCols, ', ')}

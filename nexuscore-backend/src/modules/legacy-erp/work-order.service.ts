@@ -233,7 +233,9 @@ export class WorkOrderService {
     const searchFilter = search ? Prisma.sql`AND "WorkOrderNo" ILIKE ${`%${search}%`}` : Prisma.sql``;
     const styleFilter = styleCardId ? Prisma.sql`AND "StyleCardId" = ${styleCardId}` : Prisma.sql``;
     return runLegacyList(this.prisma, {
-      select: HEADER_SELECT,
+      // currentAccountName: display value for a Customized Worklist's "Current Account" column
+      // (the raw currentAccountId stays on the row).
+      select: Prisma.sql`${HEADER_SELECT}, (SELECT a."CurrentAccountName" FROM "FI_Account" a WHERE a."RecId" = "MA_WorkOrder"."CurrentAccountId") as "currentAccountName"`,
       from: Prisma.sql`FROM "MA_WorkOrder" WHERE "IsDeleted" = 0 ${searchFilter} ${styleFilter}`,
       sortable: {
         workOrderNo: Prisma.sql`"WorkOrderNo"`, workOrderDate: Prisma.sql`"WorkOrderDate"`,

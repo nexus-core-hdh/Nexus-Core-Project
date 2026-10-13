@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { settingsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { humanizeColumn } from "@/lib/legacy-erp/humanize";
+import { humanizeColumn, savedWorklistFieldLabel } from "@/lib/legacy-erp/humanize";
 import { STANDARD_WORKLIST_ID, fieldKey, type Worklist } from "@/lib/legacy-erp/worklist-types";
 
 interface UseWorklistOptions {
@@ -44,7 +44,8 @@ export function useWorklist({ storageKey }: UseWorklistOptions) {
 
   const columnLabel = (c: string, standardLabel?: (c: string) => string) => {
     if (!activeWorklist) return (standardLabel ?? humanizeColumn)(c);
-    return activeWorklist.fields.find((f) => fieldKey(f) === c)?.label ?? humanizeColumn(c);
+    const field = activeWorklist.fields.find((f) => fieldKey(f) === c);
+    return field ? savedWorklistFieldLabel(field) : humanizeColumn(c);
   };
 
   // worklistFields.resolve() rows are raw table rows (`r.*`) — primary key "RecId", not the "id"

@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, Package, SearchX, ChevronRight } from "lucide-react";
 import { formatCell } from "@/lib/legacy-erp/humanize";
+import { worklistCellValue } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
@@ -75,7 +76,7 @@ export default function PackingListListPage() {
 
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
-      return activeColumns.map((c) => ({ key: c, label: wl.columnLabel(c), render: (row: any) => formatCell(row[rowKeyOf(c)]) }));
+      return activeColumns.map((c) => ({ key: c, label: wl.columnLabel(c), render: (row: any) => formatCell(worklistCellValue(row, rowKeyOf(c))) }));
     }
     const dash = <span className="text-muted-foreground">—</span>;
     return [

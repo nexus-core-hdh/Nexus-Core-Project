@@ -9,6 +9,7 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { StockValueSummary } from "@/components/legacy-erp/stock-value";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Ribbon, Lock } from "lucide-react";
@@ -290,6 +291,10 @@ export default function TrimInventoryCardPage() {
           </>
         }
       />
+
+      {/* Stock In Hand × existing receipt price — see components/legacy-erp/stock-value.tsx */}
+
+      <StockValueSummary id={itemId} load={(id) => legacyErpApi.trimInventoryCards.get(id)} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
         <div className="rounded-xl border bg-card shadow-sm">

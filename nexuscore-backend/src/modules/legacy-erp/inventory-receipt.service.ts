@@ -750,6 +750,9 @@ export class InventoryReceiptService {
         ri."Quantity" as "receivedQty", ri."UnitId" as "unitId", ri."UnitPrice" as "unitPrice", ri."ColorCardId" as "colorCardId",
         i."InventoryCode" as "code", i."InventoryName" as "name",
         base_unit.id as "baseUnitId", base_unit.code as "baseUnitCode",
+        -- Display names for a Customized Worklist's Current Account / Unit columns (raw ids kept).
+        (SELECT a."CurrentAccountName" FROM "FI_Account" a WHERE a."RecId" = rec."CurrentAccountId") as "currentAccountName",
+        (SELECT usi."UnitName" FROM "MD_UnitSetItem" usi WHERE usi."RecId" = ri."UnitId") as "unitName",
         ${srcReceivedBaseQty} as "receivedBaseQty",
         (${srcReceivedBaseQty} - COALESCE(consumed."baseQty", 0)) as "availableBaseQty",
         ${fromBaseQuantitySql(Prisma.sql`(${srcReceivedBaseQty} - COALESCE(consumed."baseQty", 0))`, 'src')} as "availableQty",
@@ -795,6 +798,7 @@ export class InventoryReceiptService {
           label: r.sourceReceiptType === 2 ? 'Purchase Receipt' : (getReceiptTypeConfig(r.sourceReceiptType)?.label ?? `Receipt Type ${r.sourceReceiptType}`),
           lines: [],
           ...headerExtra,
+          currentAccountName: r.currentAccountName,
         });
       }
       const itemExtra: Record<string, any> = {};
@@ -804,6 +808,7 @@ export class InventoryReceiptService {
         explanation: r.explanation, unitId: r.unitId, unitPrice: r.unitPrice, colorCardId: r.colorCardId,
         receivedQty: r.receivedQty, availableQty: r.availableQty,
         ...itemExtra,
+        unitName: r.unitName,
         baseUnitId: r.baseUnitId, baseUnitCode: r.baseUnitCode,
         receivedBaseQty: r.receivedBaseQty, availableBaseQty: r.availableBaseQty,
       });

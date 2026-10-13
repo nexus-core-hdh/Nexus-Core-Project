@@ -51,6 +51,7 @@ const HEADER_JOINS = Prisma.sql`
 const HEADER_LABELS = Prisma.sql`
   wo."WorkOrderNo" as "workOrderNo",
   cu."CurrentAccountCode" as "customerCode", cu."CurrentAccountName" as "customerName",
+  cu."CurrentAccountName" as "currentAccountName",
   fa."CurrentAccountCode" as "factoryCode", fa."CurrentAccountName" as "factoryName",
   rc."ReceiptNo" as "shipmentReceiptNo", rc."ReceiptType" as "shipmentReceiptType"`;
 

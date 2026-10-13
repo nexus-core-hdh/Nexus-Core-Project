@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap } from './legacy-db-types.util';
 import { screenKeyFor } from './inventory-receipt.service';
-import { baseQuantitySql, baseQuantityJoinSql, unitConversionIssueSql } from './unit-conversion.util';
+import { baseQuantitySql, baseQuantityJoinSql, fromBaseQuantitySql, unitConversionIssueSql } from './unit-conversion.util';
 import { STOCK_IN_RECEIPT_TYPES, STOCK_OUT_RECEIPT_TYPES } from './receipt-types.config';
 
 // Approval gate for every stock figure (Stock on Hand here, Item Statement's ledger) — moved here
@@ -67,6 +67,87 @@ export function itemUnitNameLateral(itemAlias: string): Prisma.Sql {
     ) unit_lookup ON true`;
 }
 
+// --- Stock Value ------------------------------------------------------------------------------
+// Stock Value = Stock In Hand × the item's existing receipt price — no new costing method:
+//  - Stock In Hand: the one existing stock formula (stockSumSql below — approved, non-deleted
+//    receipt lines, converted to the item's Base Unit, IN types added, OUT types subtracted);
+//  - price: the UnitPrice already stored on the item's most recent priced stock-IN receipt line
+//    (IM_ReceiptItem.UnitPrice — e.g. a Purchase Receipt), approval-gated like stock, latest by
+//    receipt date. A line's UnitPrice is per that line's own unit, so it is expressed per Base Unit
+//    with the same per-item conversion stock uses (UnitPrice × UnitFactor / UnitDivisor) before
+//    multiplying by the Base-Unit stock. Lines whose unit cannot be converted are skipped, exactly
+//    as stock skips them.
+// No stock in hand (0 or negative) → value 0. Stock but no priced receipt → value null (shown as
+// "—", never a made-up 0).
+export interface StockValuation {
+  stockOnHand: number;
+  stockUnit: string | null;
+  stockUnitPrice: number | null;
+  stockValue: number | null;
+  stockPriceReceiptNo: string | null;
+  stockPriceReceiptDate: string | null;
+}
+
+function stockPriceSql(itemRef: Prisma.Sql) {
+  const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
+  return Prisma.sql`
+    SELECT ${fromBaseQuantitySql(Prisma.sql`ri."UnitPrice"`, 'pu')} AS "price",
+           rec."ReceiptNo" AS "receiptNo", rec."ReceiptDate" AS "receiptDate"
+    FROM "IM_ReceiptItem" ri
+    JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+    ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'pu')}
+    WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
+      AND rec."ReceiptType" IN (${inTypes})
+      AND ri."UnitPrice" > 0
+      AND ${stockApprovalGateSql('rec')}
+      AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'pu')} IS NULL
+    ORDER BY rec."ReceiptDate" DESC NULLS LAST, rec."RecId" DESC, ri."RecId" DESC
+    LIMIT 1`;
+}
+
+/** Stock valuation for a batch of items (one query, however many ids) — e.g. one list page. */
+export async function loadStockValuations(prisma: PrismaService, itemIds: number[]): Promise<Map<number, StockValuation>> {
+  const ids = [...new Set(itemIds.filter((v) => Number.isInteger(v) && v > 0))];
+  const out = new Map<number, StockValuation>();
+  if (!ids.length) return out;
+  const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+    SELECT i."RecId" AS id, COALESCE(stock."qty", 0) AS "qty", unit_lookup."unitName" AS "unit",
+           price."price", price."receiptNo", price."receiptDate"
+    FROM "IM_Item" i
+    ${itemUnitNameLateral('i')}
+    LEFT JOIN LATERAL ( ${stockSumSql(Prisma.sql`i."RecId"`)} ) stock ON true
+    LEFT JOIN LATERAL ( ${stockPriceSql(Prisma.sql`i."RecId"`)} ) price ON true
+    WHERE i."RecId" IN (${Prisma.join(ids)})`);
+  for (const r of rows) {
+    const qty = Number(r.qty ?? 0);
+    const price = r.price === null || r.price === undefined ? null : Number(r.price);
+    out.set(Number(r.id), {
+      stockOnHand: qty,
+      stockUnit: r.unit ?? null,
+      stockUnitPrice: price,
+      // Nothing in hand (zero, or negative where issues exceed receipts) → value 0; the negative
+      // quantity itself stays visible in stockOnHand.
+      stockValue: qty <= 0 ? 0 : price === null ? null : Math.round(qty * price * 100) / 100,
+      stockPriceReceiptNo: r.receiptNo ?? null,
+      stockPriceReceiptDate: r.receiptDate ? new Date(r.receiptDate).toISOString().slice(0, 10) : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Adds the StockValuation fields to the rows of a card list()/get() result — an array, a paged
+ * result ({ rows }), or a single row. One valuation query for all rows; other fields untouched.
+ */
+export async function withStockValuation<T>(prisma: PrismaService, result: T): Promise<T> {
+  const r: any = result;
+  const rows: any[] = Array.isArray(r) ? r : Array.isArray(r?.rows) ? r.rows : r && typeof r === 'object' ? [r] : [];
+  if (!rows.length) return result;
+  const valuations = await loadStockValuations(prisma, rows.map((row) => Number(row.id)));
+  for (const row of rows) Object.assign(row, valuations.get(Number(row.id)) ?? { stockOnHand: 0, stockUnit: null, stockUnitPrice: null, stockValue: 0, stockPriceReceiptNo: null, stockPriceReceiptDate: null });
+  return result;
+}
+
 const SORTABLE_COLUMNS: Record<string, string> = {
   inventoryCode: 'inventoryCode',
   inventoryName: 'inventoryName',
@@ -83,6 +164,8 @@ const SORTABLE_COLUMNS: Record<string, string> = {
 export const INVENTORY_CARD_COLUMNS = [
   'sourceType', 'inventoryCode', 'inventoryName', 'inventoryType', 'unit',
   'stockOnHand', 'lastPurchasePrice', 'insertedAt', 'insertedBy',
+  // currentAccount: the item's Current Account NAME (never the id); stockValue: see withStockValuation.
+  'currentAccount', 'stockValue',
 ] as const;
 
 export interface InventoryCardListParams {
@@ -91,6 +174,30 @@ export interface InventoryCardListParams {
   sortDir?: 'asc' | 'desc';
   /** Narrow to one card type (fabric | yarn | trim | fixedasset), applied before paging. */
   sourceType?: string;
+}
+
+// Stock on Hand formula — see the comment on InventoryCardService.stockSumSql. Module-level so the
+// Stock Value valuation above shares the exact same SQL text.
+function stockSumSql(itemRef: Prisma.Sql) {
+  const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
+  const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
+  const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
+  return Prisma.sql`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN rec."ReceiptType" IN (${inTypes}) THEN ${baseQty}
+        WHEN rec."ReceiptType" IN (${outTypes}) THEN -${baseQty}
+        ELSE 0
+      END
+    ), 0) AS "qty"
+    FROM "IM_ReceiptItem" ri
+    JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+    ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
+    WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
+      AND rec."ReceiptType" IN (${inTypes}, ${outTypes})
+      AND ${stockApprovalGateSql('rec')}
+      AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} IS NULL
+  `;
 }
 
 @Injectable()
@@ -131,7 +238,8 @@ export class InventoryCardService {
 
     const creatorName = await this.creatorNameExpr();
 
-    return runLegacyList(this.prisma, {
+    // Stock Value (and its price) for the rows of this page — one valuation query, see withStockValuation.
+    return withStockValuation(this.prisma, await runLegacyList(this.prisma, {
       select: Prisma.sql`*`,
       from: Prisma.sql`FROM (
         ${this.fabricAndTrimSlice('FABRIC', 'Fabric', 'fabric', creatorName)}
@@ -150,7 +258,7 @@ export class InventoryCardService {
       // every slice is IM_Item, so "id" (its RecId) is unique across the union
       tiebreak: Prisma.sql`"id"`,
       legacyLimit: 200,
-    }, paging, sanitizeRawRow);
+    }, paging, sanitizeRawRow));
   }
 
   // Fabric, Trim and Fixed Asset share the exact same "no direct Unit column, resolve via the
@@ -168,6 +276,7 @@ export class InventoryCardService {
         i."InventoryName" AS "inventoryName",
         ${label} AS "inventoryType",
         COALESCE(unit_lookup."unitName", '') AS "unit",
+        (SELECT a."CurrentAccountName" FROM "FI_Account" a WHERE a."RecId" = i."CurrentAccountId") AS "currentAccount",
         COALESCE(stock."qty", 0) AS "stockOnHand",
         last_price."price" AS "lastPurchasePrice",
         i."InsertedAt" AS "insertedAt",
@@ -190,6 +299,7 @@ export class InventoryCardService {
         i."InventoryName" AS "inventoryName",
         'Yarn' AS "inventoryType",
         COALESCE(unit_lookup."unitName", '') AS "unit",
+        (SELECT a."CurrentAccountName" FROM "FI_Account" a WHERE a."RecId" = i."CurrentAccountId") AS "currentAccount",
         COALESCE(stock."qty", 0) AS "stockOnHand",
         last_price."price" AS "lastPurchasePrice",
         i."InsertedAt" AS "insertedAt",
@@ -249,25 +359,7 @@ export class InventoryCardService {
   // formula in unit-conversion.util.ts (the same one purchase-order.service.ts's listPending and
   // inventory-receipt.service.ts's assertPendingQty use) rather than a second stock formula.
   private stockSumSql(itemRef: Prisma.Sql) {
-    const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
-    const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
-    const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
-    return Prisma.sql`
-      SELECT COALESCE(SUM(
-        CASE
-          WHEN rec."ReceiptType" IN (${inTypes}) THEN ${baseQty}
-          WHEN rec."ReceiptType" IN (${outTypes}) THEN -${baseQty}
-          ELSE 0
-        END
-      ), 0) AS "qty"
-      FROM "IM_ReceiptItem" ri
-      JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
-      ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
-      WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
-        AND rec."ReceiptType" IN (${inTypes}, ${outTypes})
-        AND ${stockApprovalGateSql('rec')}
-        AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} IS NULL
-    `;
+    return stockSumSql(itemRef);
   }
 
   private stockLateral() {

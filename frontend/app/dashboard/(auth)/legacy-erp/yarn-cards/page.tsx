@@ -8,6 +8,7 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi, fetchAllPages } from "@/lib/nexuscore-api";
+import { StockValueSummary } from "@/components/legacy-erp/stock-value";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Layers, Lock } from "lucide-react";
 import { LegacyErpBreadcrumb } from "@/components/legacy-erp/breadcrumb-trail";
@@ -413,6 +414,10 @@ export default function YarnCardPage() {
           <FieldCheck label="In Use" checked={form.inUse} onChange={(v) => set("inUse", v)} />
         </fieldset>
       </FormGrid>
+
+      {/* Stock In Hand × existing receipt price — see components/legacy-erp/stock-value.tsx */}
+
+      <StockValueSummary id={itemId} load={(id) => legacyErpApi.yarnCards.get(id)} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
         <div className="rounded-xl border bg-card shadow-sm">
