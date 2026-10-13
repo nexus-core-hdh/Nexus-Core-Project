@@ -71,15 +71,37 @@ export class SerialCardListController {
     @Query('status') status?: 'has' | 'none',
     @Query('skip') skip?: string,
     @Query('take') take?: string,
+    // Repeated (?partyNo=A&partyNo=B) for a multi-value Party No column filter.
+    @Query('partyNo') partyNo?: string | string[],
   ) {
     return this.svc.listAll({
       receiptItemId: receiptItemId ? Number(receiptItemId) : undefined,
       inventoryId: inventoryId ? Number(inventoryId) : undefined,
       workOrderId: workOrderId ? Number(workOrderId) : undefined,
       search, serialNo, inventoryQuery, receiptNo, workOrderNo, variantQuery, dateFrom, dateTo, status,
+      partyNos: partyNo == null ? undefined : Array.isArray(partyNo) ? partyNo : [partyNo],
       skip: skip ? Number(skip) : undefined,
       take: take ? Number(take) : undefined,
     });
+  }
+
+  // Barcode scan / Serial No lookup — the barcode value is the Serial No.
+  @Get('by-code/:code')
+  getByCode(@Param('code') code: string) {
+    return this.svc.getByCode(code);
+  }
+
+  // Label printing — the cards (in the given order) with their QR payloads. GET, so it needs the
+  // same read permission as viewing the list. ?ids=1,2,3
+  @Get('labels')
+  getLabels(@Query('ids') ids?: string) {
+    return this.svc.getLabels(String(ids ?? '').split(',').map((s) => Number(s.trim())));
+  }
+
+  // One card with its production identity and Yarn Recipe (detail screen).
+  @Get(':id/detail')
+  getDetail(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.getDetail(id);
   }
 
   @Patch()
@@ -89,6 +111,16 @@ export class SerialCardListController {
     @CurrentUser('companyId') companyId: string,
   ) {
     return this.svc.update(items, userId, companyId);
+  }
+
+  // "Assign to Qty" — PATCH, so it needs the same serial-cards:update permission as Update.
+  @Patch('assign-quantity')
+  assignQuantity(
+    @Body() body: { ids: number[] },
+    @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
+  ) {
+    return this.svc.assignQuantityEqually(body?.ids ?? [], userId, companyId);
   }
 
   @Delete(':id')

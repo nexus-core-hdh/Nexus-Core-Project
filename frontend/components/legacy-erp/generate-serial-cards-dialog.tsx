@@ -11,8 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { legacyErpApi, type SerialCardFieldValues } from "@/lib/nexuscore-api";
+import { printSerialCardLabels } from "@/components/legacy-erp/serial-card-labels";
 import { toast } from "sonner";
-import { Layers, RefreshCw, Save, List as ListIcon } from "lucide-react";
+import { Layers, RefreshCw, Save, List as ListIcon, Printer } from "lucide-react";
 
 // Generate Serial Cards — the full ERP-density entry screen matching the legacy reference
 // ("Options" header row, dense General section, an immediate editable roll grid after Produce,
@@ -24,8 +25,9 @@ import { Layers, RefreshCw, Save, List as ListIcon } from "lucide-react";
 // (/dashboard/legacy-erp/serial-cards) is unchanged and reachable here via the real "List" button.
 //
 // Bottom action bar — only what's genuinely implemented is a real button; every other reference
-// action (Assign to Qty, Label, Batch Labeling, Form, Transfer) is rendered disabled with an
-// honest "not yet implemented" tooltip rather than a fake no-op.
+// action (Assign to Qty, Batch Labeling, Form, Transfer) is rendered disabled with an
+// honest "not yet implemented" tooltip rather than a fake no-op. Label prints one QR label
+// (the card's full information in the QR) per generated roll, via the Serial Cards screen's printer.
 
 interface Context {
   receiptItemId: number;
@@ -445,17 +447,17 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
             ) : (
               <Table className="min-w-[1900px]">
                 <TableHeader>
-                  <TableRow className="bg-background hover:bg-muted/60">
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                     {[
                       "Serial No", "Explanation", "Party No", "Quality Type", "Resource", "Employee", "Man. C/A", "Manufacturer Serial",
                       "Product Date", "Quantity", "Miktar II", "3.Miktar", "Width", "GSM", "Raw Width", "Raw Weight", "Raw Length", "Product Length",
                       "M2", "Mtul", "Pus", "Fine", "Piece Count",
                     ].map((h) => (
-                      <TableHead key={h} className="h-7 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{h}</TableHead>
+                      <TableHead key={h} className="h-7 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                   {rows.map((row) => {
                     const dirty = !!edits[row.RecId];
                     return (
@@ -528,7 +530,23 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
           <Button size="sm" variant="outline" onClick={update} disabled={updating || !dirtyIds.length}>
             <Save className="h-3.5 w-3.5 mr-1.5" />{updating ? "Updating..." : "Update"}
           </Button>
-          <Button size="sm" variant="outline" {...disabledActionProps}>Label</Button>
+          <Button
+            size="sm" variant="outline" disabled={!rows.length || dirtyIds.length > 0}
+            title={dirtyIds.length ? "Update the edited rows first, so the labels show the saved values" : "Print a QR label for every generated roll"}
+            onClick={async () => {
+              try {
+                // QR payloads are built by the server from the saved cards and their linked data.
+                const ids = rows.map((r) => r.RecId);
+                if (!(await printSerialCardLabels(() => legacyErpApi.serialCards.labels(ids) as Promise<any>))) {
+                  toast.error("The label window was blocked — allow pop-ups for this site and try again.");
+                }
+              } catch (e: any) {
+                toast.error(e.message || "Failed to generate labels");
+              }
+            }}
+          >
+            <Printer className="h-3.5 w-3.5 mr-1.5" />Label
+          </Button>
           <Button size="sm" variant="outline" {...disabledActionProps}>Batch Labeling</Button>
           <Button size="sm" variant="outline" {...disabledActionProps}>Form</Button>
           <Button size="sm" variant="outline" onClick={openList} disabled={!receiptId || !itemId} title="Open the dedicated, permanent Serial Cards screen for this receipt line">

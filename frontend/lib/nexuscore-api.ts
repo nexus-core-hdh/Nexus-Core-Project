@@ -619,14 +619,26 @@ export const legacyErpApi = {
       receiptItemId?: number; inventoryId?: number; workOrderId?: number; search?: string;
       serialNo?: string; inventoryQuery?: string; receiptNo?: string; workOrderNo?: string;
       variantQuery?: string; dateFrom?: string; dateTo?: string; status?: "has" | "none";
+      /** Party No column filter — sent as repeated ?partyNo= (values may contain commas). */
+      partyNo?: string[];
       skip?: number; take?: number;
     }) => {
       const qs = new URLSearchParams();
-      if (params) for (const [k, v] of Object.entries(params)) if (v != null && v !== "") qs.set(k, String(v));
+      if (params) for (const [k, v] of Object.entries(params)) {
+        if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
+        else if (v != null && v !== "") qs.set(k, String(v));
+      }
       const s = qs.toString();
       return api.get(`/legacy-erp/serial-cards${s ? `?${s}` : ""}`);
     },
     updateFlat: (items: SerialCardUpdateItem[]) => api.patch(`/legacy-erp/serial-cards`, items),
+    // One card with its production details + Yarn Recipe; byCode = barcode scan (barcode = Serial No).
+    detail: (id: number) => api.get(`/legacy-erp/serial-cards/${id}/detail`),
+    // Label printing — the cards in this order, each with its server-built QR payload.
+    labels: (ids: number[]) => api.get(`/legacy-erp/serial-cards/labels?ids=${ids.join(",")}`),
+    byCode: (code: string) => api.get(`/legacy-erp/serial-cards/by-code/${encodeURIComponent(code.trim())}`),
+    // "Assign to Qty" — splits each receipt line's unassigned quantity equally across the given cards.
+    assignQuantity: (ids: number[]) => api.patch(`/legacy-erp/serial-cards/assign-quantity`, { ids }),
     remove: (id: number) => api.delete(`/legacy-erp/serial-cards/${id}`),
   },
   workOrders: {
