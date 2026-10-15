@@ -245,7 +245,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({ tabs: remaining, activeKey: nextActive });
       },
 
-      activateTab: (key) => set({ activeKey: key }),
+      // Ignores a key with no open tab — activating one would leave no tab visible or highlighted.
+      activateTab: (key) => {
+        if (get().tabs.some((t) => t.key === key)) set({ activeKey: key });
+      },
 
       pin: (key, href) => {
         const { myMenu } = get();
@@ -306,18 +309,31 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         myMenu: state.myMenu,
       }),
       // Tabs saved before records got their own tabs were keyed by bare path (`form` showing
-      // `form?id=6`) — re-key them to their canonical record key, dropping duplicates.
+      // `form?id=6`), and tabs saved before company slugs used `/dashboard/...` paths — both are
+      // re-keyed to their canonical (slug-free) record key, dropping duplicates.
+      // Saved tabs load asynchronously, after the page for the current URL has already opened (and
+      // activated) its own tab. The default merge would replace that live tab list with the saved
+      // one, restoring a stale active tab that no longer matches the URL. Instead: saved tabs keep
+      // their order, tabs opened before loading finished are kept (appended at the end, with their
+      // live state), and the tab already active for the current URL stays active.
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<WorkspacePersisted>;
+        const appHref = (href: string) => (href === "/dashboard" || href.startsWith("/dashboard/") ? href.slice("/dashboard".length) || "/default" : href);
         const renamed = new Map<string, string>();
-        const tabs: WorkspaceTab[] = [];
+        const savedTabs: WorkspaceTab[] = [];
         for (const tab of saved.tabs ?? []) {
-          const key = tabKeyForHref(tab.href) ?? tab.key;
+          const href = appHref(tab.href);
+          const key = tabKeyForHref(href) ?? appHref(tab.key);
           renamed.set(tab.key, key);
-          if (!tabs.some((t) => t.key === key)) tabs.push({ ...tab, key });
+          if (savedTabs.some((t) => t.key === key)) continue;
+          savedTabs.push(current.tabs.find((c) => c.key === key) ?? { ...tab, key, href, dirty: false });
         }
-        const activeKey = saved.activeKey ? renamed.get(saved.activeKey) ?? saved.activeKey : null;
-        return { ...current, ...saved, tabs, activeKey };
+        const opened = current.tabs.filter((c) => !savedTabs.some((t) => t.key === c.key));
+        const tabs = [...savedTabs, ...opened];
+        const savedActive = saved.activeKey ? renamed.get(saved.activeKey) ?? saved.activeKey : null;
+        const wanted = current.activeKey ?? savedActive;
+        const activeKey = tabs.some((t) => t.key === wanted) ? wanted : tabs[tabs.length - 1]?.key ?? null;
+        return { ...current, tabs, activeKey, myMenu: saved.myMenu ?? current.myMenu };
       },
     }
   )

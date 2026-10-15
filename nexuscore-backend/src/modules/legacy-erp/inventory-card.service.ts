@@ -115,7 +115,7 @@ export async function loadStockValuations(prisma: PrismaService, itemIds: number
            price."price", price."receiptNo", price."receiptDate"
     FROM "IM_Item" i
     ${itemUnitNameLateral('i')}
-    LEFT JOIN LATERAL ( ${stockSumSql(Prisma.sql`i."RecId"`)} ) stock ON true
+    LEFT JOIN LATERAL ( ${stockOnHandSumSql(Prisma.sql`i."RecId"`)} ) stock ON true
     LEFT JOIN LATERAL ( ${stockPriceSql(Prisma.sql`i."RecId"`)} ) price ON true
     WHERE i."RecId" IN (${Prisma.join(ids)})`);
   for (const r of rows) {
@@ -176,9 +176,10 @@ export interface InventoryCardListParams {
   sourceType?: string;
 }
 
-// Stock on Hand formula — see the comment on InventoryCardService.stockSumSql. Module-level so the
-// Stock Value valuation above shares the exact same SQL text.
-function stockSumSql(itemRef: Prisma.Sql) {
+// Stock on Hand SQL for one item (see the comment on InventoryCardService.stockSumSql, which
+// delegates here). Exported so other read-only consumers (the Report Builder's Legacy ERP
+// inventory reports) use this exact formula instead of a second, divergent one.
+export function stockOnHandSumSql(itemRef: Prisma.Sql): Prisma.Sql {
   const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
   const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
   const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
@@ -359,7 +360,7 @@ export class InventoryCardService {
   // formula in unit-conversion.util.ts (the same one purchase-order.service.ts's listPending and
   // inventory-receipt.service.ts's assertPendingQty use) rather than a second stock formula.
   private stockSumSql(itemRef: Prisma.Sql) {
-    return stockSumSql(itemRef);
+    return stockOnHandSumSql(itemRef);
   }
 
   private stockLateral() {

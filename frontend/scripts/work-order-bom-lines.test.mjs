@@ -7,7 +7,7 @@ import { register } from "node:module";
 import { describe, it } from "node:test";
 
 register("./workspace-test-loader.mjs", import.meta.url);
-const COMPONENTS = "../app/dashboard/(auth)/plm/style-cards/[id]/_components";
+const COMPONENTS = "../app/[company]/(auth)/plm/style-cards/[id]/_components";
 const { workOrderLineToBomRow, workOrderRowToRecipeLine, replaceTransferredRows, STYLE_CARD_TRANSFER_OPTIONS } = await import(`${COMPONENTS}/work-order-bom-lines.ts`);
 
 const TYPES = ["fabric", "trim", "ornament", "process"];
@@ -94,7 +94,7 @@ describe("Transfer from Style Card options", () => {
 });
 
 describe("screen wiring", () => {
-  const page = readFileSync(new URL("../app/dashboard/(auth)/legacy-erp/work-orders/page.tsx", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../app/[company]/(auth)/legacy-erp/work-orders/page.tsx", import.meta.url), "utf8");
   const bomTab = readFileSync(new URL(`${COMPONENTS}/bom-tab.tsx`, import.meta.url), "utf8");
   const api = readFileSync(new URL("../lib/nexuscore-api.ts", import.meta.url), "utf8");
 

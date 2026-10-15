@@ -12,15 +12,15 @@ const { defaultFilter } = await import("cmdk");
 const { flattenMenuTree, searchKeywordsFor } = await import("@/lib/search/screen-index");
 const { useScreenIndexStore } = await import("@/lib/store/screen-index-store");
 
-const PACKING_HREF = "/dashboard/legacy-erp/packing-lists-list";
+const PACKING_HREF = "/legacy-erp/packing-lists-list";
 // Shape (and these rows) of the live GET /menu-items response's "Legacy ERP" group.
 const legacyGroup = (withPackingList) => ({
   title: "Legacy ERP",
   items: [
-    { title: "Work Order", href: "/dashboard/legacy-erp/work-orders-list" },
-    { title: "1 - Purchase Order", href: "/dashboard/legacy-erp/purchase-orders-list" },
-    { title: "Inventory Receipts", href: "#", items: [{ title: "2 - Purchase Receipt", href: "/dashboard/legacy-erp/inventory-receipts-list?receiptType=2" }] },
-    { title: "Order Manufacturing Entry", href: "/dashboard/legacy-erp/order-manufacturing-entry" },
+    { title: "Work Order", href: "/legacy-erp/work-orders-list" },
+    { title: "1 - Purchase Order", href: "/legacy-erp/purchase-orders-list" },
+    { title: "Inventory Receipts", href: "#", items: [{ title: "2 - Purchase Receipt", href: "/legacy-erp/inventory-receipts-list?receiptType=2" }] },
+    { title: "Order Manufacturing Entry", href: "/legacy-erp/order-manufacturing-entry" },
     ...(withPackingList ? [{ title: "Packing List", href: PACKING_HREF, icon: "Package" }] : []),
   ],
 });

@@ -12,9 +12,9 @@ const { worklistCellValue } = await import("@/lib/legacy-erp/worklist-types");
 
 const src = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 const LISTS = {
-  "Yarn Cards": "app/dashboard/(auth)/legacy-erp/yarn-cards-list/page.tsx",
-  "Fabric Cards": "app/dashboard/(auth)/legacy-erp/fabric-cards-list/page.tsx",
-  "Trim Cards": "app/dashboard/(auth)/legacy-erp/trim-inventory-cards-list/page.tsx",
+  "Yarn Cards": "app/[company]/(auth)/legacy-erp/yarn-cards-list/page.tsx",
+  "Fabric Cards": "app/[company]/(auth)/legacy-erp/fabric-cards-list/page.tsx",
+  "Trim Cards": "app/[company]/(auth)/legacy-erp/trim-inventory-cards-list/page.tsx",
 };
 
 describe("inventory card listings — standard column layout", () => {
@@ -56,7 +56,7 @@ describe("inventory card listings — standard column layout", () => {
     assert.match(summary, /cell\("Stock In Hand", data\.stockOnHand == null \? "—" : format\(data\.stockOnHand, "quantity"\)\)/);
     assert.match(summary, /cell\("Unit", data\.stockUnit \|\| "—"\)/);
     for (const page of ["yarn-cards", "fabric-cards", "trim-inventory-cards"]) {
-      assert.match(src(`app/dashboard/(auth)/legacy-erp/${page}/page.tsx`), /<StockValueSummary id=\{itemId\}/);
+      assert.match(src(`app/[company]/(auth)/legacy-erp/${page}/page.tsx`), /<StockValueSummary id=\{itemId\}/);
     }
   });
 });

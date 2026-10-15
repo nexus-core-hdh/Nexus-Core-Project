@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import type { DecimalFieldKey } from "@/lib/legacy-erp/decimal-parameters";
@@ -54,6 +55,20 @@ export function EditableGridInput({ value, onChange, align = "left", type = "tex
     }
     onBlur?.(e);
   };
+
+  if (type === "date") {
+    return (
+      <DatePicker
+        value={value === null || value === undefined ? "" : String(value)}
+        onValueChange={onChange}
+        onBlur={() => onBlur?.({} as React.FocusEvent<HTMLInputElement>)}
+        onKeyDown={props.onKeyDown as React.KeyboardEventHandler<HTMLButtonElement> | undefined}
+        autoFocus={props.autoFocus}
+        disabled={props.disabled}
+        className={cn("h-8", className)}
+      />
+    );
+  }
 
   return (
     <Input

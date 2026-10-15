@@ -1,5 +1,5 @@
 // One-off, idempotent nav seed for the new "Yarn Planning" screen
-// (frontend/app/dashboard/(auth)/legacy-erp/yarn-planning/page.tsx,
+// (frontend/app/[company]/(auth)/legacy-erp/yarn-planning/page.tsx,
 // nexuscore-backend/src/modules/legacy-erp/yarn-planning.{controller,service}.ts). This script
 // ONLY adds its menu entry, no new screen/API/table of its own.
 //
@@ -17,7 +17,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/yarn-planning';
+  const href = '/legacy-erp/yarn-planning';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): Yarn Planning -> ${href}`);

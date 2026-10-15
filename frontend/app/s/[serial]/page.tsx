@@ -14,7 +14,7 @@ export default async function SerialCardScanPage({ params }: { params: Promise<{
   const serialNo = decodeURIComponent(serial ?? "").trim();
   const token = (await cookies()).get("auth_token")?.value;
   if (!token) {
-    redirect(`/dashboard/login/v1?next=${encodeURIComponent(`/s/${encodeURIComponent(serialNo)}`)}`);
+    redirect(`/login/v1?next=${encodeURIComponent(`/s/${encodeURIComponent(serialNo)}`)}`);
   }
   return <SerialCardScanView serialNo={serialNo} />;
 }

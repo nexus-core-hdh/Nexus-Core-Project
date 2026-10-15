@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
+import Link from "@/components/app-link";
 
 import { Button } from "@/components/ui/button";
 
@@ -17,7 +17,7 @@ export default function NotFound() {
         </p>
         <div className="mt-10 flex items-center justify-center gap-x-2">
           <Button size="lg" asChild>
-            <Link href="/dashboard">Go back home</Link>
+            <Link href="/default">Go back home</Link>
           </Button>
           <Button size="lg" variant="ghost">
             Contact support <ArrowRight className="ms-2 h-4 w-4" />

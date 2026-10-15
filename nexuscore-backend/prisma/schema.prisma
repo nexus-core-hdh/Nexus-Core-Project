@@ -398,6 +398,9 @@ model Company {
   subscriptionEndDate      DateTime?
   trialEndDate             DateTime?
   billingCycle             BillingCycle?      @default(Monthly)
+  /// The platform owner (Nexus Core): manages the other companies and their billing; never on a
+  /// trial or subscription limit itself. Exactly one company has this set (see prisma/seed.ts).
+  isPlatformOwner          Boolean            @default(false)
   customFieldsSectionTitle String?            @default("Custom Fields")
   metaAppId                String?
   metaAppSecret            String?
@@ -2728,6 +2731,32 @@ model ReportTemplate {
   @@index([companyId])
   @@index([branchId])
   @@index([entityType])
+}
+
+// User-defined report (Report Builder). `dataSource` names a whitelisted source in
+// src/modules/reports/report-sources.ts — columns/filters/sorting only ever reference that
+// source's declared fields, never raw table or column names. Each report gets its own menu item
+// (menuItemId) under its module's "Reports" menu, so it opens as a separate screen.
+model ReportDefinition {
+  id          String   @id @default(uuid())
+  module      String
+  name        String
+  description String?
+  dataSource  String
+  /// [{ field, label?, total? }]
+  columns     Json
+  /// [{ id, field, operator, value?, value2?, prompt? }]
+  filters     Json     @default("[]")
+  /// [{ field, direction }]
+  sorting     Json     @default("[]")
+  menuItemId  String?
+  companyId   String
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId, module])
 }
 
 model PdfReport {

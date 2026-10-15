@@ -94,7 +94,7 @@ function findOwningEntry(key: string, entryByHref: Map<string, ScreenEntry>): Sc
  *        3b. No record yet (a create route, or still loading) falls back to
  *            "New {Screen}"/"Edit {Screen}" from the `mode` query param.
  *   4. A humanized version of the route's final segment — always readable,
- *      never a raw "/dashboard/..." path, even with zero menu presence.
+ *      never a raw "/..." path, even with zero menu presence.
  *
  * Works for every module (Legacy ERP, PLM, Settings, Finance, BPM, ...)
  * without a per-screen title map: new screens get a correct label the moment

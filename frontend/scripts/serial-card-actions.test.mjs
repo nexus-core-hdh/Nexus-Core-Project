@@ -145,7 +145,7 @@ describe("Label — QR label per card", () => {
 });
 
 describe("Scan, detail and Generate dialog", () => {
-  const page = src("app/dashboard/(auth)/legacy-erp/serial-cards/page.tsx");
+  const page = src("app/[company]/(auth)/legacy-erp/serial-cards/page.tsx");
   const dialog = src("components/legacy-erp/serial-card-edit-dialog.tsx");
   const gen = src("components/legacy-erp/generate-serial-cards-dialog.tsx");
 
@@ -256,18 +256,24 @@ describe("Scan, detail and Generate dialog", () => {
   it("the scan page requires an ERP login and returns to the card after signing in", () => {
     const route = src("app/s/[serial]/page.tsx");
     assert.match(route, /const token = \(await cookies\(\)\)\.get\("auth_token"\)\?\.value;/);
-    assert.match(route, /redirect\(`\/dashboard\/login\/v1\?next=\$\{encodeURIComponent\(`\/s\/\$\{encodeURIComponent\(serialNo\)\}`\)\}`\);/);
+    assert.match(route, /redirect\(`\/login\/v1\?next=\$\{encodeURIComponent\(`\/s\/\$\{encodeURIComponent\(serialNo\)\}`\)\}`\);/);
     assert.match(route, /robots: \{ index: false, follow: false \}/);
     const scan = src("components/legacy-erp/serial-card-scan-view.tsx");
     assert.match(scan, /legacyErpApi\.serialCards\.byCode\(serialNo\)/, "data from the permission-checked API");
     assert.match(scan, /e\?\.status === 401[\s\S]*document\.cookie = "auth_token=; path=\/; max-age=0; SameSite=Lax";/, "stale session cleared, no redirect loop");
     assert.match(scan, /e\?\.status === 403/);
-    const login = src("app/dashboard/(guest)/login/v1/page.tsx");
-    assert.equal((login.match(/router\.push\(nextPathFromLocation\(\) \?\? "\/dashboard\/default"\)/g) ?? []).length, 3);
+    const login = src("app/(guest)/login/v1/page.tsx");
+    assert.equal((login.match(/router\.push\(nextPathFromLocation\(\) \?\? "\/default"\)/g) ?? []).length, 3);
     const proxy = src("proxy.ts");
-    assert.match(proxy, /const next = safeNextPath\(request\.nextUrl\.searchParams\.get\('next'\)\);/);
-    assert.match(proxy, /if \(pathname\.startsWith\('\/s\/'\) && !token\) \{[\s\S]*login\.searchParams\.set\('next', pathname\);/, "real 307 to login for signed-out scans");
-    assert.match(proxy, /'\/s\/:path\*'/);
+    // Signed out: a real redirect to login carrying the scan as the return path.
+    assert.match(proxy, /if \(pathname\.startsWith\("\/s\/"\)\) \{\s*if \(!token\) return toLogin\(request, pathname\);\s*return NextResponse\.next\(\);/, "real 307 to login for signed-out scans");
+    assert.match(proxy, /url\.search = next \? `\?next=\$\{encodeURIComponent\(next\)\}` : "";/);
+    // Signed in on a login link: straight to the (same-origin) return path.
+    assert.match(proxy, /const next = safeNextPath\(request\.nextUrl\.searchParams\.get\("next"\)\);/);
+    // The proxy runs for /s/ (catch-all matcher) and `s` can never be a company slug.
+    assert.match(proxy, /matcher: \["\/\(\(\?!_next\/\|api\/\|/);
+    assert.match(src("lib/company-path.ts"), /^\s+"s",$/m);
+    assert.match(readFileSync(new URL("../../nexuscore-backend/src/common/company-slug.ts", import.meta.url), "utf8"), /'s',/);
   });
 
   it("Generate Serial Cards: no client-side or server-side quantity cap", () => {
@@ -280,7 +286,7 @@ describe("Scan, detail and Generate dialog", () => {
 
 
 describe("Serial Cards page — bottom action bar", () => {
-  const page = src("app/dashboard/(auth)/legacy-erp/serial-cards/page.tsx");
+  const page = src("app/[company]/(auth)/legacy-erp/serial-cards/page.tsx");
 
   it("has every applicable legacy action, and no Form placeholder", () => {
     for (const label of ["Load", "Clear", "Assign to Qty", "Update", "Delete", "Copy Column", "Label", "Detail"]) {
@@ -356,13 +362,13 @@ describe("Generate Serial Cards — fresh session on open", () => {
   it("Update saves session rows without blanking Expiration Date; List still opens all cards", () => {
     assert.match(gen, /expirationDate: \(v\("expirationDate" as any\) as any\) \?\? null,/);
     assert.match(gen, /loadRows\(sessionIds, showEarlier, true\)/);
-    assert.match(gen, /navigateOrOpenTab\(router, `\/dashboard\/legacy-erp\/serial-cards\?receiptItemId=\$\{itemId\}&receiptId=\$\{receiptId\}`\)/);
+    assert.match(gen, /navigateOrOpenTab\(router, `\/legacy-erp\/serial-cards\?receiptItemId=\$\{itemId\}&receiptId=\$\{receiptId\}`\)/);
     assert.match(gen, /const ids = rows\.map\(\(r\) => r\.RecId\);/, "Label prints this session's rolls");
   });
 });
 
 describe("Party No column filter", () => {
-  const page = src("app/dashboard/(auth)/legacy-erp/serial-cards/page.tsx");
+  const page = src("app/[company]/(auth)/legacy-erp/serial-cards/page.tsx");
 
   it("the shared filter hook offers server-supplied options alongside the loaded rows' values", async () => {
     const { useColumnFilters } = await import("@/hooks/use-column-filters");
@@ -377,7 +383,7 @@ describe("Party No column filter", () => {
   });
 
   it("the Party No header renders the same funnel filter as Inventory Code / Order No / Style No", async () => {
-    const { ReportGrid } = await import("@/app/dashboard/(auth)/legacy-erp/fabric-yarn-requirements/_components/report-grid");
+    const { ReportGrid } = await import("@/app/[company]/(auth)/legacy-erp/fabric-yarn-requirements/_components/report-grid");
     const cols = [
       { key: "inventoryCode", label: "Inventory Code", defaultWidth: 100, render: (r) => r.c, filterable: true, filterValue: (r) => r.c },
       { key: "partyNo", label: "Party No", defaultWidth: 90, render: (r) => r.p, filterable: true, filterValue: (r) => r.p, filterOptions: ["211"] },
@@ -402,7 +408,7 @@ describe("Party No column filter", () => {
   });
 
   it("ReportGrid only reports filter changes to callers that opt in", () => {
-    const grid = src("app/dashboard/(auth)/legacy-erp/fabric-yarn-requirements/_components/report-grid.tsx");
+    const grid = src("app/[company]/(auth)/legacy-erp/fabric-yarn-requirements/_components/report-grid.tsx");
     assert.match(grid, /useEffect\(\(\) => \{ onFiltersChangeRef\.current\?\.\(columnFilters\); \}, \[columnFilters\]\);/);
     assert.match(grid, /onColumnFiltersChange\?: \(filters: Record<string, ColumnFilterState>\) => void;/);
   });

@@ -308,7 +308,7 @@ describe('value auditing', () => {
       assert.equal(r.parentEntityType, 'FiReceipt');
       assert.equal(r.parentEntityId, rec());
       assert.equal(r.parentDocumentNo, 'FR-1');
-      assert.equal(r.screenKey, '/dashboard/legacy-erp/financial-receipt-master-data');
+      assert.equal(r.screenKey, '/legacy-erp/financial-receipt-master-data');
       assert.ok(r.createdAt instanceof Date);
     }
     assert.equal(rows[0].oldValues, null);

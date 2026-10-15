@@ -390,8 +390,8 @@ describe('data safety', () => {
       '../../src/modules/legacy-erp/packing-list.service.ts',
       '../../src/modules/legacy-erp/packing-list.calc.ts',
       '../../../frontend/lib/legacy-erp/packing-list-calc.ts',
-      '../../../frontend/app/dashboard/(auth)/legacy-erp/packing-lists/page.tsx',
-      '../../../frontend/app/dashboard/(auth)/legacy-erp/packing-lists-list/page.tsx',
+      '../../../frontend/app/[company]/(auth)/legacy-erp/packing-lists/page.tsx',
+      '../../../frontend/app/[company]/(auth)/legacy-erp/packing-lists-list/page.tsx',
     ];
     const sizeLiteral = /["'`](?:\d{2}[MY]|X{0,3}S|M|X{0,3}L|XXL|XXXL)["'`]/;
     for (const f of files) {

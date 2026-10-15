@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 import { CommandIcon, SearchIcon } from "lucide-react";
 
 import {

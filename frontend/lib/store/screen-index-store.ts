@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { menuItemsApi, permissionSettingsApi } from "@/lib/api";
+import { MENU_CHANGED_EVENT } from "@/lib/workspace/menu-events";
 import { getCurrentUser } from "@/lib/auth";
 import { transformMenuItem, mergeAdministrationExtras, type NavGroup, type NavItem } from "@/components/layout/sidebar/nav-main";
 import { mergeFinanceErpModule } from "@/lib/finance-erp/nav";
@@ -10,8 +11,8 @@ import { flattenMenuTree, type ScreenEntry } from "@/lib/search/screen-index";
 // calling the backend, so a batched check here resolves the exact same
 // resourcePath keys a single-item check would.
 function normalizeResourcePath(href: string): string {
-  return href.startsWith("/dashboard/")
-    ? href.replace("/dashboard/", "").replace(/\//g, ".")
+  return href.startsWith("/")
+    ? href.replace("/", "").replace(/\//g, ".")
     : href.replace(/\//g, ".");
 }
 
@@ -161,3 +162,15 @@ export const useScreenIndexStore = create<ScreenIndexState>((set, get) => ({
     }
   },
 }));
+
+
+/**
+ * Call after changing menu items at runtime (e.g. creating a user-defined report, which adds
+ * its own menu entry): reloads the cached screen index (search, Module Launcher, tab titles)
+ * and tells the sidebar to re-fetch its menu, so the change shows without a page reload.
+ */
+export function notifyMenuChanged() {
+  useScreenIndexStore.setState({ rawLoaded: false, hasLoaded: false });
+  void useScreenIndexStore.getState().loadRaw();
+  window.dispatchEvent(new Event(MENU_CHANGED_EVENT));
+}

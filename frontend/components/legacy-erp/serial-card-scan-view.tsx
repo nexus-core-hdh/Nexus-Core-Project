@@ -18,7 +18,7 @@ type State =
 
 export function SerialCardScanView({ serialNo }: { serialNo: string }) {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const loginHref = `/dashboard/login/v1?next=${encodeURIComponent(`/s/${encodeURIComponent(serialNo)}`)}`;
+  const loginHref = `/login/v1?next=${encodeURIComponent(`/s/${encodeURIComponent(serialNo)}`)}`;
 
   useEffect(() => {
     let cancelled = false;

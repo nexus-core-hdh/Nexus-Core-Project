@@ -1,5 +1,5 @@
 // One-off, idempotent nav seed for the already-existing "Fabric Planning" screen
-// (frontend/app/dashboard/(auth)/legacy-erp/fabric-planning/page.tsx,
+// (frontend/app/[company]/(auth)/legacy-erp/fabric-planning/page.tsx,
 // nexuscore-backend/src/modules/legacy-erp/fabric-planning.{controller,service}.ts — all built in
 // an earlier task; this script ONLY adds its menu entry, no new screen/API/table).
 //
@@ -23,7 +23,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/fabric-planning';
+  const href = '/legacy-erp/fabric-planning';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): Fabric Planning -> ${href}`);

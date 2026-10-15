@@ -25,10 +25,10 @@ const businessSnapshot = async () => {
 };
 
 const SCREENS: { entity: string; record: () => string; documentNo: string; screenKey: string }[] = [
-  { entity: 'WorkOrder', record: () => w.records.workOrder, documentNo: 'WO-1', screenKey: '/dashboard/legacy-erp/work-orders-list' },
-  { entity: 'PurchaseOrder', record: () => w.records.purchaseOrder, documentNo: 'PO-1', screenKey: '/dashboard/legacy-erp/purchase-orders-list' },
-  { entity: 'SubcontractOrder', record: () => w.records.subcontractOrder, documentNo: 'SC-1', screenKey: '/dashboard/legacy-erp/subcontract-orders-list' },
-  { entity: 'Contract', record: () => w.records.purchaseContract, documentNo: 'PC-1', screenKey: '/dashboard/legacy-erp/contracts-list?receiptType=1' },
+  { entity: 'WorkOrder', record: () => w.records.workOrder, documentNo: 'WO-1', screenKey: '/legacy-erp/work-orders-list' },
+  { entity: 'PurchaseOrder', record: () => w.records.purchaseOrder, documentNo: 'PO-1', screenKey: '/legacy-erp/purchase-orders-list' },
+  { entity: 'SubcontractOrder', record: () => w.records.subcontractOrder, documentNo: 'SC-1', screenKey: '/legacy-erp/subcontract-orders-list' },
+  { entity: 'Contract', record: () => w.records.purchaseContract, documentNo: 'PC-1', screenKey: '/legacy-erp/contracts-list?receiptType=1' },
 ];
 
 for (const s of SCREENS) {
@@ -129,6 +129,6 @@ describe('Contract covers Purchase and Sale contracts as one entity', () => {
     assert.equal(await valueOf('Contract', w.records.purchaseContract, f), 'purchase');
     assert.equal(await valueOf('Contract', w.records.saleContract, f), 'sale');
     const audit = await w.prisma.auditLog.findFirstOrThrow({ where: { entityType: 'CustomFieldValue', entityId: f, parentEntityId: w.records.saleContract } });
-    assert.equal(audit.screenKey, '/dashboard/legacy-erp/contracts-list?receiptType=2');
+    assert.equal(audit.screenKey, '/legacy-erp/contracts-list?receiptType=2');
   });
 });

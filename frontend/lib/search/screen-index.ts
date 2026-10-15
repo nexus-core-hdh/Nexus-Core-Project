@@ -25,7 +25,7 @@ export interface ScreenEntry {
  */
 export const SCREEN_SEARCH_KEYWORDS: Record<string, string[]> = {
   // Legacy name of the same documents (IM_PackagingList / IM_Packaging).
-  "/dashboard/legacy-erp/packing-lists-list": ["packing", "packing list", "packaging"],
+  "/legacy-erp/packing-lists-list": ["packing", "packing list", "packaging"],
 };
 
 export const searchKeywordsFor = (href: string): string[] => SCREEN_SEARCH_KEYWORDS[href] ?? [];

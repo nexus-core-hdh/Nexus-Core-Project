@@ -36,9 +36,9 @@ const RECEIPT_TYPE = 1; // "[1-Purchase Order]" — see comment above
 // each screenKey matches its screen's real MenuItem.href exactly, same convention as everywhere
 // else in this module.
 export const screenKeyFor = (receiptType: number): string => {
-  if (receiptType === RECEIPT_TYPE) return '/dashboard/legacy-erp/purchase-orders-list';
-  if (receiptType === 3) return '/dashboard/legacy-erp/subcontract-orders-list';
-  return `/dashboard/legacy-erp/purchase-orders-list?receiptType=${receiptType}`;
+  if (receiptType === RECEIPT_TYPE) return '/legacy-erp/purchase-orders-list';
+  if (receiptType === 3) return '/legacy-erp/subcontract-orders-list';
+  return `/legacy-erp/purchase-orders-list?receiptType=${receiptType}`;
 };
 
 // Exported for worklist-fields.service.ts (Customize Worklist field-metadata source).

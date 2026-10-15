@@ -8,7 +8,7 @@ export interface WorkspaceModule {
 
 // The Workspace framework doesn't hand-register screens. `GENERATED_WORKSPACE_MODULES`
 // is produced by scripts/generate-workspace-registry.mjs, which walks the real
-// Next.js file-based router (app/dashboard/(auth)/**/page.tsx) — the same
+// Next.js file-based router (app/[company]/(auth)/**/page.tsx) — the same
 // "routing configuration" the App Router itself uses — and runs automatically
 // before `next dev`/`next build` (see package.json). Adding a new screen means
 // adding its page.tsx and a nav entry; nothing here needs to change.
@@ -73,13 +73,21 @@ const RECORD_ID_PARAM = "id";
 // Routes whose tab identity is a param other than `id` (it replaces `id` for that route). Same rule
 // — one independently-open tab per distinct value — for screens whose identity isn't a record id.
 const MULTI_KEY_ROUTES: Record<string, string> = {
-  "/dashboard/legacy-erp/fabric-yarn-requirements": "type",
+  "/legacy-erp/fabric-yarn-requirements": "type",
   // Each Production Color gets its own open Cutting Entry tab, matching "each color must have its
   // own independent Cutting context". The Cutting Card MAIN screen (search + color matrix, no color
   // param yet) carries no such param — one shared tab reused across whichever Work Order is searched.
-  "/dashboard/legacy-erp/cutting-card/entry": "color",
+  "/legacy-erp/cutting-card/entry": "color",
   // One open tab per (Order, Process, mode, Color) — `k` is built by Order Manufacturing Entry's buttons.
-  "/dashboard/legacy-erp/order-manufacturing-entry/entry": "k",
+  "/legacy-erp/order-manufacturing-entry/entry": "k",
+  // Every user-defined report (PLM, Legacy ERP, Docket Management) is its own screen (its own menu entry and its own tab), and
+  // each report being edited in the designer gets its own tab too.
+  "/plm/reports/view": "id",
+  "/plm/reports/designer": "id",
+  "/legacy-erp/reports/view": "id",
+  "/legacy-erp/reports/designer": "id",
+  "/dockets/reports/view": "id",
+  "/dockets/reports/designer": "id",
 };
 
 /** Computes a tab's key for a given module path + the href being opened: `path?id=<value>` when the

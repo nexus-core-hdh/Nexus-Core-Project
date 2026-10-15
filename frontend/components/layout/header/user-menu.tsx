@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import Link from "next/link";
+import Link from "@/components/app-link";
 import * as React from "react";
 import { Progress } from "@/components/ui/progress";
 import { getCurrentUser, getFirstLetter, logout, type User } from "@/lib/auth";
@@ -104,20 +104,20 @@ export default function UserMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem asChild>
-            <Link href="/dashboard/pages/pricing/column">
+            <Link href="/pages/pricing/column">
               <Sparkles /> Upgrade to Pro
             </Link>
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuGroup>
           <DropdownMenuItem asChild>
-            <Link href="/dashboard/pages/profile">
+            <Link href="/pages/profile">
               <BadgeCheck />
               Profile
             </Link>
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
-            <Link href="/dashboard/pages/settings/billing">
+            <Link href="/pages/settings/billing">
               <CreditCard />
               Billing
             </Link>

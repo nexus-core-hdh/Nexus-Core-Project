@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import { printSerialCardLabels } from "@/components/legacy-erp/serial-card-label
 import { toast } from "sonner";
 import { Layers, RefreshCw, Save, List as ListIcon, Printer } from "lucide-react";
 
+import { DatePicker } from "@/components/ui/date-picker";
 // Generate Serial Cards — the full ERP-density entry screen matching the legacy reference
 // ("Options" header row, dense General section, an immediate editable roll grid after Produce,
 // a fixed bottom action bar). Reuses the exact existing persistence layer end to end:
@@ -22,7 +23,7 @@ import { Layers, RefreshCw, Save, List as ListIcon, Printer } from "lucide-react
 // section's own real IM_SerialCard columns as batch defaults — no new transaction/locking/audit
 // logic), serial-card.controller.ts's existing routes, and legacyErpApi.serialCards' existing
 // context/list/produce/update methods. The dedicated, permanent list screen
-// (/dashboard/legacy-erp/serial-cards) is unchanged and reachable here via the real "List" button.
+// (/legacy-erp/serial-cards) is unchanged and reachable here via the real "List" button.
 //
 // Bottom action bar — only what's genuinely implemented is a real button; every other reference
 // action (Assign to Qty, Batch Labeling, Form, Transfer) is rendered disabled with an
@@ -333,7 +334,7 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
 
   const openList = () => {
     if (!receiptId || !itemId) return;
-    navigateOrOpenTab(router, `/dashboard/legacy-erp/serial-cards?receiptItemId=${itemId}&receiptId=${receiptId}`);
+    navigateOrOpenTab(router, `/legacy-erp/serial-cards?receiptItemId=${itemId}&receiptId=${receiptId}`);
   };
 
   const numInputCls = "h-7 w-20 text-right text-xs";
@@ -441,11 +442,11 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
 
                 <div className="space-y-1">
                   <label className="text-[11px] text-muted-foreground">Product Date</label>
-                  <Input type="date" className="h-7 text-xs" value={fmtDate(defaults.manufacturingDate)} onChange={(e) => setDefault({ manufacturingDate: e.target.value || "" })} />
+                  <DatePicker className="h-7 text-xs" value={fmtDate(defaults.manufacturingDate)} onChange={(e) => setDefault({ manufacturingDate: e.target.value || "" })} />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[11px] text-muted-foreground">Expiration Date</label>
-                  <Input type="date" className="h-7 text-xs" value={fmtDate(defaults.expirationDate)} onChange={(e) => setDefault({ expirationDate: e.target.value || "" })} />
+                  <DatePicker className="h-7 text-xs" value={fmtDate(defaults.expirationDate)} onChange={(e) => setDefault({ expirationDate: e.target.value || "" })} />
                 </div>
 
                 <Field label="Receipt No" value={context.receiptNo} />
@@ -548,7 +549,7 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
                           />
                         </TableCell>
                         <TableCell className="py-1"><Input className={textInputCls} value={String((rowValue(row, "producerSerialCode" as any) as any) ?? (row as any).ProducerSerialCode ?? "")} onChange={(e) => setRowValue(row.RecId, { producerSerialCode: e.target.value } as any)} /></TableCell>
-                        <TableCell className="py-1"><Input type="date" className="h-7 w-32 text-xs" value={fmtDate((rowValue(row, "manufacturingDate" as any) as any) ?? (row as any).ManufacturingDate)} onChange={(e) => setRowValue(row.RecId, { manufacturingDate: e.target.value || null } as any)} /></TableCell>
+                        <TableCell className="py-1"><DatePicker className="h-7 w-32 text-xs" value={fmtDate((rowValue(row, "manufacturingDate" as any) as any) ?? (row as any).ManufacturingDate)} onChange={(e) => setRowValue(row.RecId, { manufacturingDate: e.target.value || null } as any)} /></TableCell>
                         <TableCell className="py-1"><Input type="number" className={numInputCls} value={(rowValue(row, "quantity" as any) as any) ?? (row as any).Quantity ?? ""} onChange={(e) => setRowValue(row.RecId, { quantity: e.target.value as any } as any)} /></TableCell>
                         <TableCell className="py-1"><Input type="number" className={numInputCls} value={(rowValue(row, "quantityMT" as any) as any) ?? (row as any).QuantityMT ?? ""} onChange={(e) => setRowValue(row.RecId, { quantityMT: e.target.value as any } as any)} /></TableCell>
                         <TableCell className="py-1"><Input type="number" className={numInputCls} value={(rowValue(row, "quantity3" as any) as any) ?? (row as any).Quantity3 ?? ""} onChange={(e) => setRowValue(row.RecId, { quantity3: e.target.value as any } as any)} /></TableCell>

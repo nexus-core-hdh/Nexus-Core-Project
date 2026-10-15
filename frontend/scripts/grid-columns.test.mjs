@@ -95,7 +95,7 @@ describe("grid-level User Defined Field columns (udf:<code>) declared after the 
 });
 
 describe("Packing List page wiring", () => {
-  const src = readFileSync(new URL("../app/dashboard/(auth)/legacy-erp/packing-lists/page.tsx", import.meta.url), "utf8");
+  const src = readFileSync(new URL("../app/[company]/(auth)/legacy-erp/packing-lists/page.tsx", import.meta.url), "utf8");
   it("grid columns, row cells, totals and the summary all read the ONE `sizes` array", () => {
     assert.match(src, /const sizes = ctx\?\.sizes \?\? \[\];/);
     assert.match(src, /\.\.\.sizes\.map\(\(s\) => \(\{ key: sizeCol\(s\)/, "grid columns");

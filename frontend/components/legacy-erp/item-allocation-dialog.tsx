@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -186,7 +186,7 @@ export function ItemAllocationDialog({ open, onOpenChange, context, onChanged }:
   // Opens the REAL receipt (IM_Receipt.RecId) in the existing Inventory Receipts screen, view mode.
   const openReceipt = (row: ReceiptRow) => {
     onOpenChange(false);
-    navigateOrOpenTab(router, `/dashboard/legacy-erp/inventory-receipts?id=${row.receiptId}&mode=view&receiptType=${row.receiptType ?? 2}`);
+    navigateOrOpenTab(router, `/legacy-erp/inventory-receipts?id=${row.receiptId}&mode=view&receiptType=${row.receiptType ?? 2}`);
   };
 
   const itemLabel = context ? [context.inventoryCode, context.inventoryName].filter(Boolean).join(" — ") : "";

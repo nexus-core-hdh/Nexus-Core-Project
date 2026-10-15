@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { DatePicker } from "@/components/ui/date-picker";
 import { entitiesApi } from "@/lib/nexuscore-api";
 import { cn } from "@/lib/utils";
 
@@ -226,7 +227,7 @@ export const CustomizedFieldsPanel = forwardRef<CustomizedFieldsHandle, {
                 ) : f.type === "checkbox" ? (
                   <input type="checkbox" checked={!!values[f.id]} onChange={(e) => setValue(f.id, e.target.checked)} className="h-4 w-4" />
                 ) : f.type === "date" ? (
-                  <Input type="date" className="h-9 text-sm" value={values[f.id] || ""} onChange={(e) => setValue(f.id, e.target.value)} aria-invalid={showError || undefined} />
+                  <DatePicker className={cn("h-9 text-sm", showError && "border-destructive")} value={values[f.id] || ""} onChange={(e) => setValue(f.id, e.target.value)} />
                 ) : f.type === "number" ? (
                   <Input type="number" className="h-9 text-sm" value={values[f.id] ?? ""} aria-invalid={showError || undefined}
                     onChange={(e) => { const n = e.target.value === "" ? null : Number(e.target.value); setValue(f.id, n === null || Number.isFinite(n) ? n : null); }} />

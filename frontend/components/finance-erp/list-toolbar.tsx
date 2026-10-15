@@ -9,7 +9,9 @@ import { cn } from "@/lib/utils";
  *  Finance listing screen's filter bar (search/status/date range/branch/department/...). */
 export function FilterField({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("flex flex-col gap-1.5", className)}>
+    // min-w-0: a grid item otherwise refuses to shrink below its content, so a wide control (e.g.
+    // a from/to date pair) widened its column and pushed the filter row past the card edge.
+    <div className={cn("flex min-w-0 flex-col gap-1.5", className)}>
       <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{label}</label>
       {children}
     </div>

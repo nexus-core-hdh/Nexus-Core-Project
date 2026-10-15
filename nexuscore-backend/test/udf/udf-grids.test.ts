@@ -192,7 +192,7 @@ describe('OrderLine — shared by Purchase and Subcontract Orders', () => {
     assert.equal(rows[0].parentEntityType, 'OrderLine');
     assert.equal(rows[0].parentEntityId, w.lines.po[2]);
     assert.equal(rows[0].parentDocumentNo, 'PO-1');
-    assert.equal(rows[0].screenKey, '/dashboard/legacy-erp/purchase-orders-list');
+    assert.equal(rows[0].screenKey, '/legacy-erp/purchase-orders-list');
   });
 
   test('grid writes never touch the business line rows', async () => {

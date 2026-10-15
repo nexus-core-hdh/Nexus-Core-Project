@@ -176,7 +176,7 @@ export class PlmCardsService {
       await this.audit.recordSafe({
         userId: changedBy,
         companyId,
-        screenKey: '/dashboard/plm/style-cards',
+        screenKey: '/plm/style-cards',
         entityType: 'StyleCard',
         entityId: id,
         action: AUDIT_ACTIONS.UPDATE,
@@ -328,7 +328,7 @@ export class PlmCardsService {
       await this.audit.recordSafe({
         userId: changedBy,
         companyId,
-        screenKey: '/dashboard/plm/sample-cards',
+        screenKey: '/plm/sample-cards',
         entityType: 'SampleCard',
         entityId: id,
         action: AUDIT_ACTIONS.UPDATE,

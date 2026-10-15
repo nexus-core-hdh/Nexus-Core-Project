@@ -9,12 +9,12 @@ import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResol
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 
 // Real MenuItem.href for the Work Order List screen (confirmed live: MenuItem row {title:"Work
-// Order", group:"Legacy ERP", href:"/dashboard/legacy-erp/work-orders-list"}) — same screenKey
+// Order", group:"Legacy ERP", href:"/legacy-erp/work-orders-list"}) — same screenKey
 // convention ApprovalConfiguration/AuditService already use, not a new/invented key.
 // Exported for fabric-yarn-requirements.service.ts's own audit calls — Requirements is a tab
 // within the Work Order document, not a separate screen, so it deliberately shares this exact
 // screenKey rather than inventing a second one.
-export const WORK_ORDER_SCREEN_KEY = '/dashboard/legacy-erp/work-orders-list';
+export const WORK_ORDER_SCREEN_KEY = '/legacy-erp/work-orders-list';
 
 // Work Order — NOT a new entity. MA_WorkOrder/MA_WorkOrderItem/MA_WorkOrderItemVariant are
 // already-existing, already-migrated legacy tables (confirmed via information_schema: 161/100/21

@@ -9,7 +9,7 @@ import NextTopLoader from "nextjs-toploader";
 import "./globals.css";
 
 import { ActiveThemeProvider } from "@/components/active-theme";
-import { DEFAULT_THEME } from "@/lib/themes";
+import { DEFAULT_THEME, THEME_VERSION } from "@/lib/themes";
 import { Toaster } from "@/components/ui/sonner";
 
 export default async function RootLayout({
@@ -18,8 +18,12 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
+  // A preset saved before the current THEME_VERSION is ignored, so every user is switched to the
+  // current default theme once; ActiveThemeProvider then records the version, and any preset a
+  // user picks after that is kept.
+  const themeVersionCurrent = cookieStore.get("theme_version")?.value === THEME_VERSION;
   const themeSettings = {
-    preset: (cookieStore.get("theme_preset")?.value ?? DEFAULT_THEME.preset) as any,
+    preset: ((themeVersionCurrent && cookieStore.get("theme_preset")?.value) || DEFAULT_THEME.preset) as any,
     scale: (cookieStore.get("theme_scale")?.value ?? DEFAULT_THEME.scale) as any,
     radius: (cookieStore.get("theme_radius")?.value ?? DEFAULT_THEME.radius) as any,
     contentLayout: (cookieStore.get("theme_content_layout")?.value ??
@@ -34,6 +38,16 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Professional theme fonts. Loaded by the browser (not at build time, so offline builds
+            still work); the theme's font stacks fall back to system fonts if this is unavailable. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        />
+      </head>
       <body
         suppressHydrationWarning
         className={cn("bg-background group/layout font-sans", fontVariables)}

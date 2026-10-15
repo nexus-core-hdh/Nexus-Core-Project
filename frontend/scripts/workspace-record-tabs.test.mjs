@@ -21,16 +21,29 @@ await new Promise((done) =>
   useWorkspaceStore.persist.hasHydrated() ? done() : useWorkspaceStore.persist.onFinishHydration(done)
 );
 
-const STYLE_LIST = "/dashboard/plm/style-cards";
-const STYLE_A = "/dashboard/plm/style-cards/0b6c1c8e-aaaa-4c1e-9f51-000000000001";
-const STYLE_B = "/dashboard/plm/style-cards/0b6c1c8e-bbbb-4c1e-9f51-000000000002";
-const COSTING = "/dashboard/plm/costing-sheets/77";
-const INVENTORY = "/dashboard/legacy-erp/inventory-cards-list";
+const STYLE_LIST = "/plm/style-cards";
+const STYLE_A = "/plm/style-cards/0b6c1c8e-aaaa-4c1e-9f51-000000000001";
+const STYLE_B = "/plm/style-cards/0b6c1c8e-bbbb-4c1e-9f51-000000000002";
+const COSTING = "/plm/costing-sheets/77";
+const INVENTORY = "/legacy-erp/inventory-cards-list";
 
 // What the browser URL does in response: navigateOrOpenTab/goTo call router.replace, then the
 // layout's two route syncs (WorkspaceContentStack's + useRecordTabSync) see the new route.
 const urls = [];
 const router = { push: (href) => urls.push(href), replace: (href) => urls.push(href) };
+// lib/workspace/navigate.ts (company-slug URLs) moves the address bar of a workspace route with
+// history.replaceState instead of router.replace — a minimal browser so those URL changes land in
+// `urls` too. No company slug here (no cookie, none in the path), so the URLs stay app paths.
+globalThis.window = {
+  location: { pathname: "/", search: "" },
+  history: {
+    replaceState: (_state, _title, href) => {
+      urls.push(href);
+      const [pathname, query = ""] = href.split("?");
+      globalThis.window.location = { pathname, search: query ? `?${query}` : "" };
+    },
+  },
+};
 const land = (href) => {
   const [pathname, query = ""] = href.split("?");
   syncModuleRouteTab(pathname, query);
@@ -59,13 +72,13 @@ beforeEach(() => {
 
 describe("record route detection", () => {
   it("matches record routes by pattern, never a static module or unrelated route", () => {
-    assert.equal(findRecordRoute(STYLE_A), "/dashboard/plm/style-cards/[id]");
-    assert.equal(findRecordRoute(`${STYLE_A}?tab=bom`), "/dashboard/plm/style-cards/[id]");
-    assert.equal(findRecordRoute("/dashboard/crm/deals/dashboards/9/edit"), "/dashboard/crm/deals/dashboards/[id]/edit");
+    assert.equal(findRecordRoute(STYLE_A), "/plm/style-cards/[id]");
+    assert.equal(findRecordRoute(`${STYLE_A}?tab=bom`), "/plm/style-cards/[id]");
+    assert.equal(findRecordRoute("/crm/deals/dashboards/9/edit"), "/crm/deals/dashboards/[id]/edit");
     assert.equal(findRecordRoute(STYLE_LIST), undefined);
-    assert.equal(findRecordRoute("/dashboard/crm/deals/dashboards/create"), undefined);
+    assert.equal(findRecordRoute("/crm/deals/dashboards/create"), undefined);
     assert.equal(findRecordRoute(`${STYLE_A}/extra`), undefined);
-    assert.equal(findRecordRoute("/dashboard/default"), undefined);
+    assert.equal(findRecordRoute("/default"), undefined);
   });
 
   it("recognises create forms", () => {
@@ -77,10 +90,10 @@ describe("record route detection", () => {
   it("the real generated registry lists record routes and still excludes them from mountable modules", () => {
     const generated = readFileSync(new URL("../lib/workspace/registry.generated.ts", import.meta.url), "utf8");
     const [modules, records] = generated.split("GENERATED_RECORD_ROUTES");
-    assert.ok(records.includes('"/dashboard/plm/style-cards/[id]"'));
-    assert.ok(records.includes('"/dashboard/plm/costing-sheets/[id]"'));
+    assert.ok(records.includes('"/plm/style-cards/[id]"'));
+    assert.ok(records.includes('"/plm/costing-sheets/[id]"'));
     assert.ok(!/path: "[^"]*\[/.test(modules), "no dynamic route may be registered as a mountable module");
-    assert.ok(modules.includes('path: "/dashboard/plm/style-cards"'));
+    assert.ok(modules.includes('path: "/plm/style-cards"'));
   });
 });
 
@@ -187,7 +200,7 @@ describe("F. direct URL / reload", () => {
   it("a list screen gets one tab; an untracked route gets none", () => {
     land(STYLE_LIST);
     land(STYLE_LIST);
-    land("/dashboard/default");
+    land("/default");
     assert.deepEqual(keys(), [STYLE_LIST]);
   });
 });
@@ -228,10 +241,10 @@ describe("tab titles", () => {
 });
 
 // ── Multi-record workspace: `form?id=` records (Legacy/Finance ERP list+form screens) ──────────────
-const RECEIPTS = "/dashboard/legacy-erp/inventory-receipts";
+const RECEIPTS = "/legacy-erp/inventory-receipts";
 const RECEIPTS_LIST = `${RECEIPTS}-list`;
-const POS = "/dashboard/legacy-erp/purchase-orders";
-const WOS = "/dashboard/legacy-erp/work-orders";
+const POS = "/legacy-erp/purchase-orders";
+const WOS = "/legacy-erp/work-orders";
 const IR = (id, mode = "view", type = 1) => `${RECEIPTS}?receiptType=${type}&id=${id}&mode=${mode}`;
 const IR_KEY = (id) => `${RECEIPTS}?id=${id}`;
 const PO = (id) => `${POS}?id=${id}&mode=view`;
@@ -246,11 +259,11 @@ describe("record identity in the tab key", () => {
     assert.equal(tabKeyForHref(`${RECEIPTS}?mode=create&receiptType=1`), RECEIPTS);
     assert.equal(tabKeyForHref(RECEIPTS_LIST), RECEIPTS_LIST);
     assert.equal(tabKeyForHref(`${STYLE_A}?tab=bom`), STYLE_A);
-    assert.equal(tabKeyForHref("/dashboard/default"), undefined);
+    assert.equal(tabKeyForHref("/default"), undefined);
   });
 
   it("routes keyed by another param keep it (and only it)", () => {
-    const entry = "/dashboard/legacy-erp/cutting-card/entry";
+    const entry = "/legacy-erp/cutting-card/entry";
     assert.equal(resolveTabKey(entry, `${entry}?id=5&color=red`), `${entry}?color=red`);
   });
 });
@@ -557,7 +570,7 @@ describe("complete record titles", () => {
 // Menu titles below are the REAL ones the resolver sees: MenuItem rows (read from the DB, read-only)
 // and lib/finance-erp/nav.ts's static Finance entries.
 describe("record names in tab titles", () => {
-  const D = "/dashboard";
+  const D = ""; // menu hrefs are slug-free app paths (company-slug URLs)
   const MENU = new Map(
     [
       [`${D}/finance-erp/payable/purchase-orders-list`, "Purchase Order"],
@@ -660,7 +673,7 @@ describe("record-name hooks are wired safely in every screen", () => {
 
   it(`each of the ${SCREENS.length} screens calls one title hook unconditionally, before any early return, defaulting to undefined`, () => {
     for (const screen of SCREENS) {
-      const src = readFileSync(new URL(`../app/dashboard/(auth)/${screen}/page.tsx`, import.meta.url), "utf8").split(/\r?\n/);
+      const src = readFileSync(new URL(`../app/[company]/(auth)/${screen}/page.tsx`, import.meta.url), "utf8").split(/\r?\n/);
       const start = src.findIndex((l) => /^export default (async )?function/.test(l));
       const hooks = src.map((l, i) => (HOOK.test(l) ? i : -1)).filter((i) => i >= 0);
       assert.equal(hooks.length, 1, `${screen}: exactly one top-level title hook`);
@@ -674,7 +687,7 @@ describe("record-name hooks are wired safely in every screen", () => {
 
 // ── Packing List workspace records ──────────────────────────────────────────────────────────────
 describe("Packing List workspace tabs", () => {
-  const PL = "/dashboard/legacy-erp/packing-lists";
+  const PL = "/legacy-erp/packing-lists";
   const PL_LIST = `${PL}-list`;
   const PL_KEY = (id) => `${PL}?id=${id}`;
   const entryByHref = new Map([[PL_LIST, { title: "Packing List", href: PL_LIST }]]);

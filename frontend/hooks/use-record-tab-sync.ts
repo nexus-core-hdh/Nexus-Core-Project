@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "@/lib/app-navigation";
 
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { findRecordRoute, isNewRecordPath } from "@/lib/workspace/registry";

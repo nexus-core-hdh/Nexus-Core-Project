@@ -90,14 +90,23 @@ import {
   Sliders,
   Truck,
   Factory,
+  FileClock,
+  FileSignature,
+  Landmark,
+  Receipt,
+  Scaling,
+  ScrollText,
+  SlidersHorizontal,
 } from "lucide-react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import Link from "@/components/app-link";
+import { usePathname, useRouter } from "@/lib/app-navigation";
 import { DashboardIcon } from "@radix-ui/react-icons";
 import { usePermissionCheck } from "@/hooks/use-permission";
 import { toast } from "sonner";
 import { menuItemsApi, settingsApi } from "@/lib/api";
 import { customEntityPageApi } from "@/lib/nexuscore-api";
+import { MENU_CHANGED_EVENT } from "@/lib/workspace/menu-events";
+import { useThemeConfig } from "@/components/active-theme";
 import { getCurrentUser } from "@/lib/auth";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { ModuleLauncher } from "./module-launcher";
@@ -122,12 +131,12 @@ export type NavGroup = {
 // Hide items/sections from the sidebar (even if present in DB menus)
 const HIDDEN_GROUP_TITLES = new Set<string>(["AI Apps"]);
 const HIDDEN_ITEM_HREFS = new Set<string>([
-  "/dashboard/apps/api-keys",
-  "/dashboard/pages/user-profile",
-  "/dashboard/project-management",
-  "/dashboard/payment",
-  "/dashboard/apps/pos-system",
-  "/dashboard/plm/documents",
+  "/apps/api-keys",
+  "/pages/user-profile",
+  "/project-management",
+  "/payment",
+  "/apps/pos-system",
+  "/plm/documents",
 ]);
 const HIDDEN_ITEM_TITLES = new Set<string>([
   "Api Keys", "Profile V2",
@@ -271,6 +280,13 @@ const iconMap: Record<string, LucideIcon> = {
   Ribbon: Ribbon,
   Sliders: Sliders,
   Factory: Factory,
+  FileClock: FileClock,
+  FileSignature: FileSignature,
+  Landmark: Landmark,
+  Receipt: Receipt,
+  Scaling: Scaling,
+  ScrollText: ScrollText,
+  SlidersHorizontal: SlidersHorizontal,
 };
 
 // Helper function to get icon component from string name
@@ -321,142 +337,89 @@ export const defaultNavItems: NavGroup[] = [
     items: [
       {
         title: "Default",
-        href: "/dashboard/default",
+        href: "/default",
         icon: ChartPieIcon
       },
-      {
-        title: "Collaboration",
-        href: "#",
-        icon: UsersIcon,
-        items: [
-          {
-            title: "Messenger",
-            href: "/dashboard/apps/chat",
-            icon: MessageSquareIcon
-          },
-          {
-            title: "Feed",
-            href: "/dashboard/collaboration/feed",
-            icon: FolderDotIcon
-          },
-          {
-            title: "Collabs",
-            href: "/dashboard/collaboration/collabs",
-            icon: ClipboardMinusIcon
-          },
-          {
-            title: "Online Documents",
-            href: "/dashboard/collaboration/documents",
-            icon: ComponentIcon
-          },
-          {
-            title:"File Manager",
-            href: "/dashboard/file-manager",
-            icon: FolderIcon,
-            items: [
-              {
-                title: "Dashboard",
-                href: "/dashboard/file-manager",
-                icon: FolderIcon,
-              },
-              {
-                title: "File Manager",
-                href: "/dashboard/apps/file-manager",
-                icon: ArchiveRestoreIcon,
-              },
-            ]
-          },
-          {
-            title:"Work Groups",
-            href:"/dashboard/collaboration/work-groups",
-            icon: GroupIcon
-          },
-          {
-            title:"Boards",
-            href:"/dashboard/collaboration/boards",
-            icon: LayoutDashboardIcon
-          }
-        ]
-      },
-      {
-        title: "E-commerce",
-        href: "#",
-        icon: ShoppingBagIcon,
-        items: [
-          { title: "Dashboard", href: "/dashboard/ecommerce", icon: ChartPieIcon },
-          { title: "Product List", href: "/dashboard/pages/products", icon: Package },
-          { title: "Add Product", href: "/dashboard/pages/products/create", icon: Plus },
-          { title: "Customers", href: "/dashboard/crm/customers", icon: UsersIcon },
-          { title: "Order List", href: "/dashboard/pages/orders", icon: ShoppingCart },
-          { title: "Order Detail", href: "/dashboard/pages/orders/detail", icon: FileText },
-          { title: "Returns", href: "/dashboard/pages/returns", icon: RotateCcw }
-        ]
-      },
-      { title: "Sales", href: "/dashboard/sales", icon: BadgeDollarSignIcon },
-      {
-        title: "CRM",
-        href: "#",
-        icon: ChartBarDecreasingIcon,
-        items: [
-          { title: "Dashboard", href: "/dashboard/crm", icon: ChartPieIcon },
-          { title: "Leads", href: "/dashboard/crm/leads", icon: UserIcon },
-          { title: "Contacts", href: "/dashboard/crm/contacts", icon: UsersIcon },
-          { title: "Deals", href: "/dashboard/crm/deals", icon: BadgeDollarSignIcon },
-        ]
-      },
-      { title: "My Menu", href: "/dashboard/module-map", icon: Star },
+      { title: "My Menu", href: "/module-map", icon: Star },
       // {
       //   title: "Website Analytics",
-      //   href: "/dashboard/website-analytics",
+      //   href: "/website-analytics",
       //   icon: GaugeIcon
       // },
-      {
-        title: "Project Management",
-        href: "/dashboard/project-management",
-        icon: FolderDotIcon,
-        items: [
-          { title: "Dashboard", href: "/dashboard/project-management", icon: LayoutDashboardIcon },
-          { title: "Project List", href: "/dashboard/project-list", icon: List },
-          {
-            title: "Tasks",
-            href: "/dashboard/apps/tasks",
-            icon: ClipboardCheckIcon
-          },
-        ]
-      },
       // {
       //   title: "File Manager",
-      //   href: "/dashboard/file-manager",
+      //   href: "/file-manager",
       //   icon: FolderIcon
       // },
-      // { title: "Crypto", href: "/dashboard/crypto", icon: WalletMinimalIcon },
-      // { title: "Academy/School", href: "/dashboard/academy", icon: GraduationCapIcon },
-      // { title: "Hospital Management", href: "/dashboard/hospital-management", icon: ActivityIcon },
+      // { title: "Crypto", href: "/crypto", icon: WalletMinimalIcon },
+      // { title: "Academy/School", href: "/academy", icon: GraduationCapIcon },
+      // { title: "Hospital Management", href: "/hospital-management", icon: ActivityIcon },
       // {
       //   title: "Hotel Dashboard",
-      //   href: "/dashboard/hotel",
+      //   href: "/hotel",
       //   icon: Building2Icon,
       //   items: [
-      //     { title: "Dashboard", href: "/dashboard/hotel" },
-      //     { title: "Bookings", href: "/dashboard/hotel/bookings" }
+      //     { title: "Dashboard", href: "/hotel" },
+      //     { title: "Bookings", href: "/hotel/bookings" }
       //   ]
       // },
       // {
       //   title: "Finance Dashboard",
-      //   href: "/dashboard/finance",
+      //   href: "/finance",
       //   icon: WalletMinimalIcon
       // },
+    ]
+  },
+  {
+    title: "Collaboration",
+    items: [
       {
-        title: "Payment Dashboard",
-        href: "/dashboard/payment",
-        icon: CreditCardIcon,
+        title: "Messenger",
+        href: "/apps/chat",
+        icon: MessageSquareIcon
+      },
+      {
+        title: "Feed",
+        href: "/collaboration/feed",
+        icon: FolderDotIcon
+      },
+      {
+        title: "Collabs",
+        href: "/collaboration/collabs",
+        icon: ClipboardMinusIcon
+      },
+      {
+        title: "Online Documents",
+        href: "/collaboration/documents",
+        icon: ComponentIcon
+      },
+      {
+        title:"File Manager",
+        href: "/file-manager",
+        icon: FolderIcon,
         items: [
-          { title: "Dashboard", href: "/dashboard/payment", icon: LayoutDashboardIcon },
-          { title: "Transactions", href: "/dashboard/payment/transactions", icon: WalletMinimalIcon },
-          { title: "Customer Payments", href: "/dashboard/payment/customer-payments", icon: UserIcon },
-          { title: "Supplier Payments", href: "/dashboard/payment/supplier-payments", icon: UsersIcon }
+          {
+            title: "Dashboard",
+            href: "/file-manager",
+            icon: FolderIcon,
+          },
+          {
+            title: "File Manager",
+            href: "/apps/file-manager",
+            icon: ArchiveRestoreIcon,
+          },
         ]
       },
+      {
+        title:"Work Groups",
+        href:"/collaboration/work-groups",
+        icon: GroupIcon
+      },
+      {
+        title:"Boards",
+        href:"/collaboration/boards",
+        icon: LayoutDashboardIcon
+      }
     ]
   },
   {
@@ -464,64 +427,56 @@ export const defaultNavItems: NavGroup[] = [
     items: [
       {
         title: "Users",
-        href: "/dashboard/pages/users",
+        href: "/pages/users",
         icon: UsersIcon
       },
       {
-        title: "Companies",
-        href: "/dashboard/pages/companies",
-        icon: Building2Icon
-      },
-      {
         title: "Automation",
-        href: "/dashboard/pages/business-processes",
+        href: "/pages/business-processes",
         icon: Workflow
       },
-      { title: "Notes", href: "/dashboard/apps/notes", icon: StickyNoteIcon, isDataBadge: "8" },
-      // { title: "Chats", href: "/dashboard/apps/chat", icon: MessageSquareIcon, isDataBadge: "5" },
-      { title: "Mail", href: "/dashboard/apps/mail", icon: MailIcon },
+      { title: "Notes", href: "/apps/notes", icon: StickyNoteIcon, isDataBadge: "8" },
+      // { title: "Chats", href: "/apps/chat", icon: MessageSquareIcon, isDataBadge: "5" },
+      { title: "Mail", href: "/apps/mail", icon: MailIcon },
       {
         title: "Todo List App",
-        href: "/dashboard/apps/todo-list-app",
+        href: "/apps/todo-list-app",
         icon: SquareCheckIcon
       },
       // {
       //   title: "Tasks",
-      //   href: "/dashboard/apps/tasks",
+      //   href: "/apps/tasks",
       //   icon: ClipboardCheckIcon
       // },
-      { title: "Calendar", href: "/dashboard/apps/calendar", icon: CalendarIcon },
+      { title: "Calendar", href: "/apps/calendar", icon: CalendarIcon },
       // {
       //   title: "File Manager",
-      //   href: "/dashboard/apps/file-manager",
+      //   href: "/apps/file-manager",
       //   icon: ArchiveRestoreIcon,
       //   isNew: true
       // },
-      { title: "Api Keys", href: "/dashboard/apps/api-keys", icon: KeyIcon },
-      { title: "POS App", href: "/dashboard/apps/pos-system", icon: CookieIcon },
-      { title: "Form Designer", href: "/dashboard/pages/form-builder", icon: ComponentIcon },
-      { title: "Settings", href: "/dashboard/crm/settings", icon: SettingsIcon },
-      //{ title: "Courses", href: "/dashboard/apps/courses", icon: BookAIcon, isComing: true }
+      { title: "Form Designer", href: "/pages/form-builder", icon: ComponentIcon },
+      //{ title: "Courses", href: "/apps/courses", icon: BookAIcon, isComing: true }
     ]
   },
   {
     title: "AI Apps",
     items: [
-      { title: "AI Chat", href: "/dashboard/apps/ai-chat", icon: BrainIcon },
+      { title: "AI Chat", href: "/apps/ai-chat", icon: BrainIcon },
       {
         title: "AI Chat V2",
-        href: "/dashboard/apps/ai-chat-v2",
+        href: "/apps/ai-chat-v2",
         icon: BrainCircuitIcon,
         isNew: true
       },
       {
         title: "Image Generator",
-        href: "/dashboard/apps/ai-image-generator",
+        href: "/apps/ai-image-generator",
         icon: ImagesIcon
       },
       {
         title: "Text to Speech",
-        href: "/dashboard/apps/text-to-speech",
+        href: "/apps/text-to-speech",
         icon: SpeechIcon,
         isComing: true
       }
@@ -532,7 +487,7 @@ export const defaultNavItems: NavGroup[] = [
     items: [
       {
         title: "Profile V2",
-        href: "/dashboard/pages/user-profile",
+        href: "/pages/user-profile",
         icon: UserIcon
       },
       {
@@ -540,11 +495,11 @@ export const defaultNavItems: NavGroup[] = [
         href: "/",
         icon: FingerprintIcon,
         items: [
-          { title: "Login v1", href: "/dashboard/login/v1" },
-          { title: "Login v2", href: "/dashboard/login/v2" },
-          { title: "Register v1", href: "/dashboard/register/v1" },
-          { title: "Register v2", href: "/dashboard/register/v2" },
-          { title: "Forgot Password", href: "/dashboard/forgot-password" }
+          { title: "Login v1", href: "/login/v1" },
+          { title: "Login v2", href: "/login/v2" },
+          { title: "Register v1", href: "/register/v1" },
+          { title: "Register v2", href: "/register/v2" },
+          { title: "Forgot Password", href: "/forgot-password" }
         ]
       },
       {
@@ -552,26 +507,11 @@ export const defaultNavItems: NavGroup[] = [
         href: "/",
         icon: FingerprintIcon,
         items: [
-          { title: "404", href: "/dashboard/pages/error/404" },
-          { title: "500", href: "/dashboard/pages/error/500" },
-          { title: "403", href: "/dashboard/pages/error/403" }
+          { title: "404", href: "/error/404" },
+          { title: "500", href: "/error/500" },
+          { title: "403", href: "/pages/error/403" }
         ]
       }
-    ]
-  },
-  {
-    title: "Others",
-    items: [
-      {
-        title: "Widgets",
-        href: "#",
-        icon: PuzzleIcon,
-        items: [
-          { title: "Fitness", href: "/dashboard/widgets/fitness" },
-          { title: "E-commerce", href: "/dashboard/widgets/ecommerce" },
-          { title: "Analytics", href: "/dashboard/widgets/analytics" }
-        ]
-      },
     ]
   },
   {
@@ -582,15 +522,15 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: Scissors,
         items: [
-          { title: "Style Cards", href: "/dashboard/plm/style-cards" },
-          { title: "Sample Cards", href: "/dashboard/plm/sample-cards-list" },
-          { title: "Mood Boards", href: "/dashboard/plm/mood-boards" },
-          { title: "Swatch Cards", href: "/dashboard/plm/swatch-cards" },
-          { title: "Product Cards", href: "/dashboard/plm/product-cards" },
-          { title: "Costing Sheets", href: "/dashboard/plm/costing-sheets" },
-          { title: "Cost Detail Entry", href: "/dashboard/plm/costing-sheets/cost-detail-entry" },
-          { title: "Costing Profit Breakdowns", href: "/dashboard/plm/costing-sheets/profit-breakdown" },
-          { title: "PLM Templates", href: "/dashboard/pages/form-builder" },
+          { title: "Style Cards", href: "/plm/style-cards" },
+          { title: "Sample Cards", href: "/plm/sample-cards-list" },
+          { title: "Mood Boards", href: "/plm/mood-boards" },
+          { title: "Swatch Cards", href: "/plm/swatch-cards" },
+          { title: "Product Cards", href: "/plm/product-cards" },
+          { title: "Costing Sheets", href: "/plm/costing-sheets" },
+          { title: "Cost Detail Entry", href: "/plm/costing-sheets/cost-detail-entry" },
+          { title: "Costing Profit Breakdowns", href: "/plm/costing-sheets/profit-breakdown" },
+          { title: "PLM Templates", href: "/pages/form-builder" },
         ]
       },
       {
@@ -598,25 +538,25 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: Layers,
         items: [
-          { title: "Style Sample Types", href: "/dashboard/plm/general-definitions/style-sample-types" },
-          { title: "Design Detail Types", href: "/dashboard/plm/general-definitions/design-detail-types" },
-          { title: "Fabric Type Cards", href: "/dashboard/plm/general-definitions/fabric-type-cards" },
-          { title: "Measurement Definitions", href: "/dashboard/plm/general-definitions/measurement-definitions" },
-          { title: "Measurement Charts", href: "/dashboard/plm/general-definitions/measurement-charts" },
-          { title: "Department Cards", href: "/dashboard/plm/general-definitions/department-cards" },
-          { title: "Process Cards", href: "/dashboard/plm/general-definitions/process-cards" },
-          { title: "Employee Cards", href: "/dashboard/plm/general-definitions/employee-cards" },
-          { title: "Resource Cards", href: "/dashboard/plm/general-definitions/resource-cards" },
-          { title: "Study Template Cards", href: "/dashboard/plm/general-definitions/study-templates" },
-          { title: "Activity Type Cards", href: "/dashboard/plm/general-definitions/activity-type-cards" },
-          { title: "Color Cards", href: "/dashboard/plm/general-definitions/color-cards" },
-          { title: "Brand Cards", href: "/dashboard/plm/general-definitions/brand-cards" },
-          { title: "Season Cards", href: "/dashboard/plm/general-definitions/season-cards" },
-          { title: "Gender Cards", href: "/dashboard/plm/general-definitions/gender-cards" },
-          { title: "Size Cards", href: "/dashboard/plm/general-definitions/size-cards" },
-          { title: "Company Cards", href: "/dashboard/plm/general-definitions/company-cards" },
-          { title: "Sample Task Types", href: "/dashboard/plm/general-definitions/sample-task-types" },
-          { title: "Route Definitions", href: "/dashboard/plm/general-definitions/route-cards" },
+          { title: "Style Sample Types", href: "/plm/general-definitions/style-sample-types" },
+          { title: "Design Detail Types", href: "/plm/general-definitions/design-detail-types" },
+          { title: "Fabric Type Cards", href: "/plm/general-definitions/fabric-type-cards" },
+          { title: "Measurement Definitions", href: "/plm/general-definitions/measurement-definitions" },
+          { title: "Measurement Charts", href: "/plm/general-definitions/measurement-charts" },
+          { title: "Department Cards", href: "/plm/general-definitions/department-cards" },
+          { title: "Process Cards", href: "/plm/general-definitions/process-cards" },
+          { title: "Employee Cards", href: "/plm/general-definitions/employee-cards" },
+          { title: "Resource Cards", href: "/plm/general-definitions/resource-cards" },
+          { title: "Study Template Cards", href: "/plm/general-definitions/study-templates" },
+          { title: "Activity Type Cards", href: "/plm/general-definitions/activity-type-cards" },
+          { title: "Color Cards", href: "/plm/general-definitions/color-cards" },
+          { title: "Brand Cards", href: "/plm/general-definitions/brand-cards" },
+          { title: "Season Cards", href: "/plm/general-definitions/season-cards" },
+          { title: "Gender Cards", href: "/plm/general-definitions/gender-cards" },
+          { title: "Size Cards", href: "/plm/general-definitions/size-cards" },
+          { title: "Company Cards", href: "/plm/general-definitions/company-cards" },
+          { title: "Sample Task Types", href: "/plm/general-definitions/sample-task-types" },
+          { title: "Route Definitions", href: "/plm/general-definitions/route-cards" },
         ]
       },
       {
@@ -624,9 +564,9 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: Workflow,
         items: [
-          { title: "PLM Orders", href: "/dashboard/plm/orders" },
-          { title: "PLM Tasks", href: "/dashboard/plm/tasks" },
-          { title: "Critical Path Chart", href: "/dashboard/plm/critical-path" },
+          { title: "PLM Orders", href: "/plm/orders" },
+          { title: "PLM Tasks", href: "/plm/tasks" },
+          { title: "Critical Path Chart", href: "/plm/critical-path" },
         ]
       },
       {
@@ -634,22 +574,22 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: BarChart3,
         items: [
-          { title: "Delayed Task List", href: "/dashboard/plm/reports/delayed-tasks" },
-          { title: "Daily Task List", href: "/dashboard/plm/reports/daily-tasks" },
-          { title: "Cancelled Task List", href: "/dashboard/plm/reports/cancelled-tasks" },
-          { title: "PLM Sample Cost", href: "/dashboard/plm/reports/sample-cost" },
-          { title: "PLM Sample History", href: "/dashboard/plm/reports/sample-history" },
-          { title: "PLM Analyse Cubes", href: "/dashboard/plm/reports/analyse-cubes" },
+          { title: "Delayed Task List", href: "/plm/reports/delayed-tasks" },
+          { title: "Daily Task List", href: "/plm/reports/daily-tasks" },
+          { title: "Cancelled Task List", href: "/plm/reports/cancelled-tasks" },
+          { title: "PLM Sample Cost", href: "/plm/reports/sample-cost" },
+          { title: "PLM Sample History", href: "/plm/reports/sample-history" },
+          { title: "PLM Analyse Cubes", href: "/plm/reports/analyse-cubes" },
         ]
       },
-      { title: "Document Management", href: "/dashboard/plm/documents", icon: FolderDotIcon },
+      { title: "Document Management", href: "/plm/documents", icon: FolderDotIcon },
     ]
   },
   {
     title: "BPM",
     items: [
-      { title: "Task Queue", href: "/dashboard/bpm/task-queue", icon: ClipboardCheckIcon },
-      { title: "Request Types", href: "/dashboard/bpm/request-types", icon: ComponentIcon },
+      { title: "Task Queue", href: "/bpm/task-queue", icon: ClipboardCheckIcon },
+      { title: "Request Types", href: "/bpm/request-types", icon: ComponentIcon },
     ]
   },
   {
@@ -657,13 +597,13 @@ export const defaultNavItems: NavGroup[] = [
     items: [
       {
         title: "Dockets",
-        href: "/dashboard/dockets",
+        href: "/dockets",
         icon: FolderOpen,
         items: [
-          { title: "Style Dockets", href: "/dashboard/dockets/style-dockets", icon: Scissors },
-          { title: "Sample Dockets", href: "/dashboard/dockets/sample-dockets", icon: FlaskConical },
-          { title: "Product Dockets", href: "/dashboard/dockets/product-dockets", icon: Package },
-          { title: "Order Dockets", href: "/dashboard/dockets/order-dockets", icon: ClipboardList },
+          { title: "Style Dockets", href: "/dockets/style-dockets", icon: Scissors },
+          { title: "Sample Dockets", href: "/dockets/sample-dockets", icon: FlaskConical },
+          { title: "Product Dockets", href: "/dockets/product-dockets", icon: Package },
+          { title: "Order Dockets", href: "/dockets/order-dockets", icon: ClipboardList },
         ],
       },
       {
@@ -671,8 +611,8 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: FileStack,
         items: [
-          { title: "Approval Queue", href: "/dashboard/dockets/document-control/approval-queue", icon: CheckSquare },
-          { title: "Document Register", href: "/dashboard/dockets/document-control/register", icon: List },
+          { title: "Approval Queue", href: "/dockets/document-control/approval-queue", icon: CheckSquare },
+          { title: "Document Register", href: "/dockets/document-control/register", icon: List },
         ],
       },
       {
@@ -680,9 +620,9 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: SettingsIcon,
         items: [
-          { title: "Document Types", href: "/dashboard/dockets/setup/document-types", icon: Tag },
-          { title: "Docket Templates", href: "/dashboard/dockets/setup/docket-templates", icon: LayoutTemplate },
-          { title: "Approval Workflows", href: "/dashboard/dockets/setup/approval-workflows", icon: GitBranch },
+          { title: "Document Types", href: "/dockets/setup/document-types", icon: Tag },
+          { title: "Docket Templates", href: "/dockets/setup/docket-templates", icon: LayoutTemplate },
+          { title: "Approval Workflows", href: "/dockets/setup/approval-workflows", icon: GitBranch },
         ],
       },
       {
@@ -690,8 +630,8 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: Share2,
         items: [
-          { title: "Shared Links", href: "/dashboard/dockets/sharing/share-links", icon: Link2 },
-          { title: "External Reviews", href: "/dashboard/dockets/sharing/external-review", icon: ExternalLink },
+          { title: "Shared Links", href: "/dockets/sharing/share-links", icon: Link2 },
+          { title: "External Reviews", href: "/dockets/sharing/external-review", icon: ExternalLink },
         ],
       },
       {
@@ -699,9 +639,9 @@ export const defaultNavItems: NavGroup[] = [
         href: "#",
         icon: BarChart3,
         items: [
-          { title: "Completeness", href: "/dashboard/dockets/reports/completeness", icon: PieChart },
-          { title: "Missing Documents", href: "/dashboard/dockets/reports/missing-documents", icon: AlertCircle },
-          { title: "Document Expiry", href: "/dashboard/dockets/reports/document-expiry", icon: CalendarX },
+          { title: "Completeness", href: "/dockets/reports/completeness", icon: PieChart },
+          { title: "Missing Documents", href: "/dockets/reports/missing-documents", icon: AlertCircle },
+          { title: "Document Expiry", href: "/dockets/reports/document-expiry", icon: CalendarX },
         ],
       },
     ],
@@ -715,7 +655,7 @@ export const defaultNavItems: NavGroup[] = [
 const administrationExtraItems: NavItem[] = [
   {
     title: "Pricing Plans",
-    href: "/dashboard/pages/pricing-plans",
+    href: "/pages/pricing-plans",
     icon: CreditCardIcon
   },
   // Not a second Decimal Parameters screen — the actual config UI still lives at Legacy ERP ->
@@ -726,7 +666,7 @@ const administrationExtraItems: NavItem[] = [
   // user's permission check for this row and vanish from the launcher for them.
   {
     title: "Decimal Parameters",
-    href: "/dashboard/legacy-erp/general-settings/screen-parameters",
+    href: "/legacy-erp/general-settings/screen-parameters",
     icon: Sliders,
   },
 ];
@@ -752,6 +692,7 @@ export function mergeAdministrationExtras(transformedMenus: NavGroup[]): NavGrou
 export const navItems: NavGroup[] = defaultNavItems;
 
 export function NavMain() {
+  const themeConfig = useThemeConfig();
   const pathname = usePathname();
   const router = useRouter();
   const { checkPermission } = usePermissionCheck();
@@ -791,6 +732,9 @@ export function NavMain() {
     };
 
     loadMenuItems();
+    // Re-fetch when menu items change at runtime (see notifyMenuChanged).
+    window.addEventListener(MENU_CHANGED_EVENT, loadMenuItems);
+    return () => window.removeEventListener(MENU_CHANGED_EVENT, loadMenuItems);
   }, []);
 
   // Load per-user sidebar visibility selection (Display settings)
@@ -835,7 +779,7 @@ export function NavMain() {
     // module is frontend-only mock data for now (spec: no backend changes in this phase), so the
     // backend's real permission API has no rows for it yet and would otherwise deny everyone but
     // admins. Finance ships its own local mock permission layer under Settings > Users & Roles.
-    if (href === "#" || href.startsWith("http") || href.startsWith("mailto:") || href.startsWith("/dashboard/finance-erp")) {
+    if (href === "#" || href.startsWith("http") || href.startsWith("mailto:") || href.startsWith("/finance-erp")) {
       return;
     }
 
@@ -865,7 +809,7 @@ export function NavMain() {
           .filter((page) => page.isActive)
           .map((page) => ({
             title: page.name,
-            href: `/dashboard/pages/custom-entities/${page.slug}`,
+            href: `/pages/custom-entities/${page.slug}`,
             icon: ComponentIcon,
           }));
 
@@ -892,16 +836,22 @@ export function NavMain() {
   // Whether `pathname` falls anywhere inside a group's item tree — used only to give the
   // module trigger button (which opens the ModuleLauncher dialog, it never navigates directly)
   // a visible "you are in here" active state. Prefix-matched (not exact) so a dynamic detail
-  // route like /dashboard/plm/style-cards/[id] still lights up "PLM" for its list screen's href.
-  const groupContainsPath = React.useCallback((items: NavItem[]): boolean => {
+  // route like /plm/style-cards/[id] still lights up "PLM" for its list screen's href.
+  // Returns the length of the longest href in the tree that matches `pathname` (0 = none), so
+  // when several groups match (a shared screen, or one group's href being a prefix of another
+  // group's), only the group with the most specific match is marked active.
+  const groupMatchLength = React.useCallback((items: NavItem[]): number => {
+    let best = 0;
     for (const item of items) {
       if (item.href && item.href !== "#") {
         const itemPath = item.href.split("?")[0];
-        if (pathname === itemPath || pathname.startsWith(itemPath + "/")) return true;
+        if (pathname === itemPath || pathname.startsWith(itemPath + "/")) {
+          best = Math.max(best, itemPath.length);
+        }
       }
-      if (item.items?.length && groupContainsPath(item.items)) return true;
+      if (item.items?.length) best = Math.max(best, groupMatchLength(item.items));
     }
-    return false;
+    return best;
   }, [pathname]);
 
   // My Menu is a framework-level favorites shortcut, not a browsable module —
@@ -914,7 +864,7 @@ export function NavMain() {
       .map((nav) => ({
         ...nav,
         items: nav.items.filter((item) => {
-          if (item.href === "/dashboard/module-map") {
+          if (item.href === "/module-map") {
             myMenu = item;
             return false;
           }
@@ -925,10 +875,25 @@ export function NavMain() {
     return { myMenuItem: myMenu as NavItem | null, moduleGroups: groups };
   }, [enhancedNavItems]);
 
+  // The single module group that owns the current route (first one wins on a tie).
+  const activeGroupTitle = React.useMemo(() => {
+    if (myMenuItem && pathname === myMenuItem.href) return null;
+    let bestTitle: string | null = null;
+    let bestLen = 0;
+    for (const nav of moduleGroups) {
+      const len = groupMatchLength(nav.items);
+      if (len > bestLen) {
+        bestLen = len;
+        bestTitle = nav.title;
+      }
+    }
+    return bestTitle;
+  }, [moduleGroups, myMenuItem, pathname, groupMatchLength]);
+
   // Controlled per-module accent palette — restrained (icon tint + active fill/bar only, never
-  // applied to individual screens/children). Anything not listed here falls back to the
-  // theme's own --sidebar-primary (which itself tracks var(--primary), so it still respects
-  // whatever Theme Customizer preset is active) rather than an invented color. Each entry is a
+  // applied to individual screens/children) — used by the default theme only. With a Theme
+  // Customizer preset active, every module uses the preset's own --sidebar-primary instead
+  // (ACCENT_PRESET), so changing the preset visibly recolors the rail. Each entry is a
   // complete, literal className string (not assembled from fragments at runtime) so Tailwind's
   // build-time scanner can actually see and generate these variant-prefixed utilities.
   const ACCENT_INDIGO =
@@ -943,6 +908,9 @@ export function NavMain() {
     "data-[active=true]:bg-rose-400/12 data-[active=true]:before:bg-rose-400 data-[active=true]:[&>svg]:text-rose-400 [&>svg]:text-rose-400/55";
   const ACCENT_DEFAULT =
     "data-[active=true]:bg-sidebar-primary/12 data-[active=true]:before:bg-sidebar-primary data-[active=true]:[&>svg]:text-sidebar-primary [&>svg]:text-sidebar-foreground/55";
+  const ACCENT_PRESET =
+    "data-[active=true]:bg-sidebar-primary/15 data-[active=true]:before:bg-sidebar-primary data-[active=true]:[&>svg]:text-sidebar-primary [&>svg]:text-sidebar-primary/70";
+  const presetActive = themeConfig.theme.preset !== "default";
 
   const MODULE_ACCENT: Record<string, string> = {
     Dashboard: ACCENT_INDIGO,
@@ -968,7 +936,7 @@ export function NavMain() {
       "data-[active=true]:before:absolute data-[active=true]:before:inset-y-2 data-[active=true]:before:left-0",
       "data-[active=true]:before:w-[3px] data-[active=true]:before:rounded-full",
       "[&>svg]:transition-colors [&>svg]:duration-150",
-      (title && MODULE_ACCENT[title]) || ACCENT_DEFAULT
+      presetActive ? ACCENT_PRESET : (title && MODULE_ACCENT[title]) || ACCENT_DEFAULT
     );
 
   return (
@@ -1009,7 +977,7 @@ export function NavMain() {
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       className={moduleButtonClass(nav.title)}
-                      isActive={groupContainsPath(nav.items)}
+                      isActive={nav.title === activeGroupTitle}
                       tooltip={nav.title}
                       onClick={() => setLauncherGroupTitle(nav.title)}>
                       {Icon && <Icon />}

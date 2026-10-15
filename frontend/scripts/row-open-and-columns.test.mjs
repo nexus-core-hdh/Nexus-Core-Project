@@ -63,7 +63,7 @@ describe("required columns (Invoice list Actions)", () => {
   });
 
   it("the Sales Invoices Actions column keeps both icons and their behavior, and is required", () => {
-    const page = src("app/dashboard/(auth)/finance-erp/receivable/sales-invoices-list/page.tsx");
+    const page = src("app/[company]/(auth)/finance-erp/receivable/sales-invoices-list/page.tsx");
     const actions = page.slice(page.indexOf('id: "actions"'), page.indexOf("];", page.indexOf('id: "actions"')));
     assert.match(actions, /meta: \{ manageColumns: "required" \}/);
     assert.match(actions, /title="View" onClick=\{\(\) => navigateOrOpenTab\(router, `\$\{BASE_HREF\}\?id=\$\{row\.original\.id\}`\)\}/);
@@ -73,16 +73,16 @@ describe("required columns (Invoice list Actions)", () => {
 });
 
 describe("Item Statement — double-click opens the receipt", () => {
-  const page = src("app/dashboard/(auth)/legacy-erp/item-statement/page.tsx");
+  const page = src("app/[company]/(auth)/legacy-erp/item-statement/page.tsx");
 
   it("transaction rows open the receipt by its id, with the Inventory Receipts list's route and type param", () => {
     assert.match(page, /onDoubleClick=\{\(\) => openReceipt\(row\)\}/);
     const fn = page.slice(page.indexOf("const openReceipt"), page.indexOf("};", page.indexOf("const openReceipt")));
     assert.match(fn, /if \(!row\?\.receiptId\) return;/);
-    assert.match(fn, /navigateOrOpenTab\(router, `\/dashboard\/legacy-erp\/inventory-receipts\?id=\$\{row\.receiptId\}&mode=view\$\{typeParam\}`\)/);
+    assert.match(fn, /navigateOrOpenTab\(router, `\/legacy-erp\/inventory-receipts\?id=\$\{row\.receiptId\}&mode=view\$\{typeParam\}`\)/);
     assert.match(fn, /row\.receiptType !== 2 \? `&receiptType=\$\{row\.receiptType\}` : ""/);
     assert.doesNotMatch(fn, /receiptNo|documentNo/, "never identified by its displayed number");
-    const list = src("app/dashboard/(auth)/legacy-erp/inventory-receipts-list/page.tsx");
+    const list = src("app/[company]/(auth)/legacy-erp/inventory-receipts-list/page.tsx");
     assert.match(list, /inventory-receipts\?id=\$\{id\}&mode=view\$\{typeParam\}/, "same route as the receipts list");
   });
 
@@ -93,7 +93,7 @@ describe("Item Statement — double-click opens the receipt", () => {
 
   it("existing receipt grids already open on double-click (unchanged)", () => {
     for (const f of ["inventory-receipts-list", "subcontract-receipts-list", "receipt-master-data"]) {
-      assert.match(src(`app/dashboard/(auth)/legacy-erp/${f}/page.tsx`), /onRowDoubleClick=/, f);
+      assert.match(src(`app/[company]/(auth)/legacy-erp/${f}/page.tsx`), /onRowDoubleClick=/, f);
     }
   });
 });

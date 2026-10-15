@@ -1,15 +1,29 @@
-export const DEFAULT_THEME = {
-  preset: "default",
+/** Bump to switch every user to the current default preset once (see app/layout.tsx). */
+export const THEME_VERSION = "professional-1";
+
+export type ThemeType = {
+  /** A THEMES value; "default" is the Classic neutral theme. */
+  preset: string;
+  radius: string;
+  scale: string;
+  contentLayout: string;
+};
+
+export const DEFAULT_THEME: ThemeType = {
+  preset: "professional",
   radius: "default",
   scale: "none",
   contentLayout: "full"
-} as const;
-
-export type ThemeType = typeof DEFAULT_THEME;
+};
 
 export const THEMES = [
   {
-    name: "Default",
+    name: "Professional",
+    value: "professional",
+    colors: ["oklch(0.546 0.2153 262.87)"]
+  },
+  {
+    name: "Classic",
     value: "default",
     colors: ["oklch(0.33 0 0)"]
   },

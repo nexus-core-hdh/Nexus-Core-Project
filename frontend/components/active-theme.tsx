@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode, createContext, useContext, useEffect, useState } from "react";
-import { DEFAULT_THEME, ThemeType } from "@/lib/themes";
+import { DEFAULT_THEME, ThemeType, THEME_VERSION } from "@/lib/themes";
 
 function setThemeCookie(key: string, value: string | null) {
   if (typeof window === "undefined") return;
@@ -33,15 +33,17 @@ export function ActiveThemeProvider({
 
   useEffect(() => {
     const body = document.body;
+    // Marks this browser as on the current theme version (see app/layout.tsx).
+    setThemeCookie("theme_version", THEME_VERSION);
 
     setThemeCookie("theme_radius", theme.radius);
     body.setAttribute("data-theme-radius", theme.radius);
 
     if (theme.radius != "default") {
-      setThemeCookie("theme_preset", theme.radius);
+      setThemeCookie("theme_radius", theme.radius);
       body.setAttribute("data-theme-radius", theme.radius);
     } else {
-      setThemeCookie("theme_preset", null);
+      setThemeCookie("theme_radius", null);
       body.removeAttribute("data-theme-radius");
     }
 

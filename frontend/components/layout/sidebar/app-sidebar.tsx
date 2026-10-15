@@ -4,9 +4,9 @@ import * as React from "react";
 import { useEffect } from "react";
 import { ChevronsUpDown, ShoppingBagIcon, UserCircle2Icon } from "lucide-react";
 import { PlusIcon } from "@radix-ui/react-icons";
-import { usePathname } from "next/navigation";
+import { usePathname } from "@/lib/app-navigation";
 import { useIsTablet } from "@/hooks/use-mobile";
-import Link from "next/link";
+import Link from "@/components/app-link";
 
 import {
   Sidebar,

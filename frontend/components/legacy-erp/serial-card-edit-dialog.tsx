@@ -12,6 +12,7 @@ import { printSerialCardLabels } from "./serial-card-labels";
 import { toast } from "sonner";
 import { Printer, Save, Tag } from "lucide-react";
 
+import { DatePicker } from "@/components/ui/date-picker";
 // Generate Serial Cards — the per-record View/Update surface for one already-persisted
 // IM_SerialCard row, opened from the Serial Cards list dialog's own right-click menu ("View/
 // Detail" and "Update" both open this same form — a serial card is pure metadata, there's no
@@ -218,7 +219,7 @@ export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Product Date</label>
-              <Input type="date" className="h-8 text-sm" disabled={readOnly} value={fmtDate(form.ManufacturingDate ?? null)} onChange={(e) => set({ ManufacturingDate: e.target.value || null })} />
+              <DatePicker className="h-8 text-sm" disabled={readOnly} value={fmtDate(form.ManufacturingDate ?? null)} onChange={(e) => set({ ManufacturingDate: e.target.value || null })} />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Quantity</label>

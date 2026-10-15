@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "@/lib/app-navigation";
 
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";

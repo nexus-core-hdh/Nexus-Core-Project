@@ -49,7 +49,7 @@ const PURCHASE_ORDER_TYPE = 1;
 const SUBCONTRACT_ORDER_TYPE = 3;
 
 /** ContractService.screenKeyFor — the contract screens' real MenuItem.href. */
-const contractScreenKey = (receiptType: number) => `/dashboard/legacy-erp/contracts-list?receiptType=${receiptType}`;
+const contractScreenKey = (receiptType: number) => `/legacy-erp/contracts-list?receiptType=${receiptType}`;
 
 /** Purchase Order and Subcontract Order share IM_OrderReceipt, told apart by ReceiptType. */
 const orderResolver = (entity: string, receiptType: number, permissionModule: string): Resolver => async (prisma, entityId) => {
@@ -96,7 +96,7 @@ const RESOLVERS: Record<string, Resolver> = {
     if (!row) return null;
     return {
       entity: 'FiReceipt', entityId, permissionModule: 'financial-receipts',
-      screenKey: '/dashboard/legacy-erp/financial-receipt-master-data', documentNo: row.receiptNo ?? null,
+      screenKey: '/legacy-erp/financial-receipt-master-data', documentNo: row.receiptNo ?? null,
     };
   },
   YarnCard: async (prisma, entityId) => {
@@ -107,18 +107,18 @@ const RESOLVERS: Record<string, Resolver> = {
     if (!row) return null;
     return {
       entity: 'YarnCard', entityId, permissionModule: 'yarn-cards',
-      screenKey: '/dashboard/legacy-erp/yarn-cards-list', documentNo: row.code ?? null,
+      screenKey: '/legacy-erp/yarn-cards-list', documentNo: row.code ?? null,
     };
   },
   StyleCard: async (prisma, entityId, user) => {
     const card = await prisma.styleCard.findUnique({ where: { id: entityId }, select: { branchId: true, styleNumber: true } });
     if (!card || !(await plmCardInReach(prisma, card.branchId, user))) return null;
-    return { entity: 'StyleCard', entityId, permissionModule: 'plm', screenKey: '/dashboard/plm/style-cards', documentNo: card.styleNumber };
+    return { entity: 'StyleCard', entityId, permissionModule: 'plm', screenKey: '/plm/style-cards', documentNo: card.styleNumber };
   },
   SampleCard: async (prisma, entityId, user) => {
     const card = await prisma.sampleCard.findUnique({ where: { id: entityId }, select: { branchId: true, sampleNumber: true } });
     if (!card || !(await plmCardInReach(prisma, card.branchId, user))) return null;
-    return { entity: 'SampleCard', entityId, permissionModule: 'plm', screenKey: '/dashboard/plm/sample-cards', documentNo: card.sampleNumber };
+    return { entity: 'SampleCard', entityId, permissionModule: 'plm', screenKey: '/plm/sample-cards', documentNo: card.sampleNumber };
   },
   WorkOrder: async (prisma, entityId) => {
     if (!LEGACY_ID.test(entityId)) return null;

@@ -32,6 +32,10 @@ const STEPS = [
   'scripts/seed-fabric-yarn-requirements-menu-item',
   'scripts/seed-order-manufacturing-menu-item',
   'scripts/seed-serial-cards-menu-item',
+  'scripts/seed-plm-report-builder-menu-item',
+  'scripts/seed-plm-standard-reports',
+  'scripts/seed-legacy-standard-reports',
+  'scripts/seed-docket-standard-reports',
 ];
 
 // Compiled (dist/prisma/setup.js) runs the compiled steps with plain node; the TypeScript source
