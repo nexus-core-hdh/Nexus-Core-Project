@@ -87,11 +87,13 @@ export class SerialCardListController {
 
   // Barcode scan / Serial No lookup — the barcode value is the Serial No.
   @Get('by-code/:code')
-  getByCode(@Param('code') code: string) {
-    return this.svc.getByCode(code);
+  getByCode(@Param('code') code: string, @Query('origin') origin?: string) {
+    return this.svc.getByCode(code, origin);
   }
 
-  // Label printing — the cards (in the given order) with their QR payloads. GET, so it needs the
+  // `origin` (by-code and detail) = the ERP address the browser is on — the base of the link that
+  // earlier labels encoded, when QR_PUBLIC_BASE_URL isn't set. Label printing — the cards (in the
+  // given order) with their Yarn Recipes; the label QR holds the data itself. GET, so it needs the
   // same read permission as viewing the list. ?ids=1,2,3
   @Get('labels')
   getLabels(@Query('ids') ids?: string) {
@@ -100,8 +102,8 @@ export class SerialCardListController {
 
   // One card with its production identity and Yarn Recipe (detail screen).
   @Get(':id/detail')
-  getDetail(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.getDetail(id);
+  getDetail(@Param('id', ParseIntPipe) id: number, @Query('origin') origin?: string) {
+    return this.svc.getDetail(id, origin);
   }
 
   @Patch()

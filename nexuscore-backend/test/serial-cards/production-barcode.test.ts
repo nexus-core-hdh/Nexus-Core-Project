@@ -105,6 +105,35 @@ describe('No receipt-quantity cap on Generate Serial Cards', () => {
   });
 });
 
+describe('Repeated Produce on one receipt line (Generate Serial Cards sessions)', () => {
+  test('each batch returns only its own new cards; earlier cards are untouched', async () => {
+    const fab = await fabric();
+    const l = await receiptLine(fab, 14);
+    const lineBefore = (await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM "IM_ReceiptItem" WHERE "RecId" = $1`, l.lineId))[0];
+    const stockBefore = (await loadStockValuations(prisma, [fab])).get(fab);
+
+    const first = await produce(l, { count: 3, quantity: 20, partyNo: '211' }); // a line with no cards yet
+    assert.equal(first.length, 3);
+    const snapshot = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM "IM_SerialCard" WHERE "RecId" = ANY($1::int[]) ORDER BY "RecId"`, first.map((c) => c.RecId));
+
+    const second = await produce(l, { count: 2, quantity: 19 }); // a line that already has cards
+    assert.equal(second.length, 2, 'only the new batch is returned');
+    assert.ok(second.every((c) => !first.some((f) => f.RecId === c.RecId)));
+    const codes = [...first, ...second].map((c) => c.SerialCode);
+    assert.equal(new Set(codes).size, 5, 'all Serial Nos unique');
+
+    const after = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM "IM_SerialCard" WHERE "RecId" = ANY($1::int[]) ORDER BY "RecId"`, first.map((c) => c.RecId));
+    assert.deepEqual(after, snapshot, 'first batch unchanged by the second Produce');
+    const listed = await svc.list(l.lineId);
+    assert.equal(listed.length, 5, 'View Serial Cards / List shows both batches');
+    assert.equal((await svc.getContext(l.receiptId, l.lineId) as any).existingSerialCount, 5);
+
+    const lineAfter = (await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM "IM_ReceiptItem" WHERE "RecId" = $1`, l.lineId))[0];
+    assert.deepEqual(lineAfter, lineBefore, 'receipt line unchanged');
+    assert.deepEqual((await loadStockValuations(prisma, [fab])).get(fab), stockBefore, 'stock / value unchanged');
+  });
+});
+
 describe('Unique barcode (Serial No) per card', () => {
   test('auto-generated: every card distinct, next batch continues after the highest', async () => {
     const l = await receiptLine(await fabric(), 1);
@@ -244,7 +273,7 @@ describe('Production details from the linked records', () => {
   });
 });
 
-describe('QR payload — the card\'s complete information, readable without the ERP', () => {
+describe('QR link and the scan page\'s data', () => {
   async function seededCard(opts: { styleName?: string; fabricName?: string } = {}) {
     const comp = await master('MD_Composition', 'CompositionCode', 'CompositionName', '97% CTN 3% LYC');
     const gsm = await master('MD_FinishGSM', 'FinishGSMCode', 'FinishGSMName', '320');
@@ -267,82 +296,98 @@ describe('QR payload — the card\'s complete information, readable without the 
     const cards = await produce(l, { count: 2, quantity: 45, width: 70, weight: 318, partyNo: '211-1', currentAccountId: acc, manufacturingDate: '2026-10-12', shelfLife: 12, explanation: 'ok' });
     return { cards, style: s, acc };
   }
-  const payloadOf = async (id: number) => JSON.parse((await svc.getDetail(id) as any).qrPayload);
+  const ORIGIN = 'http://192.168.0.28:3000';
+  const detailOf = (id: number) => svc.getDetail(id, ORIGIN) as Promise<any>;
 
-  test('every required field carries the actual linked value, plus the complete Yarn Recipe', async () => {
+  test('the scan page data: every required field carries the actual linked value, plus the complete Yarn Recipe', async () => {
     const { cards, style } = await seededCard();
-    const p = await payloadOf(cards[0].RecId);
-    const row: any = (await svc.listAll({ id: cards[0].RecId })).rows[0];
-    assert.equal(p.schema, 'nexuscore.serial-card/1');
-    assert.equal(p.serialNo, cards[0].SerialCode);
-    assert.equal(p.workOrderNo, row.workOrderNo);
-    assert.ok(p.workOrderNo);
-    assert.deepEqual(p.style, { number: style.styleNumber, name: 'Polo Shirt' });
-    assert.deepEqual(p.fabric, { code: row.inventoryCode, name: 'Rib 1x1', composition: '97% CTN 3% LYC', finishGsm: '320', specWidth: 72, specWeight: 320 });
-    assert.equal(p.color.name, 'Navy');
-    assert.deepEqual([p.width, p.grams, p.quantity], [70, 318, 45]);
-    assert.equal(p.receiptNo, row.receiptNo);
-    assert.equal(p.productDate, '2026-10-12');
-    assert.deepEqual(p.manCaCode, { code: row.currentAccountCode, name: 'Knit Supplier Ltd.' });
-    assert.equal(p.partyNo, '211-1');
-    assert.equal(p.shelfLife, 12);
-    assert.equal(p.yarnRecipe.status, 'ok');
-    assert.equal(p.yarnRecipe.source, 'common');
-    assert.deepEqual(p.yarnRecipe.lines, [
-      { code: p.yarnRecipe.lines[0].code, name: '30/1 Combed Cotton', process: 'DYED', variant: 'NAVY / SLUB', percentage: 97, wastePct: 3, dyeWastagePct: 2 },
-      { code: p.yarnRecipe.lines[1].code, name: '20D Lycra', process: null, variant: null, percentage: 3, wastePct: 1, dyeWastagePct: 0 },
+    const d = await detailOf(cards[0].RecId);
+    assert.equal(d.SerialCode, cards[0].SerialCode);
+    assert.ok(d.workOrderNo);
+    assert.equal(d.styleNumber, style.styleNumber);
+    assert.equal(d.styleName, 'Polo Shirt');
+    assert.equal(d.inventoryName, 'Rib 1x1');
+    assert.equal(d.fabricComposition, '97% CTN 3% LYC');
+    assert.equal(d.fabricGsm, '320');
+    assert.equal(d.colorName, 'Navy');
+    assert.deepEqual([Number(d.Width), Number(d.Weight), Number(d.Quantity)], [70, 318, 45]);
+    assert.ok(d.receiptNo);
+    assert.equal(d.currentAccountName, 'Knit Supplier Ltd.');
+    assert.equal(d.yarnRecipe.status, 'ok');
+    assert.deepEqual(d.yarnRecipe.lines.map((l: any) => [l.yarnName, l.process, l.percentage, l.wastePct, l.dyeWastagePct]), [
+      ['30/1 Combed Cotton', 'DYED', 97, 3, 2],
+      ['20D Lycra', null, 3, 1, 0],
     ]);
-    assert.ok(p.yarnRecipe.lines.every((l: any) => /^YRN/.test(l.code)), 'yarn codes from the Yarn Cards');
+    // The scan lookup (what the phone page calls) returns the same card and recipe
+    const scanned: any = await svc.getByCode(cards[0].SerialCode, ORIGIN);
+    assert.equal(scanned.RecId, cards[0].RecId);
+    assert.deepEqual(scanned.yarnRecipe, d.yarnRecipe);
   });
 
-  test('unavailable values are explicit nulls; no internal ids, volatile or personal fields', async () => {
+  test('earlier labels: the QR link holds only the Serial No, nothing else', async () => {
     const { cards } = await seededCard();
-    const p = await payloadOf(cards[0].RecId);
-    for (const k of ['expirationDate', 'quantity2', 'quantity3', 'resource', 'manufacturerSerial', 'rawWidth', 'pieceCount']) {
-      assert.ok(k in p && p[k] === null, `${k} present as null`);
+    const d = await detailOf(cards[0].RecId);
+    assert.equal(d.qrPayload, `${ORIGIN}/s/${encodeURIComponent(cards[0].SerialCode)}`);
+    assert.ok(d.qrPayload.length < 80, 'short → small, easy-to-scan QR');
+    for (const leak of ['Polo', 'Rib', 'Knit Supplier', 'Cotton']) assert.ok(!d.qrPayload.includes(leak), `${leak} not in the QR`);
+  });
+
+  test('QR_PUBLIC_BASE_URL wins over the browser origin; unsafe origins are ignored', async () => {
+    const { cards } = await seededCard();
+    const prev = process.env.QR_PUBLIC_BASE_URL;
+    try {
+      process.env.QR_PUBLIC_BASE_URL = 'https://erp.example.com/';
+      assert.equal((await detailOf(cards[0].RecId)).qrPayload, `https://erp.example.com/s/${cards[0].SerialCode}`);
+      delete process.env.QR_PUBLIC_BASE_URL;
+      assert.equal((await svc.getDetail(cards[0].RecId, 'javascript:alert(1)') as any).qrPayload, null);
+      assert.equal((await svc.getDetail(cards[0].RecId, 'not a url') as any).qrPayload, null);
+      // Labels hold the data as text — printing needs no ERP address at all.
+      const [label] = await svc.getLabels([cards[0].RecId]) as any[];
+      assert.equal(label.RecId, cards[0].RecId);
+    } finally {
+      if (prev === undefined) delete process.env.QR_PUBLIC_BASE_URL; else process.env.QR_PUBLIC_BASE_URL = prev;
     }
-    const text = JSON.stringify(p);
-    for (const k of ['RecId', 'UUID', 'InsertedBy', 'employee', 'Employee', 'employeeName', 'warehouseQuantity', 'hasTransaction', 'workOrderId', 'colorCardId']) {
-      assert.ok(!text.includes(`"${k}"`), `${k} not encoded`);
-    }
   });
 
-  test('missing recipe → status and reason in the payload, never invented lines', async () => {
-    const fab = await fabric();
-    const noWo: any = (await produce(await receiptLine(fab, 10), { count: 1 }))[0];
-    const p = await payloadOf(noWo.RecId);
-    assert.equal(p.yarnRecipe.status, 'no-work-order');
-    assert.match(p.yarnRecipe.message, /not linked to a Work Order/);
-    assert.deepEqual(p.yarnRecipe.lines, []);
-    assert.equal(p.workOrderNo, null);
-    assert.deepEqual(p.style, { number: null, name: null });
+  test('special characters in a Serial No are URL-encoded and round-trip to the card', async () => {
+    const l = await receiptLine(await fabric(), 10);
+    const code = `${uniq('A')}/B #C?`;
+    const [c] = await produce(l, { count: 1, serialNo: code });
+    const link = (await detailOf(c.RecId)).qrPayload as string;
+    assert.equal(link, `${ORIGIN}/s/${encodeURIComponent(code)}`);
+    const serial = decodeURIComponent(new URL(link).pathname.replace(/^\/s\//, ''));
+    assert.equal((await svc.getByCode(serial, ORIGIN) as any).RecId, c.RecId);
   });
 
-  test('special characters and long names round-trip through JSON intact', async () => {
-    const styleName = `Polo — Men's "Classic" <Slim> & Co. \\ ü ç 汉字 ${'L'.repeat(200)}`;
-    const fabricName = `RIB 1X1 | 97% CTN "3%" ploy & <x> ü ${'F'.repeat(220)}`.slice(0, 250);
-    const { cards } = await seededCard({ styleName, fabricName });
-    const detail: any = await svc.getDetail(cards[0].RecId);
-    const p = JSON.parse(detail.qrPayload);
-    assert.equal(p.style.name, styleName);
-    assert.equal(p.fabric.name, fabricName);
-    const bytes = Buffer.byteLength(detail.qrPayload, 'utf8');
-    assert.ok(bytes < 2331, `fits a medium-ECC QR Code (${bytes} bytes)`);
-  });
-
-  test('distinct per card; identical on reprint; changes only when the card\'s data changes', async () => {
+  test('earlier link labels: the link is stable across reprints and edits (the page shows the current data)', async () => {
     const { cards, acc } = await seededCard();
-    const [a, b] = await svc.getLabels([cards[0].RecId, cards[1].RecId]) as any[];
-    assert.notEqual(a.qrPayload, b.qrPayload);
-    assert.equal(JSON.parse(a.qrPayload).serialNo, cards[0].SerialCode);
-    assert.equal(JSON.parse(b.qrPayload).serialNo, cards[1].SerialCode);
-    const again = await svc.getLabels([cards[0].RecId]) as any[];
-    assert.equal(again[0].qrPayload, a.qrPayload, 'reprint = same payload');
-    assert.equal((await svc.getDetail(cards[0].RecId) as any).qrPayload, a.qrPayload, 'detail screen shows the printed payload');
+    const a = (await detailOf(cards[0].RecId)).qrPayload;
+    assert.notEqual(a, (await detailOf(cards[1].RecId)).qrPayload);
     await svc.update([{ id: cards[0].RecId, quantity: 50, width: 70, weight: 318, partyNo: '211-1', manufacturingDate: '2026-10-12', shelfLife: 12, explanation: 'ok', currentAccountId: acc } as any], userId, companyId);
-    const after = JSON.parse((await svc.getLabels([cards[0].RecId]) as any[])[0].qrPayload);
-    assert.equal(after.quantity, 50, 'legitimate change → new payload');
-    assert.equal(after.serialNo, cards[0].SerialCode, 'Serial No unchanged');
+    assert.equal((await detailOf(cards[0].RecId)).qrPayload, a, 'an edit never changes an earlier label\'s link');
+    assert.equal(Number((await detailOf(cards[0].RecId)).Quantity), 50, 'the page shows the edit');
+  });
+
+  test('labels carry everything the offline QR text needs: the full row plus the complete Yarn Recipe', async () => {
+    const { cards } = await seededCard();
+    const d = await detailOf(cards[0].RecId);
+    const [label] = await svc.getLabels([cards[0].RecId]) as any[];
+    assert.deepEqual(label.yarnRecipe, d.yarnRecipe);
+    for (const k of ['SerialCode', 'workOrderNo', 'styleNumber', 'styleName', 'inventoryCode', 'inventoryName', 'fabricComposition', 'fabricGsm',
+      'fabricWidth', 'fabricWeight', 'colorCode', 'colorName', 'variantCode', 'variantName', 'Width', 'Weight', 'Quantity', 'unitCode', 'receiptNo',
+      'ManufacturingDate', 'ExpirationDate', 'ShelfLife', 'PartyNo', 'currentAccountCode', 'currentAccountName', 'qualityTypeName', 'resourceCode',
+      'ProducerSerialCode', 'Explanation', 'QuantityMT', 'Quantity3', 'RawWidth', 'RawWeight', 'RawLength', 'ProductLength', 'WeightM2', 'WeightMt',
+      'Pus', 'Fine', 'PieceCount']) {
+      assert.ok(k in label, `${k} on the label row`);
+      assert.deepEqual(label[k], d[k], k);
+    }
+    assert.ok(!('qrPayload' in label), 'no link on new labels');
+    for (const secret of ['password', 'Password', 'token', 'accessToken']) assert.ok(!(secret in label), `${secret} never on a label`);
+    // SERIAL_CARD_LABEL_FIXTURE=<file>: save this real labels response so the frontend QR decode
+    // check (frontend/scripts/serial-card-qr-offline.test.mjs) can run on it.
+    if (process.env.SERIAL_CARD_LABEL_FIXTURE) {
+      require('node:fs').writeFileSync(process.env.SERIAL_CARD_LABEL_FIXTURE, JSON.stringify(label, (_k, v) => (typeof v === 'bigint' ? Number(v) : v), 2));
+    }
   });
 
   test('Product / Expiration Date are stored as entered and survive an edit unchanged', async () => {
@@ -353,8 +398,8 @@ describe('QR payload — the card\'s complete information, readable without the 
     // The Update form echoes the loaded value back as an ISO string — the date must not move.
     const loaded: any = (await svc.listAll({ id: c.RecId })).rows[0];
     await svc.update([{ id: c.RecId, manufacturingDate: new Date(loaded.ManufacturingDate).toISOString(), expirationDate: '2027-02-01' } as any], userId, companyId);
-    const p = JSON.parse((await svc.getDetail(c.RecId) as any).qrPayload);
-    assert.deepEqual([p.productDate, p.expirationDate], ['2026-10-12', '2027-02-01']);
+    const d = await detailOf(c.RecId);
+    assert.deepEqual([new Date(d.ManufacturingDate).toISOString().slice(0, 10), new Date(d.ExpirationDate).toISOString().slice(0, 10)], ['2026-10-12', '2027-02-01']);
   });
 
   test('labels come back in the requested order; bad requests are refused', async () => {

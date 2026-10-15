@@ -2,10 +2,11 @@ import {
   Body, Controller, Delete, Get, Param, Patch, Post, Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UsersService } from './users.service';
+import { UsersService, type UserActor } from './users.service';
 import { CreateUserWithRoleDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
+import { SetUserPasswordDto } from './dto/set-password.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 
@@ -45,14 +46,22 @@ export class UsersController {
     return this.usersService.findOne(id);
   }
 
-  // Editing/deleting a user who holds a system ("Full access") role additionally requires
-  // roles:manage — otherwise users:update alone could reset an administrator's password.
+  // Editing a user / resetting their password: users:update, and the service's assertCanModify —
+  // same company as the signed-in user (from the server-side session, not the request), and no
+  // account with more permissions than the actor unless the actor holds roles:manage.
   @Permissions({ module: 'users', action: 'update' })
   @Patch(':id')
   @ApiOperation({ summary: 'Update user' })
-  async update(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser('id') actorId: string) {
-    await this.usersService.assertCanManage(actorId, id);
-    return this.usersService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() actor: UserActor) {
+    return this.usersService.update(actor, id, dto);
+  }
+
+  // Users screen "Reset Password" — same permission and rules as editing the user.
+  @Permissions({ module: 'users', action: 'update' })
+  @Post('set-password/:id')
+  @ApiOperation({ summary: 'Reset a user password (typed or generated temporary); user must change it at next login' })
+  setPassword(@Param('id') id: string, @Body() dto: SetUserPasswordDto, @CurrentUser() actor: UserActor) {
+    return this.usersService.setPassword(actor, id, dto);
   }
 
   @Permissions({ module: 'users', action: 'delete' })

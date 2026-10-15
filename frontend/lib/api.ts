@@ -60,8 +60,10 @@ async function apiRequest(endpoint: string, options?: RequestInit) {
   if (!response.ok) {
     let errorMessage = `API request failed: ${response.statusText}`;
     let trialExpired = false;
+    let jsonBody = false;
     try {
       const errorData = await response.json();
+      jsonBody = true;
       errorMessage = errorData.error || errorData.message || errorMessage;
       if (errorData.details) {
         errorMessage += ` - ${errorData.details}`;
@@ -73,6 +75,14 @@ async function apiRequest(endpoint: string, options?: RequestInit) {
     const error = new Error(errorMessage);
     (error as any).status = response.status;
     (error as any).trialExpired = trialExpired;
+    // Backend unreachable behind a same-origin proxy (`next dev` rewrites /api/v1 to the backend; a
+    // reverse proxy in production): the proxy answers 502/503/504, or a bare non-JSON 500 when the
+    // backend refuses the connection (e.g. while it restarts). The NestJS API's own errors are
+    // always JSON, so these are flagged like a direct fetch failure — callers already treat
+    // isNetworkError as "server not reachable" rather than an unexpected error.
+    if ([502, 503, 504].includes(response.status) || (response.status === 500 && !jsonBody)) {
+      (error as any).isNetworkError = true;
+    }
     throw error;
   }
 

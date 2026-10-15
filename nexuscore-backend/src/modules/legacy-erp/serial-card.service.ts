@@ -66,18 +66,36 @@ export type SerialCardYarnRecipe = {
   }[];
 };
 
-// ── Serial Card QR payload ───────────────────────────────────────────────────────────────────
-// The text a Serial Card label's QR Code holds: the card's complete information as JSON, readable
-// by any QR scanner with no ERP lookup. Built from a listAll()-shaped row (the card + its linked
-// Work Order / Style Card / Fabric Card / receipt line) and its resolved Yarn Recipe — the same
-// data the detail screen shows, never re-derived elsewhere.
-//  - Every key is always present, in a fixed order; an unavailable value is null (never invented,
-//    never an empty string) and an unavailable Yarn Recipe says why ("status"/"message").
-//  - Deterministic: no timestamps or volatile values (warehouse quantity, transaction status), so
-//    a reprint gives the identical payload until the card or its linked data really changes.
-//  - Unique per card: it carries the card's Serial No.
-//  - No internal ids, audit fields or personal data (the Employee field is left out).
-export const SERIAL_CARD_QR_SCHEMA = 'nexuscore.serial-card/1';
+// ── Serial Card QR Code ──────────────────────────────────────────────────────────────────────
+// Labels printed now hold the card's complete data as plain text (frontend
+// lib/legacy-erp/serial-card-qr-text.ts, from getLabels()), readable offline. The link below is
+// what EARLIER labels encoded; detail/by-code still return it so those labels keep working:
+// A label's QR Code holds a short link to the card's own details page: <base>/s/<Serial No>.
+// A phone's camera opens it as a readable page (fields + Yarn Recipe, the same layout as the ERP
+// detail dialog); the page requires an ERP login and serial-cards read permission, so no card
+// data is readable from a label without the ERP. The link carries only the Serial No (already
+// printed on the label) — unique per card and never changed by edits, so a reprint encodes the
+// identical link and the page always shows the card's current data.
+// Base = QR_PUBLIC_BASE_URL (the ERP's public https address, set per deployment); until that is
+// set, the address the ERP was opened on (sent by the browser as `origin`).
+export function serialCardQrBase(origin?: string | null): string | null {
+  const parse = (v?: string | null) => {
+    if (!v || !String(v).trim()) return null;
+    try {
+      const u = new URL(String(v).trim());
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+      return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+    } catch {
+      return null;
+    }
+  };
+  return parse(process.env.QR_PUBLIC_BASE_URL) ?? parse(origin);
+}
+
+export function serialCardQrUrl(serialCode: string, origin?: string | null): string | null {
+  const base = serialCardQrBase(origin);
+  return base && serialCode ? `${base}/s/${encodeURIComponent(String(serialCode).trim())}` : null;
+}
 
 // Product Date / Expiration Date are calendar dates held in timestamp-without-time-zone columns.
 // Bound as a JS Date they would be converted to the DB session's timezone on the way in (a
@@ -91,89 +109,6 @@ export function calendarDate(v: string | null | undefined): string | null {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) throw new BadRequestException(`Invalid date: ${s}`);
   return d.toISOString().slice(0, 10);
-}
-
-const qrText = (v: unknown): string | null => {
-  if (v == null) return null;
-  const s = String(v).trim();
-  return s === '' ? null : s;
-};
-const qrNumber = (v: unknown): number | null => {
-  if (v == null || v === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? Number(n.toFixed(8)) : null;
-};
-// Prisma returns timestamp-without-time-zone values as Dates read as UTC, so the stored calendar
-// date is the UTC date — the same YYYY-MM-DD the screens show (ISO string, first 10 chars),
-// independent of the server's timezone.
-const qrDate = (v: unknown): string | null => {
-  if (v == null || v === '') return null;
-  const d = v instanceof Date ? v : new Date(String(v));
-  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-};
-const codeName = (code: unknown, name: unknown) => {
-  const c = qrText(code);
-  const n = qrText(name);
-  return c == null && n == null ? null : { code: c, name: n };
-};
-
-export function buildSerialCardQrPayload(card: any, recipe: SerialCardYarnRecipe): string {
-  const payload = {
-    schema: SERIAL_CARD_QR_SCHEMA,
-    serialNo: qrText(card.SerialCode),
-    workOrderNo: qrText(card.workOrderNo),
-    style: { number: qrText(card.styleNumber), name: qrText(card.styleName) },
-    fabric: {
-      code: qrText(card.inventoryCode),
-      name: qrText(card.inventoryName),
-      composition: qrText(card.fabricComposition),
-      finishGsm: qrText(card.fabricGsm),
-      specWidth: qrNumber(card.fabricWidth),
-      specWeight: qrNumber(card.fabricWeight),
-    },
-    color: codeName(card.colorCode, card.colorName),
-    variant: codeName(card.variantCode, card.variantName),
-    width: qrNumber(card.Width),
-    grams: qrNumber(card.Weight),
-    quantity: qrNumber(card.Quantity),
-    unit: qrText(card.unitCode),
-    quantity2: qrNumber(card.QuantityMT),
-    quantity3: qrNumber(card.Quantity3),
-    receiptNo: qrText(card.receiptNo),
-    productDate: qrDate(card.ManufacturingDate),
-    expirationDate: qrDate(card.ExpirationDate),
-    shelfLife: qrNumber(card.ShelfLife),
-    manCaCode: codeName(card.currentAccountCode, card.currentAccountName),
-    partyNo: qrText(card.PartyNo),
-    qualityType: qrText(card.qualityTypeName),
-    resource: qrText(card.resourceCode),
-    manufacturerSerial: qrText(card.ProducerSerialCode),
-    explanation: qrText(card.Explanation),
-    rawWidth: qrNumber(card.RawWidth),
-    rawWeight: qrNumber(card.RawWeight),
-    rawLength: qrNumber(card.RawLength),
-    productLength: qrNumber(card.ProductLength),
-    m2: qrNumber(card.WeightM2),
-    mtul: qrNumber(card.WeightMt),
-    pus: qrNumber(card.Pus),
-    fine: qrNumber(card.Fine),
-    pieceCount: qrNumber(card.PieceCount),
-    yarnRecipe: {
-      status: recipe.status,
-      message: recipe.message ?? null,
-      source: recipe.source ?? null,
-      lines: recipe.lines.map((l) => ({
-        code: qrText(l.yarnCode),
-        name: qrText(l.yarnName),
-        process: qrText(l.process),
-        variant: qrText([l.variant1, l.variant2].map(qrText).filter(Boolean).join(' / ')),
-        percentage: qrNumber(l.percentage),
-        wastePct: qrNumber(l.wastePct),
-        dyeWastagePct: qrNumber(l.dyeWastagePct),
-      })),
-    },
-  };
-  return JSON.stringify(payload);
 }
 
 // Every editable IM_SerialCard field this feature's UI exposes, shared between Produce (as
@@ -480,15 +415,16 @@ export class SerialCardService {
 
   // Serial Card detail — the list row (every card field + its production identity) plus the Yarn
   // Recipe of the BOM it was produced against. Backs the detail screen and barcode scan.
-  async getDetail(id: number) {
+  async getDetail(id: number, origin?: string | null) {
     const { rows } = await this.listAll({ id, take: 1 });
     if (!rows[0]) throw new NotFoundException('Serial card not found.');
     const yarnRecipe = await this.resolveYarnRecipe(rows[0]);
-    return { ...rows[0], yarnRecipe, qrPayload: buildSerialCardQrPayload(rows[0], yarnRecipe) };
+    return { ...rows[0], yarnRecipe, qrPayload: serialCardQrUrl(rows[0].SerialCode, origin) };
   }
 
-  // Label printing — every requested card (in the requested order) with its Yarn Recipe and the
-  // QR payload printed on its label. One recipe resolution per distinct (Work Order, fabric, color).
+  // Label printing — every requested card (in the requested order) with its Yarn Recipe: the
+  // label's QR holds the card's complete data as text (built by the frontend, format NXSC/2), so
+  // printing needs no ERP address (QR_PUBLIC_BASE_URL) and the QR needs no server to be read.
   async getLabels(ids: number[]) {
     const unique = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
     if (!unique.length) throw new BadRequestException('Select at least one serial card.');
@@ -496,19 +432,18 @@ export class SerialCardService {
     const { rows } = await this.listAll({ ids: unique, take: 500 });
     if (rows.length !== unique.length) throw new NotFoundException('Some selected serial cards no longer exist.');
     const byId = new Map(rows.map((r: any) => [Number(r.RecId), r]));
-    const recipes = new Map<string, Promise<SerialCardYarnRecipe>>();
-    return Promise.all(unique.map(async (id) => {
-      const row: any = byId.get(id);
-      const key = `${row.workOrderId ?? ''}|${row.InventoryId}|${row.colorCardId ?? ''}|${row.workOrderNo ?? ''}|${row.inventoryCode ?? ''}`;
-      if (!recipes.has(key)) recipes.set(key, this.resolveYarnRecipe(row));
-      const yarnRecipe = await recipes.get(key)!;
-      return { ...row, yarnRecipe, qrPayload: buildSerialCardQrPayload(row, yarnRecipe) };
-    }));
+    const out: any[] = [];
+    // A few recipes at a time — each resolves the Work Order's BOM (several queries).
+    for (let i = 0; i < unique.length; i += 8) {
+      const batch = unique.slice(i, i + 8).map((id) => byId.get(id));
+      out.push(...await Promise.all(batch.map(async (row: any) => ({ ...row, yarnRecipe: await this.resolveYarnRecipe(row) }))));
+    }
+    return out;
   }
 
   // Barcode scan / Serial No lookup. The barcode is the Serial No itself, so this is an exact match;
   // a scanner that sends a different letter case still finds the card when exactly one matches.
-  async getByCode(code: string) {
+  async getByCode(code: string, origin?: string | null) {
     const value = String(code ?? '').trim();
     if (!value) throw new BadRequestException('Scan or enter a Serial No.');
     let { rows } = await this.listAll({ serialCodeEquals: value, take: 2 });
@@ -521,7 +456,7 @@ export class SerialCardService {
     if (!rows.length) throw new NotFoundException(`No serial card with Serial No ${value}.`);
     if (rows.length > 1) throw new ConflictException(`More than one serial card has Serial No ${value}.`);
     const yarnRecipe = await this.resolveYarnRecipe(rows[0]);
-    return { ...rows[0], yarnRecipe, qrPayload: buildSerialCardQrPayload(rows[0], yarnRecipe) };
+    return { ...rows[0], yarnRecipe, qrPayload: serialCardQrUrl(rows[0].SerialCode, origin) };
   }
 
   // The Yarn Recipe for the roll, from the BOM it was actually produced against — never a guess:

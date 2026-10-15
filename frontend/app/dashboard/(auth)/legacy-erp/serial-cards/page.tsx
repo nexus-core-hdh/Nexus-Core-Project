@@ -36,7 +36,7 @@ import { useRowSelection } from "@/hooks/use-row-selection";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { SerialCardEditDialog, serialCardToUpdateItem, type SerialCardRow } from "@/components/legacy-erp/serial-card-edit-dialog";
 import { printSerialCardLabels } from "@/components/legacy-erp/serial-card-labels";
-import { serialNoFromQr } from "@/lib/legacy-erp/qr";
+import { serialNoFromQr, serialNoFromQrText } from "@/lib/legacy-erp/qr";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-serial-cards-dialog";
@@ -108,6 +108,9 @@ export default function SerialCardsPage() {
   const [busy, setBusy] = useState(false);
   const [scanCode, setScanCode] = useState("");
   const [scanning, setScanning] = useState(false);
+  // A label QR holds many lines of text; a keyboard-wedge scanner types each line + Enter. The
+  // first line ("SERIAL CARD: …") opens the card; the rest of that burst is ignored.
+  const qrTextBurstAt = useRef(0);
   // Party No column filter — applied to the server query (every page), not just the loaded rows.
   // A ref so load() (also called from Find / paging / reloads) always sends the current selection.
   const partyNosRef = useRef<string[]>([]);
@@ -233,9 +236,16 @@ export default function SerialCardsPage() {
 
   const closeScreen = () => closeTab(tabCtx?.tabKey ?? PATH);
 
-  // Scan: a label QR (its JSON) or a typed Serial No — a scanner types it and sends Enter.
+  // Scan: a label QR (its text, or an earlier label's link / JSON) or a typed Serial No — a
+  // scanner types it and sends Enter.
   const scan = async () => {
-    // A scanned label QR arrives as its JSON payload — look the card up by the Serial No inside it.
+    const isQrText = serialNoFromQrText(scanCode.trim()) != null;
+    if (!isQrText && Date.now() - qrTextBurstAt.current < 1500) {
+      qrTextBurstAt.current = Date.now();
+      setScanCode("");
+      return;
+    }
+    if (isQrText) qrTextBurstAt.current = Date.now();
     const code = serialNoFromQr(scanCode) ?? scanCode.trim();
     if (!code || scanning) return;
     setScanning(true);

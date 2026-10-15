@@ -431,6 +431,10 @@ export interface SerialCardUpdateItem extends SerialCardFieldValues {
   id: number;
 }
 
+/** `origin=<this browser's ERP address>` for the Serial Card QR link base (see serialCards.detail). */
+const qrOriginParam = () =>
+  `origin=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin : "")}`;
+
 // Legacy ERP (migrated SQL Server schema, raw-SQL backed)
 export const legacyErpApi = {
   warehouses: {
@@ -632,11 +636,13 @@ export const legacyErpApi = {
       return api.get(`/legacy-erp/serial-cards${s ? `?${s}` : ""}`);
     },
     updateFlat: (items: SerialCardUpdateItem[]) => api.patch(`/legacy-erp/serial-cards`, items),
-    // One card with its production details + Yarn Recipe; byCode = barcode scan (barcode = Serial No).
-    detail: (id: number) => api.get(`/legacy-erp/serial-cards/${id}/detail`),
-    // Label printing — the cards in this order, each with its server-built QR payload.
+    // One card with its production details + Yarn Recipe; byCode = lookup by Serial No (scan).
+    // `origin` (this browser's ERP address) is the QR link base until the server's
+    // QR_PUBLIC_BASE_URL is set.
+    detail: (id: number) => api.get(`/legacy-erp/serial-cards/${id}/detail?${qrOriginParam()}`),
+    // Label printing — the cards in this order, each with its Yarn Recipe (the QR holds the data as text).
     labels: (ids: number[]) => api.get(`/legacy-erp/serial-cards/labels?ids=${ids.join(",")}`),
-    byCode: (code: string) => api.get(`/legacy-erp/serial-cards/by-code/${encodeURIComponent(code.trim())}`),
+    byCode: (code: string) => api.get(`/legacy-erp/serial-cards/by-code/${encodeURIComponent(code.trim())}?${qrOriginParam()}`),
     // "Assign to Qty" — splits each receipt line's unassigned quantity equally across the given cards.
     assignQuantity: (ids: number[]) => api.patch(`/legacy-erp/serial-cards/assign-quantity`, { ids }),
     remove: (id: number) => api.delete(`/legacy-erp/serial-cards/${id}`),

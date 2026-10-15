@@ -1,11 +1,11 @@
 // QR Code → SVG for Serial Card labels (qrcode-generator does the encoding; this file renders it).
 //
-// The payload is encoded as UTF-8 in byte mode: qrcode-generator's own byte conversion keeps only
-// the low 8 bits of each JS character (Latin-1), which would corrupt names with accents/symbols,
-// so the text is UTF-8-encoded first and handed over as one character per byte.
+// The text is encoded as UTF-8 in byte mode: qrcode-generator's own byte conversion keeps only
+// the low 8 bits of each JS character (Latin-1), which would corrupt non-ASCII characters, so the
+// text is UTF-8-encoded first and handed over as one character per byte.
 import qrcode from "qrcode-generator";
 
-export type QrLevel = "M" | "L";
+export type QrLevel = "H" | "Q" | "M" | "L";
 
 export interface QrMatrix {
   size: number;
@@ -22,12 +22,13 @@ export function utf8ByteString(text: string): string {
   return out;
 }
 
-/** The smallest QR that holds `text`: medium error correction (better on worn paper labels),
- *  low only when the text is too large for medium. Throws when it fits neither. */
-export function qrMatrix(text: string): QrMatrix {
+/** The QR for `text` at the first error-correction level (in `levels` order) it fits.
+ *  Label links are short, so they get "Q" — readable even with a quarter of the code scuffed.
+ *  Throws when the text fits none of the levels. */
+export function qrMatrix(text: string, levels: QrLevel[] = ["Q", "M", "L"]): QrMatrix {
   if (!text) throw new Error("Nothing to encode.");
   const data = utf8ByteString(text);
-  for (const level of ["M", "L"] as const) {
+  for (const level of levels) {
     try {
       const qr = qrcode(0, level);
       qr.addData(data, "Byte");
@@ -38,12 +39,12 @@ export function qrMatrix(text: string): QrMatrix {
       // too long for this level — try the next one
     }
   }
-  throw new Error(`This card's information (${new TextEncoder().encode(text).length} bytes) is too large for a QR Code.`);
+  throw new Error(`This text (${new TextEncoder().encode(text).length} bytes) is too large for a QR Code.`);
 }
 
 /** Standalone SVG: one path of dark modules, a 4-module quiet zone, 1 user unit per module. */
-export function qrSvg(text: string): string {
-  const m = qrMatrix(text);
+export function qrSvg(text: string, levels?: QrLevel[]): string {
+  const m = qrMatrix(text, levels);
   const quiet = 4;
   const total = m.size + quiet * 2;
   let d = "";
@@ -55,14 +56,48 @@ export function qrSvg(text: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges" data-qr-version="${m.version}" data-qr-level="${m.level}"><rect width="${total}" height="${total}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
 }
 
-/** The Serial No out of a scanned Serial Card QR (its JSON); null when `text` isn't one. */
+/** The Serial No from a label's offline text QR (lib/legacy-erp/serial-card-qr-text.ts, any part):
+ *  its first line "SERIAL CARD: <Serial No>[ (n/N)]". A keyboard-wedge scanner sends that line on
+ *  its own (Enter ends it); an input that dropped the line breaks still parses. */
+export function serialNoFromQrText(text: string): string | null {
+  const m = text.replace(/^﻿/, "").match(/^SERIAL CARD: (.+?)(?: \(\d{1,2}\/\d{1,2}\))?[ \t]*(?=\r|\n|NXSC\/\d+ |Summary: |-- [A-Z ]+(?: \(cont\.\))? --|$)/);
+  // NXSC/2 escapes "\" in the Serial No as "\\".
+  const serial = m?.[1].trim().replace(/\\(.)/g, "$1");
+  return serial || null;
+}
+
+/** The Serial No out of a scanned Serial Card QR — the offline text label ("SERIAL CARD: …"), an
+ *  earlier label link (…/s/<Serial No>) or an older label's JSON payload ({"serialNo": …}); null
+ *  when `text` is none of these. */
 export function serialNoFromQr(text: string): string | null {
   const t = text.trim();
+  const fromText = serialNoFromQrText(t);
+  if (fromText) return fromText;
+  if (/^https?:\/\//i.test(t)) {
+    try {
+      const m = new URL(t).pathname.match(/\/s\/([^/]+)\/?$/);
+      const serial = m ? decodeURIComponent(m[1]).trim() : "";
+      return serial || null;
+    } catch {
+      return null;
+    }
+  }
   if (!t.startsWith("{")) return null;
   try {
     const v = JSON.parse(t);
     return typeof v?.serialNo === "string" && v.serialNo.trim() ? v.serialNo.trim() : null;
   } catch {
     return null;
+  }
+}
+
+/** True when a QR link points at an address a phone can't reach (localhost / loopback). */
+export function isLocalQrLink(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const h = new URL(url).hostname;
+    return h === "localhost" || h === "::1" || h === "[::1]" || /^127\./.test(h);
+  } catch {
+    return false;
   }
 }

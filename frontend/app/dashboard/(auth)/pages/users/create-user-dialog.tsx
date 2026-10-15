@@ -73,7 +73,7 @@ function generateTemporaryPassword() {
 
 // User limits per plan
 const PLAN_USER_LIMITS: Record<string, number | null> = {
-  Free: 3,
+  Free: 5,
   Basic: 10,
   Pro: 25,
   Enterprise: null, // Unlimited

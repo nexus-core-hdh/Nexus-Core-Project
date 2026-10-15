@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNextPath } from "@/lib/safe-next";
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -36,6 +37,15 @@ export function proxy(request: NextRequest) {
   // Get token from cookie
   const token = request.cookies.get('auth_token')?.value;
   
+  // Serial Card scan page (a label's QR link, /s/<Serial No>): signed out -> login, then back to
+  // the card. Done here as a real 307 (the page also checks, but a streamed page can only
+  // redirect client-side).
+  if (pathname.startsWith('/s/') && !token) {
+    const login = new URL('/dashboard/login/v1', request.url);
+    login.searchParams.set('next', pathname);
+    return NextResponse.redirect(login);
+  }
+
   // If accessing auth route without token, redirect to login
   if (isAuthRoute && !token) {
     return NextResponse.redirect(new URL('/dashboard/login/v1', request.url));
@@ -44,7 +54,10 @@ export function proxy(request: NextRequest) {
   // If accessing guest route with token, redirect to dashboard
   // Exception: Allow onboarding-flow even with token (user might need to complete company setup)
   if (isGuestRoute && token && !isOnboardingFlow) {
-    return NextResponse.redirect(new URL('/dashboard/default', request.url));
+    // Already signed in on a login link that carries a return path (e.g. a scanned Serial Card
+    // QR: /s/<Serial No> -> login?next=...) — go straight there instead of the dashboard.
+    const next = safeNextPath(request.nextUrl.searchParams.get('next'));
+    return NextResponse.redirect(new URL(next ?? '/dashboard/default', request.url));
   }
   
   // For root path, redirect based on auth status
@@ -64,6 +77,7 @@ export const config = {
   matcher: [
     '/',
     '/dashboard',
-    '/dashboard/:path*'
+    '/dashboard/:path*',
+    '/s/:path*'
   ]
 };

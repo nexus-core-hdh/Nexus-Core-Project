@@ -75,7 +75,16 @@ export default function config(phase: string): NextConfig {
   const backend = (process.env.NEXUSCORE_BACKEND_URL || "http://localhost:4000").replace(/\/$/, "");
   return {
     ...nextConfig,
-    allowedDevOrigins: (process.env.NEXT_DEV_ALLOWED_ORIGINS || "").split(",").map((h) => h.trim()).filter(Boolean),
+    // This machine's own LAN subnet is always allowed as a wildcard ("192.168.0.*" — Next matches
+    // "*" against one address segment): the router (DHCP) can hand this PC a new address at any
+    // time, even while the dev server keeps running, so the exact address read at startup goes
+    // stale. Plus any extra hosts listed in NEXT_DEV_ALLOWED_ORIGINS.
+    allowedDevOrigins: [...new Set([
+      ...Object.values(os.networkInterfaces()).flat()
+        .filter((a): a is os.NetworkInterfaceInfo => !!a && a.family === "IPv4" && !a.internal)
+        .map((a) => a.address.replace(/\.\d+$/, ".*")),
+      ...(process.env.NEXT_DEV_ALLOWED_ORIGINS || "").split(",").map((h) => h.trim()).filter(Boolean),
+    ])],
     rewrites: async () => [{ source: "/api/v1/:path*", destination: `${backend}/api/v1/:path*` }],
     experimental: { ...nextConfig.experimental, turbopackMemoryLimit: devTurbopackMemoryLimit() }
   };

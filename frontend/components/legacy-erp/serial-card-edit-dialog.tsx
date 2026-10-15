@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { legacyErpApi, type SerialCardUpdateItem } from "@/lib/nexuscore-api";
 import { serialCardToUpdateItem } from "@/lib/legacy-erp/serial-card-update";
-import { qrSvg } from "@/lib/legacy-erp/qr";
+import { SerialCardDetailView } from "./serial-card-detail-view";
 import { printSerialCardLabels } from "./serial-card-labels";
 import { toast } from "sonner";
 import { Printer, Save, Tag } from "lucide-react";
@@ -78,8 +78,9 @@ export interface SerialCardRow {
   fabricWeight?: number | null;
   /** Only on the detail / scan / labels responses. */
   yarnRecipe?: SerialCardYarnRecipe;
-  /** The label QR Code's text — the card's complete information as JSON (built by the server). */
-  qrPayload?: string;
+  /** The ERP link earlier labels encoded (<ERP>/s/<Serial No>). Current labels encode the card's
+   *  data as text instead (lib/legacy-erp/serial-card-qr-text.ts). */
+  qrPayload?: string | null;
 }
 
 export interface SerialCardYarnRecipe {
@@ -100,30 +101,6 @@ interface Props {
 }
 
 const fmtDate = (v: string | null) => (v ? v.slice(0, 10) : "");
-
-function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-medium" title={value != null ? String(value) : undefined}>
-        {value != null && value !== "" ? value : <span className="text-muted-foreground">—</span>}
-      </p>
-    </div>
-  );
-}
-
-const RECIPE_SOURCE: Record<string, string> = { color: "Color-specific recipe", common: "Common / overall recipe" };
-
-/** The label's QR Code (the card's full information) as inline SVG, or why it can't be drawn. */
-function qrMarkup(payload: string | null | undefined): { svg: string | null; error: string | null } {
-  if (!payload) return { svg: null, error: null };
-  try { return { svg: qrSvg(payload), error: null }; } catch (e: any) { return { svg: null, error: e.message }; }
-}
-
-/** The QR payload pretty-printed — exactly what a scanner shows, formatted for reading. */
-function prettyPayload(payload: string): string {
-  try { return JSON.stringify(JSON.parse(payload), null, 2); } catch { return payload; }
-}
 
 export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }: Props) {
   const [form, setForm] = useState<Partial<SerialCardRow>>({});
@@ -169,9 +146,6 @@ export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }
 
   if (!card) return null;
   const readOnly = mode === "view";
-  const info = detail ?? card;
-  const qr = qrMarkup(detail?.qrPayload);
-  const recipe = detail?.yarnRecipe;
   // Reprint uses the same server endpoint as every label, so the payload is the saved card's.
   const printLabel = async () => {
     try {
@@ -193,84 +167,14 @@ export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }
         </DialogHeader>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          <div className="flex flex-wrap items-start gap-3 rounded-md border border-border p-2">
-            <div className="h-36 w-36 shrink-0 rounded bg-white p-1">
-              {qr.svg
-                ? <div className="h-full w-full [&>svg]:h-full [&>svg]:w-full" aria-label={`QR Code for serial card ${card.SerialCode}`} dangerouslySetInnerHTML={{ __html: qr.svg }} />
-                : <p className="p-2 text-[11px] text-muted-foreground">{qr.error ?? (detailError ? "QR unavailable" : "Loading…")}</p>}
-            </div>
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <p className="font-mono text-sm font-semibold">{card.SerialCode}</p>
-              <p className="text-xs text-muted-foreground">
-                The label&apos;s QR Code holds this card&apos;s complete information (production details and Yarn Recipe) as JSON — any QR scanner can read it without the ERP.
-              </p>
-              <Button size="sm" variant="outline" className="h-7" onClick={printLabel} disabled={!qr.svg}>
+          <SerialCardDetailView
+            card={card} detail={detail} detailError={detailError}
+            actions={
+              <Button size="sm" variant="outline" className="h-7" onClick={printLabel} disabled={!detail}>
                 <Printer className="h-3.5 w-3.5 mr-1.5" />Print Label
               </Button>
-              {detail?.qrPayload && (
-                <details className="text-xs">
-                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Show QR contents ({new TextEncoder().encode(detail.qrPayload).length} bytes)</summary>
-                  <pre className="mt-1 max-h-56 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-snug">{prettyPayload(detail.qrPayload)}</pre>
-                </details>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 lg:grid-cols-3">
-            <Field label="Order No" value={info.workOrderNo} />
-            <Field label="Style No" value={info.styleNumber} />
-            <Field label="Style Name" value={info.styleName} />
-            <Field label="Inventory Code" value={card.inventoryCode} />
-            <Field label="Inventory Name" value={card.inventoryName} />
-            <Field label="Composition" value={info.fabricComposition} />
-            <Field label="Finish GSM (Fabric Card)" value={info.fabricGsm} />
-            <Field label="Width / Weight (Fabric Card)" value={info.fabricWidth != null || info.fabricWeight != null ? `${info.fabricWidth ?? "—"} / ${info.fabricWeight ?? "—"}` : null} />
-            <Field label="Variant" value={card.variantCode || card.variantName} />
-            <Field label="Color" value={card.colorCode || card.colorName} />
-            <Field label="Unit" value={card.unitCode} />
-            <Field label="Receipt No" value={card.receiptNo} />
-            <Field label="Man. C/A Code" value={[info.currentAccountCode, info.currentAccountName].filter(Boolean).join(" — ") || null} />
-            <Field label="Warehouse Quantity" value={card.warehouseQuantity != null ? card.warehouseQuantity.toLocaleString() : null} />
-          </div>
-
-          <div className="space-y-1.5 border-t border-border pt-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-              Yarn Recipe
-              {recipe?.source && <span className="ml-1.5 font-normal normal-case">— {RECIPE_SOURCE[recipe.source]} from Work Order {info.workOrderNo}&apos;s Fabric BOM</span>}
-            </p>
-            {detailError ? (
-              <p className="text-xs text-red-700 dark:text-red-400">{detailError}</p>
-            ) : !detail ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
-            ) : recipe?.status === "ok" ? (
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border text-left text-muted-foreground">
-                    <th className="py-1 pr-2 font-medium">Yarn Code</th>
-                    <th className="py-1 pr-2 font-medium">Yarn Name</th>
-                    <th className="py-1 pr-2 font-medium">Process</th>
-                    <th className="py-1 pr-2 font-medium">Variant</th>
-                    <th className="py-1 pr-2 text-right font-medium">%</th>
-                    <th className="py-1 text-right font-medium">Waste / Dye %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recipe.lines.map((l, i) => (
-                    <tr key={i} className="border-b border-border/60 last:border-0">
-                      <td className="py-1 pr-2 font-mono">{l.yarnCode || "—"}</td>
-                      <td className="py-1 pr-2">{l.yarnName || "—"}</td>
-                      <td className="py-1 pr-2">{l.process || "—"}</td>
-                      <td className="py-1 pr-2">{[l.variant1, l.variant2].filter(Boolean).join(" / ") || "—"}</td>
-                      <td className="py-1 pr-2 text-right tabular-nums">{l.percentage.toLocaleString()}</td>
-                      <td className="py-1 text-right tabular-nums">{l.wastePct.toLocaleString()} / {l.dyeWastagePct.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="text-xs text-muted-foreground">{recipe?.message ?? "No Yarn Recipe available."}</p>
-            )}
-          </div>
+            }
+          />
 
           <div className="grid grid-cols-2 gap-3 border-t border-border pt-3 lg:grid-cols-3">
             <div className="space-y-1">
