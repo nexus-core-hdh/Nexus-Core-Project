@@ -93,6 +93,31 @@ export interface InventoryCardListParams {
   sourceType?: string;
 }
 
+// Stock on Hand SQL for one item (see the comment on InventoryCardService.stockSumSql, which
+// delegates here). Exported so other read-only consumers (the Report Builder's Legacy ERP
+// inventory reports) use this exact formula instead of a second, divergent one.
+export function stockOnHandSumSql(itemRef: Prisma.Sql): Prisma.Sql {
+  const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
+  const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
+  const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
+  return Prisma.sql`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN rec."ReceiptType" IN (${inTypes}) THEN ${baseQty}
+        WHEN rec."ReceiptType" IN (${outTypes}) THEN -${baseQty}
+        ELSE 0
+      END
+    ), 0) AS "qty"
+    FROM "IM_ReceiptItem" ri
+    JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+    ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
+    WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
+      AND rec."ReceiptType" IN (${inTypes}, ${outTypes})
+      AND ${stockApprovalGateSql('rec')}
+      AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} IS NULL
+  `;
+}
+
 @Injectable()
 export class InventoryCardService {
   constructor(private readonly prisma: PrismaService) {}
@@ -249,25 +274,7 @@ export class InventoryCardService {
   // formula in unit-conversion.util.ts (the same one purchase-order.service.ts's listPending and
   // inventory-receipt.service.ts's assertPendingQty use) rather than a second stock formula.
   private stockSumSql(itemRef: Prisma.Sql) {
-    const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
-    const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
-    const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
-    return Prisma.sql`
-      SELECT COALESCE(SUM(
-        CASE
-          WHEN rec."ReceiptType" IN (${inTypes}) THEN ${baseQty}
-          WHEN rec."ReceiptType" IN (${outTypes}) THEN -${baseQty}
-          ELSE 0
-        END
-      ), 0) AS "qty"
-      FROM "IM_ReceiptItem" ri
-      JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
-      ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
-      WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
-        AND rec."ReceiptType" IN (${inTypes}, ${outTypes})
-        AND ${stockApprovalGateSql('rec')}
-        AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} IS NULL
-    `;
+    return stockOnHandSumSql(itemRef);
   }
 
   private stockLateral() {

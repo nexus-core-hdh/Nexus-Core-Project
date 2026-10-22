@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { visibleScopeWhere } from './custom-fields.service';
 
 type DefaultField = {
   name: string;
@@ -450,66 +451,15 @@ export class EntitiesService {
     return this.prisma.entityData.delete({ where: { id } });
   }
 
-  // ── Custom Fields ──────────────────────────────────────────────────────────
-
-  async getCustomFields(companyId: string, branchId?: string, entity?: string) {
-    return this.prisma.customField.findMany({
-      where: {
-        companyId,
-        ...(branchId ? { branchId } : {}),
-        ...(entity ? { entity } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  async createCustomField(dto: any, companyId: string, branchId?: string) {
-    return this.prisma.customField.create({ data: { ...dto, companyId, branchId } });
-  }
-
-  async updateCustomField(id: string, dto: any, companyId: string) {
-    return this.prisma.customField.update({ where: { id }, data: dto });
-  }
-
-  async deleteCustomField(id: string, companyId: string) {
-    return this.prisma.customField.delete({ where: { id } });
-  }
-
-  // ── Custom Field Values ─────────────────────────────────────────────────────
-
-  async getCustomFieldValues(entity: string, entityId: string) {
-    return this.prisma.customFieldValue.findMany({
-      where: { entity, entityId },
-      include: { customField: true },
-    });
-  }
-
-  async upsertCustomFieldValues(entity: string, entityId: string, values: any[]) {
-    await this.prisma.customFieldValue.deleteMany({ where: { entity, entityId } });
-    if (values?.length) {
-      await this.prisma.customFieldValue.createMany({
-        data: values
-          .filter((v) => v.customFieldId)
-          .map((v) => ({ customFieldId: v.customFieldId, entity, entityId, value: v.value ?? undefined })),
-      });
-    }
-    return this.prisma.customFieldValue.findMany({
-      where: { entity, entityId },
-      include: { customField: true },
-    });
-  }
+  // Custom fields and their values: see custom-fields.service.ts (CustomFieldsService).
 
   // ── Entity Schema (default fields + custom fields) ─────────────────────────
 
   async getEntitySchema(entityName: string, companyId?: string, branchId?: string) {
     const defaultFields = ENTITY_DEFAULT_FIELDS[entityName] ?? [];
     const customFields = await this.prisma.customField.findMany({
-      where: {
-        entity: entityName,
-        ...(companyId ? { companyId } : {}),
-        ...(branchId ? { branchId } : {}),
-      },
-      orderBy: { createdAt: 'asc' },
+      where: { entity: entityName, isActive: true, ...visibleScopeWhere(companyId, branchId) },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     return { entityName, defaultFields, customFields };
   }

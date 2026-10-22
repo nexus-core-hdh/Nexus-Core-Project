@@ -12,11 +12,12 @@ import { HEADER_COLUMNS as CONTRACT_COLUMNS } from './contract.service';
 import { HEADER_COLUMNS as SIZE_SET_COLUMNS } from './size-set.service';
 import { HEADER_COLUMNS as UNIT_SET_COLUMNS } from './unit-set.service';
 import { INVENTORY_CARD_COLUMNS } from './inventory-card.service';
+import { HEADER_COLUMNS as WORK_ORDER_COLUMNS } from './work-order.service';
 
 export type WorklistSourceKey =
   | 'purchase-receipt' | 'purchase-receipt-item' | 'yarn-card' | 'fabric-card' | 'current-account' | 'warehouse' | 'financial-receipt'
   | 'trim-card' | 'trim-inventory-card' | 'purchase-order' | 'contract' | 'size-set' | 'unit-set' | 'inventory-card'
-  | 'subcontract-type' | 'subcontract-receipt' | 'script';
+  | 'work-order' | 'subcontract-type' | 'subcontract-receipt' | 'script';
 
 // Subcontract Type / Subcontract Receipt — the two real columns on MD_SubcontractType/
 // MD_SubcontractReceipt (see legacy-master-lookup.service.ts's TABLES config for the master CRUD
@@ -58,6 +59,10 @@ const SOURCES: WorklistSourceFields[] = [
   { source: 'size-set', label: 'Size List', fields: SIZE_SET_COLUMNS },
   { source: 'unit-set', label: 'Unit Set List', fields: UNIT_SET_COLUMNS },
   { source: 'inventory-card', label: 'Inventory Card List', fields: INVENTORY_CARD_COLUMNS },
+  // Work Orders List — MA_WorkOrder's own header columns (work-order.service.ts), every one of
+  // which that screen's existing list() already returns on each row; like Inventory Card List, a
+  // custom worklist there is a client-side projection of those rows (no resolve() round-trip).
+  { source: 'work-order', label: 'Work Order List', fields: WORK_ORDER_COLUMNS },
   // Joined targets ONLY (see worklist-rows.service.ts's RELATIONSHIPS['purchase-receipt']) — a
   // worklist field with one of these sources resolves the real Name via a LEFT JOIN off the raw
   // SubcontractTypeId/SubcontractReceiptId columns already on IM_Receipt (Standard's own "Add
@@ -95,6 +100,7 @@ const ALLOWED_SOURCES_BY_PRIMARY: Partial<Record<string, WorklistSourceKey[]>> =
   'purchase-contract-list': ['contract'],
   'sale-contract-list': ['contract'],
   'inventory-card-list': ['inventory-card'],
+  'work-order-list': ['work-order'],
   // Purchase Return's "Import Related Receipt" dialog — not itself a *-list screen (it's a
   // selection dialog, not a page with a table-key), so it gets its own explicit primary key
   // rather than reusing "purchase-receipt-list" (which doesn't exist — Purchase Receipt has no

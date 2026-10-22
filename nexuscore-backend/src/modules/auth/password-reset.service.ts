@@ -13,8 +13,8 @@ export const PASSWORD_RESET_GENERIC_MESSAGE =
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 /**
- * Email-based password reset (frontend: /dashboard/forgot-password -> email link ->
- * /dashboard/reset-password?token=...). The raw token only ever exists in the emailed link: the
+ * Email-based password reset (frontend: /forgot-password -> email link ->
+ * /reset-password?token=...). The raw token only ever exists in the emailed link: the
  * PasswordResetToken.token column stores its SHA-256 hash, and neither the API response nor the
  * logs contain it. The response is identical whether or not the email belongs to an account.
  */
@@ -58,7 +58,7 @@ export class PasswordResetService {
     ]);
 
     const base = (process.env.APP_PUBLIC_URL || 'http://localhost:3000').replace(/\/+$/, '');
-    const link = `${base}/dashboard/reset-password?token=${encodeURIComponent(token)}`;
+    const link = `${base}/reset-password?token=${encodeURIComponent(token)}`;
     const minutes = TOKEN_TTL_MS / 60000;
     const sent = await this.mail.send(
       user.email,

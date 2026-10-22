@@ -398,6 +398,9 @@ model Company {
   subscriptionEndDate      DateTime?
   trialEndDate             DateTime?
   billingCycle             BillingCycle?      @default(Monthly)
+  /// The platform owner (Nexus Core): manages the other companies and their billing; never on a
+  /// trial or subscription limit itself. Exactly one company has this set (see prisma/seed.ts).
+  isPlatformOwner          Boolean            @default(false)
   customFieldsSectionTitle String?            @default("Custom Fields")
   metaAppId                String?
   metaAppSecret            String?
@@ -1100,12 +1103,31 @@ model Security {
 
 model CustomField {
   id               String   @id @default(uuid())
+  // User Defined Fields administration (Administration > User Defined Fields):
+  //  - code: stable field code (e.g. UD_FabricType), set on creation and never changed after.
+  //  - name: the caption shown on screens; `type` stays the runtime renderer's own type
+  //    (text | textarea | select | checkbox | date | number | email) and `options` stays the
+  //    runtime's list of option labels, so the existing Customized Fields tabs keep working.
+  //  - controlType: the administration screen's control choice behind `type`.
+  //  - config: administration-only option metadata ({ options: [{ code, label, isActive }] });
+  //    the runtime reads `options` (active labels), never config.
+  //  - Scope: companyId NULL + branchId NULL = global, companyId only = company, both = branch.
+  //    Codes are unique per entity + exact scope (NULLS NOT DISTINCT index, see migration
+  //    20261003000000_add_custom_field_administration); overlapping scopes are checked by
+  //    custom-fields.service.ts.
+  code             String
   name             String
+  description      String?
   type             String
+  controlType      String?
   entity           String
   required         Boolean  @default(false)
+  isActive         Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  defaultValue     Json?
   includeInReports Boolean  @default(false)
   options          Json?
+  config           Json?
   companyId        String?
   branchId         String?
   company          Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -1115,9 +1137,11 @@ model CustomField {
 
   values CustomFieldValue[]
 
+  @@unique([entity, code, companyId, branchId])
   @@index([companyId])
   @@index([branchId])
   @@index([entity])
+  @@index([entity, sortOrder])
 }
 
 model CustomFieldValue {
@@ -2708,6 +2732,32 @@ model ReportTemplate {
   @@index([companyId])
   @@index([branchId])
   @@index([entityType])
+}
+
+// User-defined report (Report Builder). `dataSource` names a whitelisted source in
+// src/modules/reports/report-sources.ts — columns/filters/sorting only ever reference that
+// source's declared fields, never raw table or column names. Each report gets its own menu item
+// (menuItemId) under its module's "Reports" menu, so it opens as a separate screen.
+model ReportDefinition {
+  id          String   @id @default(uuid())
+  module      String
+  name        String
+  description String?
+  dataSource  String
+  /// [{ field, label?, total? }]
+  columns     Json
+  /// [{ id, field, operator, value?, value2?, prompt? }]
+  filters     Json     @default("[]")
+  /// [{ field, direction }]
+  sorting     Json     @default("[]")
+  menuItemId  String?
+  companyId   String
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId, module])
 }
 
 model PdfReport {

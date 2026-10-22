@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -46,10 +46,10 @@ const fmtQty = (n: number | null) => (n == null ? "—" : n.toLocaleString(undef
 // feature's own "never fabricate a navigation path" rule) instead of guessing a URL shape.
 function sourceRoute(row: RecipeUsageRow): string | null {
   switch (row.type) {
-    case "Style": return `/dashboard/plm/style-cards/${row.sourceId}`;
-    case "Sample": return `/dashboard/plm/sample-cards?id=${row.sourceId}&mode=edit`;
-    case "Order": return `/dashboard/legacy-erp/work-orders?id=${row.sourceId}&mode=view`;
-    case "Fabric": return `/dashboard/legacy-erp/fabric-cards?id=${row.sourceId}&mode=view`;
+    case "Style": return `/plm/style-cards/${row.sourceId}`;
+    case "Sample": return `/plm/sample-cards?id=${row.sourceId}&mode=edit`;
+    case "Order": return `/legacy-erp/work-orders?id=${row.sourceId}&mode=view`;
+    case "Fabric": return `/legacy-erp/fabric-cards?id=${row.sourceId}&mode=view`;
     default: return null;
   }
 }
@@ -189,7 +189,7 @@ export function RecipeUsageDialog({ open, onOpenChange, inventoryId, itemLabel }
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-muted/40">
+                <TableRow className="bg-background hover:bg-muted/60">
                   <TableHead className="h-8 w-24 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Type</TableHead>
                   <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Code</TableHead>
                   <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Name</TableHead>

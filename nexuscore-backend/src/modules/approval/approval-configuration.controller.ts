@@ -4,7 +4,7 @@ import { ApprovalConfigurationService } from './approval-configuration.service';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
-// screenKey (a MenuItem.href, e.g. "/dashboard/legacy-erp/inventory-receipts-list?receiptType=12")
+// screenKey (a MenuItem.href, e.g. "/legacy-erp/inventory-receipts-list?receiptType=12")
 // travels in the body rather than as a ":screenKey" path segment — same reasoning as
 // approval.controller.ts: it already contains "/" and its own "?query=".
 @ApiTags('General Settings - Approval Configuration')

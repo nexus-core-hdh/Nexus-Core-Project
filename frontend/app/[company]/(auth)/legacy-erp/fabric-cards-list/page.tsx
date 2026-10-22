@@ -1,0 +1,267 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "@/lib/app-navigation";
+import { Button } from "@/components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
+import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { RecipeUsageDialog } from "@/components/legacy-erp/recipe-usage-dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { legacyErpApi } from "@/lib/nexuscore-api";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { navigateOrOpenTab } from "@/lib/workspace/navigate";
+import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, Shirt, SearchX, FileClock, Network } from "lucide-react";
+import { formatCell } from "@/lib/legacy-erp/humanize";
+import { STANDARD_WORKLIST_ID, type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
+import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
+import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
+import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useRowSelection } from "@/hooks/use-row-selection";
+import { ModuleHeader } from "@/components/legacy-erp/module-header";
+import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
+import { ListPager } from "@/components/legacy-erp/list-pager";
+import type { PageRequest } from "@/lib/nexuscore-api";
+
+export default function FabricCardListPage() {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searched, setSearched] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; code: string } | null>(null);
+  const [usageTarget, setUsageTarget] = useState<{ id: number; label: string } | null>(null);
+  // Server-side paging + sorting: the API searches/sorts the whole table, then returns one page.
+  const paging = useServerPaging({ defaultSortBy: "inventoryCode" });
+  const wl = useWorklist({ storageKey: "fabricCardsListWorklists" });
+
+  const load = async (term?: string, worklistOverride?: Worklist | null, req: PageRequest = paging.request) => {
+    setLoading(true);
+    try {
+      const worklist = worklistOverride !== undefined ? worklistOverride : wl.activeWorklist;
+      const r: any = worklist
+        ? await legacyErpApi.worklistFields.resolve("fabric-card-list", worklist.fields.map((f) => ({ source: f.source, key: f.key })), term, { page: req.page, pageSize: req.pageSize })
+        : await legacyErpApi.fabricCards.list(term, req);
+      const list = paging.take(r);
+      setRows(worklist ? wl.normalizeRows(list) : list);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to load fabric cards");
+      setRows([]);
+    } finally {
+      setLoading(false);
+      setSearched(!!term);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+  paging.reloadRef.current = () => load(search.trim() || undefined);
+
+  const doSearch = () => load(search.trim() || undefined, undefined, paging.firstPage());
+  const refresh = () => { setSearch(""); load(undefined, undefined, paging.firstPage()); };
+
+  const onWorklistChange = (id: string) => {
+    const worklist = id === STANDARD_WORKLIST_ID ? null : wl.worklists.find((w) => w.id === id) ?? null;
+    wl.setActiveWorklistId(id);
+    load(search.trim() || undefined, worklist, paging.firstPage());
+  };
+
+  const handleSaveWorklists = async (next: Worklist[]) => {
+    const { activeWorklist } = await wl.saveWorklists(next);
+    load(search.trim() || undefined, activeWorklist, paging.firstPage());
+  };
+
+  const activeColumns = wl.activeWorklist ? wl.columnsFor([]) : null;
+
+  const view = (id: number) => navigateOrOpenTab(router, `/legacy-erp/fabric-cards?id=${id}&mode=view`);
+  const update = (id: number) => navigateOrOpenTab(router, `/legacy-erp/fabric-cards?id=${id}&mode=edit`);
+  const createNew = () => navigateOrOpenTab(router, `/legacy-erp/fabric-cards?mode=create`);
+  const viewStatement = (id: number) => navigateOrOpenTab(
+    router,
+    `/legacy-erp/item-statement?id=${id}&source=${encodeURIComponent("/legacy-erp/fabric-cards-list")}&sourceLabel=${encodeURIComponent("Fabric Cards")}`,
+  );
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await legacyErpApi.fabricCards.delete(deleteTarget.id);
+      toast.success("Fabric card deleted");
+      setDeleteTarget(null);
+      load(search.trim() || undefined);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  // Rows arrive already sorted by the server (sorting a single page client-side would misorder
+  // the list as a whole).
+  const sortedRows = rows;
+
+  // Project-wide grid selection standard (hooks/use-row-selection.ts) — see work-orders-list/
+  // page.tsx's own comment on this same pattern.
+  const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
+
+  const columns: WorklistTableColumn<any>[] = useMemo(() => {
+    if (activeColumns) {
+      return activeColumns.map((c) => ({
+        key: c,
+        label: wl.columnLabel(c),
+        render: (row: any) => formatCell(row[c]),
+      }));
+    }
+    // filterable — shared header-filter implementation (hooks/use-column-filters.ts); the
+    // customize-worklist branch above stays non-filterable (arbitrary/unknown-typed user-picked
+    // fields), same reasoning as purchase-orders-list's own comment.
+    return [
+      {
+        key: "inventoryCode", label: "Code", sortable: true,
+        render: (row: any) => <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs">{row.inventoryCode}</span>,
+        filterable: true, filterValue: (row) => row.inventoryCode,
+      },
+      { key: "inventoryName", label: "Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span>, filterable: true, filterValue: (row) => row.inventoryName },
+      { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span>, filterable: true, filterValue: (row) => row.specialCode },
+      {
+        key: "status", label: "Status",
+        render: (row: any) => (
+          <Badge
+            variant={row.inUse ? "default" : "secondary"}
+            className={cn("text-[11px] font-normal", row.inUse && "bg-emerald-600 hover:bg-emerald-600/90 dark:bg-emerald-500")}
+          >
+            {row.inUse ? "Active" : "Inactive"}
+          </Badge>
+        ),
+        filterable: true, filterValue: (row) => (row.inUse ? "Active" : "Inactive"),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeColumns]);
+
+  const getRowActions = (row: any): RowAction[] => [
+    { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
+    { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row.id) },
+    {
+      key: "recipe-usage", label: "Recipe Usage Information", icon: Network,
+      onSelect: () => setUsageTarget({ id: row.id, label: `${row.inventoryCode} — ${row.inventoryName}` }),
+    },
+    { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.inventoryCode }), destructive: true, separatorBefore: true },
+  ];
+
+  return (
+    <div className="mx-auto max-w-[1600px] space-y-5 p-6 lg:p-8">
+      <ModuleHeader
+        icon={Shirt}
+        title="Fabric Cards"
+        subtitle="Fabric item master"
+        badges={
+          !loading && (
+            <Badge variant="secondary" className="h-5 text-[11px] font-normal">
+              {paging.total.toLocaleString()} {paging.total === 1 ? "record" : "records"}
+            </Badge>
+          )
+        }
+        actions={
+          <>
+            <InputGroup className="h-9 w-72 shrink-0">
+              <InputGroupAddon>
+                <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                placeholder="Search by code or name..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && doSearch()}
+                className="text-sm"
+              />
+            </InputGroup>
+            <Button variant="outline" size="sm" onClick={refresh} title="Refresh">
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+            <div className="hidden h-6 w-px bg-border sm:block" />
+            <Button size="sm" onClick={createNew}>
+              <Plus className="h-3.5 w-3.5 mr-2" />Create New
+            </Button>
+          </>
+        }
+      />
+
+      <div className="overflow-hidden rounded-xl border shadow-sm">
+        <WorklistTable
+          columns={columns}
+          rows={sortedRows}
+          storageKey="fabricCardsList"
+          getRowKey={(row) => row.id}
+          loading={loading}
+          sortKey={paging.sortBy}
+          sortDir={paging.sortDir}
+          onSort={(key) => paging.toggleSort(key)}
+          selectedIds={selectedIds}
+          onRowClick={selectRow}
+          onRowContextMenu={handleRowContextMenu}
+          renderRowActions={(row) => (
+            <RowActionsMenu actions={getRowActions(row)} className="opacity-60 group-hover:opacity-100 transition-opacity" />
+          )}
+          wrapRow={(row, el) => <RowContextMenu actions={getRowActions(row)}>{el}</RowContextMenu>}
+          emptyState={
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{searched ? <SearchX /> : <Shirt />}</EmptyMedia>
+                <EmptyTitle>{searched ? "Record not found" : "No fabric cards yet"}</EmptyTitle>
+                <EmptyDescription>
+                  {searched ? "You can create a new Fabric Card." : 'Click "Create New" to add your first Fabric Card.'}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button size="sm" onClick={createNew}><Plus className="h-3.5 w-3.5 mr-2" />Create New</Button>
+              </EmptyContent>
+            </Empty>
+          }
+        />
+        <ListPager paging={paging} loading={loading} />
+      </div>
+
+      <WorklistBar
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        onActiveWorklistChange={onWorklistChange}
+        onDesignOpen={() => wl.setDesignOpen(true)}
+      />
+
+      <WorklistDesignModal
+        open={wl.designOpen}
+        onOpenChange={wl.setDesignOpen}
+        worklists={wl.worklists}
+        activeWorklistId={wl.activeWorklistId}
+        activeTableSource="fabric-card"
+        primaryScope="fabric-card-list"
+        gridLabel="the Fabric Cards List grid"
+        onSave={handleSaveWorklists}
+      />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Fabric Card</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this record?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={confirmDelete}>Yes</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <RecipeUsageDialog
+        open={!!usageTarget}
+        onOpenChange={(open) => !open && setUsageTarget(null)}
+        inventoryId={usageTarget?.id ?? null}
+        itemLabel={usageTarget?.label}
+      />
+    </div>
+  );
+}

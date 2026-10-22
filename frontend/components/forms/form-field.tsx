@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -63,6 +64,14 @@ export function FormTextField({
             <Search className="h-3.5 w-3.5 text-muted-foreground/70" />
           </InputGroupAddon>
         </InputGroup>
+      </div>
+    );
+  }
+  if (type === "date") {
+    return (
+      <div className={cn("space-y-2", spanClass(span))}>
+        <FieldLabel>{label}</FieldLabel>
+        <DatePicker value={value ?? ""} onValueChange={onChange} disabled={disabled} className={fieldInputClass} />
       </div>
     );
   }

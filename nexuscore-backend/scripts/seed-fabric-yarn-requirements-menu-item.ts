@@ -45,9 +45,9 @@ async function main() {
   }
 
   const children = [
-    { title: 'Fabric Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=fabric' },
-    { title: 'Trim Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=trim' },
-    { title: 'Yarn Requirements', href: '/dashboard/legacy-erp/fabric-yarn-requirements?type=yarn' },
+    { title: 'Fabric Requirements', href: '/legacy-erp/fabric-yarn-requirements?type=fabric' },
+    { title: 'Trim Requirements', href: '/legacy-erp/fabric-yarn-requirements?type=trim' },
+    { title: 'Yarn Requirements', href: '/legacy-erp/fabric-yarn-requirements?type=yarn' },
   ];
 
   for (let i = 0; i < children.length; i++) {

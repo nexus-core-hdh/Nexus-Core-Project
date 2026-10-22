@@ -20,7 +20,7 @@ async function main() {
   let nextOrder = (existingMax._max.order ?? 0) + 1;
 
   for (const t of CONTRACT_TYPES) {
-    const href = `/dashboard/legacy-erp/contracts-list?receiptType=${t.receiptType}`;
+    const href = `/legacy-erp/contracts-list?receiptType=${t.receiptType}`;
     const desiredTitle = `00-${t.label}`;
     const found = await prisma.menuItem.findFirst({ where: { href } });
     if (found) {

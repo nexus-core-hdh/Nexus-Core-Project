@@ -8,7 +8,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const href = '/dashboard/legacy-erp/general-settings';
+  const href = '/legacy-erp/general-settings';
   const found = await prisma.menuItem.findFirst({ where: { href } });
   if (found) {
     console.log(`- skip (exists): General Settings -> ${href}`);

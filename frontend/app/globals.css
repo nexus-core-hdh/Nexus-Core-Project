@@ -273,6 +273,29 @@
     @apply bg-background text-foreground;
   }
 
+  /* A form label stacked directly above its field (e.g. <div><Label/><Input/></div>) gets a gap
+     instead of touching the field. Skipped where spacing is already handled or the label isn't
+     stacked: parents using gap or space-y utilities, horizontal flex/grid rows, labels that wrap
+     their own control (checkbox/radio), and a label that is the last child. In the base layer, so
+     any explicit display or margin utility on a label (block, flex, mb-1, mb-2, ...) still wins.
+     inline-block lets the margin apply to plain <label> elements, which are inline by default. */
+  :where(:not([class*="gap-"], [class*="space-y-"], .grid, .flex:not(.flex-col)))
+    > :is(label, [data-slot="label"]):not(:last-child):not(:has(input, button, [role="checkbox"])) {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+  }
+
+  /* Select triggers fill their container (form fields, dialogs, table cells, grid cells), so a
+     dropdown is as wide as the inputs around it instead of shrinking to its current text. As an
+     item in a horizontal flex row (toolbars, filter bars, inline controls) it keeps its natural
+     width. In the base layer, so an explicit w-* class on an instance always wins. */
+  [data-slot="select-trigger"] {
+    width: 100%;
+  }
+  :is(.flex, .inline-flex):not(.flex-col) > [data-slot="select-trigger"] {
+    width: fit-content;
+  }
+
   .font-display {
     font-weight: var(--display-weight);
   }

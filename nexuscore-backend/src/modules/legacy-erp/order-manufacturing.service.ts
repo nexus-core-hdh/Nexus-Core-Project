@@ -9,7 +9,7 @@ import { sanitizeRawRow } from './raw-row.util';
 import { assertAllNonNegative } from './numeric-guards.util';
 
 // Order Manufacturing Entry — MenuItem.href, same screenKey convention every audited screen uses.
-export const ORDER_MANUFACTURING_SCREEN_KEY = '/dashboard/legacy-erp/order-manufacturing-entry';
+export const ORDER_MANUFACTURING_SCREEN_KEY = '/legacy-erp/order-manufacturing-entry';
 
 // Same Color‖Size convention work-order.service.ts / cutting-card.service.ts already use to encode
 // Manufacturing Quantities into MA_WorkOrderItemVariant.Explanation. Do not diverge from it.

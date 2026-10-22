@@ -110,7 +110,7 @@ export function ItemAllocationDetailsDialog({
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableRow className="bg-background hover:bg-muted/60">
                       <TableHead className={`${th} w-8`}>#</TableHead>
                       <TableHead className={th}>Work Order No</TableHead>
                       <TableHead className={th}>Line</TableHead>

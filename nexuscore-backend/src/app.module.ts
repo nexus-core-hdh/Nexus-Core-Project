@@ -45,6 +45,7 @@ import { UserSettingsModule } from './modules/user-settings/user-settings.module
 import { AppConfigModule } from './modules/config/config.module';
 import { PlmModule } from './modules/plm/plm.module';
 import { CostingModule } from './modules/costing/costing.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { StyleExtrasModule } from './modules/style-extras/style-extras.module';
 import { MenuItemsModule } from './modules/menu-items/menu-items.module';
 import { StubsModule } from './modules/stubs/stubs.module';
@@ -109,6 +110,7 @@ import { AuditModule } from './modules/audit/audit.module';
     AppConfigModule,
     PlmModule,
     CostingModule,
+    DashboardModule,
     StyleExtrasModule,
     DocketManagementModule,
     MenuItemsModule,

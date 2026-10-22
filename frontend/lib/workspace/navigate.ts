@@ -1,5 +1,6 @@
-import type { useRouter } from "next/navigation";
+import type { useRouter } from "@/lib/app-navigation";
 
+import { toBrowserPath } from "@/lib/company-path";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { findWorkspaceModule, resolveTabKey } from "@/lib/workspace/registry";
 
@@ -25,5 +26,29 @@ export function navigateOrOpenTab(router: Router, href: string, options?: { titl
     return;
   }
   useWorkspaceStore.getState().openTab({ key: resolveTabKey(mod.path, href), href, title: options?.title });
-  router.replace(href, { scroll: false });
+  replaceWorkspaceUrl(router, href);
+}
+
+/**
+ * Points the address bar at `href` after a tab has been opened/activated in the store.
+ *
+ * A tab's screen is rendered by WorkspaceContentStack straight from the registry, never from the
+ * Next.js route tree, so for a workspace route a real navigation (router.replace) is pure
+ * overhead: a server round-trip for a route payload nobody renders (and, in dev, compiling that
+ * route first). history.replaceState just updates the URL — Next.js keeps usePathname/
+ * useSearchParams in sync with it, which is all ContentContainer and the content stack need — so
+ * the URL still matches the tab for refresh and bookmarks. Anything that is not a workspace
+ * route (the default dashboard after closing every tab, dynamic [id] pages, ...) really does
+ * need its route rendered, so it still gets a real navigation.
+ */
+export function replaceWorkspaceUrl(router: Router, href: string) {
+  if (!findWorkspaceModule(href.split("?")[0])) {
+    router.replace(href, { scroll: false });
+    return;
+  }
+  // `href` is an app path; the address bar carries the company slug (lib/company-path.ts).
+  const browserHref = toBrowserPath(href);
+  if (window.location.pathname + window.location.search !== browserHref) {
+    window.history.replaceState(null, "", browserHref);
+  }
 }

@@ -145,8 +145,9 @@ export const companiesApi = {
     return company ? [company] : [];
   },
 
-  // Get a single company
-  getCompany: (id: number) => apiRequest(`/companies/${id}`),
+  // Get a single company. Only the signed-in user's own company is reachable (`GET /company`);
+  // every caller passes that id, so it is kept in the signature but not sent.
+  getCompany: (_id: number | string) => apiRequest('/company', { headers: getAuthHeaders() }),
 
   // Get company by slug
   getCompanyBySlug: (slug: string) => apiRequest(`/companies/slug/${slug}`),
@@ -206,8 +207,10 @@ export const pricingPlansApi = {
 
 // Branches API functions
 export const branchesApi = {
-  // Get all branches
-  getBranches: () => apiRequest('/branches'),
+  // Get branches — all, or only one company's (the backend filters by `companyId`). Company
+  // and branch ids are strings (uuid / seed ids): compare them as strings, never parseInt them.
+  getBranches: (companyId?: string) =>
+    apiRequest(`/branches${companyId ? `?companyId=${encodeURIComponent(companyId)}` : ''}`),
 
   // Get a single branch
   getBranch: (id: number) => apiRequest(`/branches/${id}`),
@@ -1054,6 +1057,15 @@ export const dealPipelinesApi = {
 };
 
 // User Roles API functions
+// Access-control roles (Role table) — what users are actually granted. Roles are ERP-wide, not
+// per company. Listing is open to any signed-in user; granting one needs roles:manage.
+export const rolesApi = {
+  getRoles: (): Promise<Array<{ id: string; name: string; description?: string | null; isSystem: boolean }>> =>
+    apiRequest('/roles', { headers: getAuthHeaders() }),
+};
+
+// NOTE: `/user-roles` is a backend stub (lists nothing, saves nothing). Use `rolesApi` for the
+// real roles.
 export const userRolesApi = {
   // Get all user roles
   getUserRoles: (companyId?: number, branchId?: number) => {

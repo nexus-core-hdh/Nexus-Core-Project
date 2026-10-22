@@ -57,7 +57,7 @@ export function generateMeta({
     description: description,
     metadataBase: new URL(`https://nexuscore.io`),
     alternates: {
-      canonical: `/dashboard${canonical}`
+      canonical
     },
     openGraph: {
       images: [`/images/seo.jpg`]
