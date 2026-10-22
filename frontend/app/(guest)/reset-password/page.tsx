@@ -39,6 +39,9 @@ export default function ResetPasswordPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  // ?setup=1: a first-administrator invitation (CompanyFirstAdminService) — same single-use token,
+  // worded as choosing a first password rather than resetting one.
+  const isSetup = searchParams.get("setup") === "1";
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -70,7 +73,7 @@ export default function ResetPasswordPage() {
         token,
         newPassword: data.newPassword,
       });
-      toast.success("Password reset successfully!");
+      toast.success(isSetup ? "Password set — you can now sign in." : "Password reset successfully!");
       router.push("/login/v1");
     } catch (error: any) {
       toast.error("Failed to reset password", {
@@ -100,9 +103,9 @@ export default function ResetPasswordPage() {
     <div className="flex items-center justify-center py-4 lg:h-screen">
       <Card className="mx-auto w-96">
         <CardHeader>
-          <CardTitle className="text-2xl">Reset Password</CardTitle>
+          <CardTitle className="text-2xl">{isSetup ? "Set your password" : "Reset Password"}</CardTitle>
           <CardDescription>
-            Enter your new password below.
+            {isSetup ? "Choose the password for your new administrator account." : "Enter your new password below."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -191,7 +194,7 @@ export default function ResetPasswordPage() {
                     Resetting...
                   </>
                 ) : (
-                  "Reset Password"
+                  isSetup ? "Set Password" : "Reset Password"
                 )}
               </Button>
             </form>

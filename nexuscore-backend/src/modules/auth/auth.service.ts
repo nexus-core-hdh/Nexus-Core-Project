@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
   Logger,
@@ -9,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from '../../common/interfaces/jwt-payload.interface';
+import { assertTrialNotExpired } from '../../common/company-trial';
 
 @Injectable()
 export class AuthService {
@@ -31,6 +33,8 @@ export class AuthService {
 
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
+    // After the password check, so an expired trial is never revealed for a wrong password.
+    assertTrialNotExpired(user.company);
 
     const tokens = await this.generateTokens(user);
 
@@ -50,9 +54,11 @@ export class AuthService {
       });
 
       if (!user || !user.isActive) throw new UnauthorizedException();
+      assertTrialNotExpired(user.company);
 
       return this.generateTokens(user);
-    } catch {
+    } catch (e) {
+      if (e instanceof ForbiddenException) throw e; // TRIAL_EXPIRED stays a 403, not "invalid token"
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
   }

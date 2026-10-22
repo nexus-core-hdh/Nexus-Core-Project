@@ -27,7 +27,7 @@ export class TrimInventoryCardController {
   }
 
   @Get('by-code/:code') getByCode(@Param('code') code: string) {
-    return this.svc.getByCode(code);
+    return this.svc.getByCodeWithStock(code);
   }
 
   // Preview only — declared ahead of the generic :id route below so "next-code" is never
@@ -37,7 +37,7 @@ export class TrimInventoryCardController {
   }
 
   @Get(':id') get(@Param('id', ParseIntPipe) id: number) {
-    return this.svc.get(id);
+    return this.svc.getWithStock(id);
   }
 
   @Post() create(@Body() dto: Record<string, any>, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {

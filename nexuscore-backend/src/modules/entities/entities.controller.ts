@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
+import { AllowAuthenticated, PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { EntitiesService } from './entities.service';
 import { CustomFieldsService } from './custom-fields.service';
@@ -180,16 +180,47 @@ export class EntitiesController {
 
   // ── Custom Field Values ──────────────────────────────────────────────────────
 
+  // Values belong to a business record, so their permission is the OWNING screen's, not this
+  // controller's "crm" module: which module that is depends on the record (e.g. a receipt's type),
+  // so CustomFieldsService resolves the record and checks `<owning module>:update` itself (see
+  // custom-field-records.ts). The route therefore only requires a signed-in user.
   @Get('custom-field-values')
-  @ApiOperation({ summary: 'Get custom field values for an entity record' })
-  getCustomFieldValues(@Query('entity') entity: string, @Query('entityId') entityId: string) {
-    return this.customFields.getValues(entity, entityId);
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Get custom field values for an entity record (record reach + field scope enforced)' })
+  getCustomFieldValues(@Query('entity') entity: string, @Query('entityId') entityId: string, @CurrentUser() user: any) {
+    return this.customFields.getValues(user, entity, entityId);
   }
 
   @Put('custom-field-values')
-  @ApiOperation({ summary: 'Replace custom field values for an entity record' })
-  upsertCustomFieldValues(@Body() body: { entity: string; entityId: string; values: any[] }) {
-    return this.customFields.upsertValues(body.entity, body.entityId, body.values);
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Set custom field values for an entity record (owning module update permission, validated)' })
+  upsertCustomFieldValues(@Body() body: { entity: string; entityId: string; values: unknown }, @CurrentUser() user: any) {
+    return this.customFields.upsertValues(user, body?.entity, body?.entityId, body?.values);
+  }
+
+  // What the UDF runtime renders (screens with a Customized Fields tab, grids with UDF columns) —
+  // read-only metadata, no tenant data.
+  @Get('custom-field-targets')
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'List the screen entities and logical grids the UDF runtime supports' })
+  getCustomFieldTargets() {
+    return this.customFields.listTargets();
+  }
+
+  // Grid-level values: every row of one document at once (custom-field-grids.ts). Same rule as
+  // above — the parent document's owning module is resolved and checked by the service.
+  @Get('custom-field-values/grid')
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Get grid UDF values for every live row of one document (parent reach + row ownership + field scope enforced)' })
+  getGridCustomFieldValues(@Query('grid') grid: string, @Query('parentId') parentId: string, @CurrentUser() user: any) {
+    return this.customFields.getGridValues(user, grid, parentId);
+  }
+
+  @Put('custom-field-values/grid')
+  @AllowAuthenticated()
+  @ApiOperation({ summary: 'Set grid UDF values on rows of one document (owning module update permission, row ownership, validated)' })
+  upsertGridCustomFieldValues(@Body() body: { grid: string; parentId: string; rows: unknown }, @CurrentUser() user: any) {
+    return this.customFields.upsertGridValues(user, body?.grid, body?.parentId, body?.rows);
   }
 
   // ── Form Sections ──────────────────────────────────────────────────────────

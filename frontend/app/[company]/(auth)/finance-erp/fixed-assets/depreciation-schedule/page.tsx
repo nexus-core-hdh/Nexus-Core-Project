@@ -64,7 +64,7 @@ export default function DepreciationSchedulePage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-background hover:bg-muted/60">
+              <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                 <TableHead>Asset</TableHead>
                 <TableHead>Period</TableHead>
                 <TableHead className="text-right">Opening Value</TableHead>
@@ -73,7 +73,7 @@ export default function DepreciationSchedulePage() {
                 <TableHead className="text-right">Closing Value</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {rows.length === 0 ? (
                 <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground"><LineChart className="mx-auto mb-2 h-6 w-6 opacity-40" />No depreciation activity for the selected filters.</TableCell></TableRow>
               ) : rows.map((r, i) => (

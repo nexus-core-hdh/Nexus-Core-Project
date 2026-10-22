@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,6 +95,7 @@ export default function CostingSheetDetailPage() {
   const [saving, setSaving] = useState(false);
 
   const [header, setHeader] = useState(blankHeader());
+  useWorkspaceRecordLabel(sheetId ? header.costingNo || undefined : undefined);
   const [pct, setPct] = useState(blankPct());
   const [rawRows, setRawRows] = useState<RawRow[]>([]);
   const [laborRows, setLaborRows] = useState<LaborRow[]>([]);

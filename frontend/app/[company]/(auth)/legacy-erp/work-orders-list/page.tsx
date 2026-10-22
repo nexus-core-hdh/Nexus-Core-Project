@@ -18,7 +18,7 @@ import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, C
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 import { workOrderListColumns } from "@/components/legacy-erp/work-orders-lookup";
 import { formatCell } from "@/lib/legacy-erp/humanize";
-import { type Worklist } from "@/lib/legacy-erp/worklist-types";
+import { type Worklist, worklistCellValue } from "@/lib/legacy-erp/worklist-types";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
@@ -114,7 +114,7 @@ export default function WorkOrderListPage() {
   // components/legacy-erp/work-orders-lookup.tsx).
   const columns: WorklistTableColumn<any>[] = useMemo(
     () => (activeColumns
-      ? activeColumns.map((c) => ({ key: c, label: wl.columnLabel(c), render: (row: any) => formatCell(row[rowKeyOf(c)]) }))
+      ? activeColumns.map((c) => ({ key: c, label: wl.columnLabel(c), render: (row: any) => formatCell(worklistCellValue(row, rowKeyOf(c))) }))
       : workOrderListColumns),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeColumns],

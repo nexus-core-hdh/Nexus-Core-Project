@@ -28,6 +28,14 @@ enum SubscriptionStatus {
   Cancelled
   Expired
   Pending
+  // On trial until Company.trialEndDate; still Trial after it (expired = trialEndDate < now).
+  Trial
+}
+
+// Standard: every company before Demo/Trial registration existed. Demo: registered as a demo company.
+enum CompanyAccountType {
+  Standard
+  Demo
 }
 
 enum BillingCycle {
@@ -401,6 +409,7 @@ model Company {
   /// The platform owner (Nexus Core): manages the other companies and their billing; never on a
   /// trial or subscription limit itself. Exactly one company has this set (see prisma/seed.ts).
   isPlatformOwner          Boolean            @default(false)
+  accountType              CompanyAccountType @default(Standard)
   customFieldsSectionTitle String?            @default("Custom Fields")
   metaAppId                String?
   metaAppSecret            String?
@@ -4054,6 +4063,25 @@ model CuttingCardEntrySize {
   quantity Decimal          @default(0) @db.Decimal(14, 4)
 
   @@unique([entryId, sizeCode])
+}
+
+// Packing List — dynamic per-size packed quantities (migration 20261009000000_add_packing_list_item_size).
+// The header/lines stay in the legacy IM_PackagingList / IM_PackagingListItem tables (raw SQL,
+// packing-list.service.ts); packingListItemId is IM_PackagingListItem.RecId (a NOT VALID FK in SQL —
+// the legacy table isn't a Prisma model). variantKey is the Work Order's own "Color‖Size" identity
+// (MA_WorkOrderItemVariant.Explanation), never a column position.
+model PackingListItemSize {
+  id                BigInt   @id @default(autoincrement())
+  packingListItemId BigInt
+  variantKey        String
+  quantity          Decimal  @default(0) @db.Decimal(18, 4)
+  createdAt         DateTime @default(now())
+  createdBy         Int?
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedBy         Int?
+
+  @@unique([packingListItemId, variantKey])
+  @@index([packingListItemId])
 }
 
 // Fabric Card Yarn Recipe — the detailed, multi-row yarn composition for a Fabric Card. The

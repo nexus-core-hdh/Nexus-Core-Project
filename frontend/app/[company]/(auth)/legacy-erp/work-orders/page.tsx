@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw } from "lucide-react";
+import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, ChevronDown, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
@@ -17,6 +17,8 @@ import { CardLookupDialog, type CardLookupRow } from "@/components/legacy-erp/ca
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SelectSizesDialog, type SizeGroup } from "@/app/[company]/(auth)/plm/_components/select-sizes-dialog";
 import { BomTab } from "@/app/[company]/(auth)/plm/style-cards/[id]/_components/bom-tab";
+import { STYLE_CARD_TRANSFER_OPTIONS } from "@/app/[company]/(auth)/plm/style-cards/[id]/_components/work-order-bom-lines";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { StoredImage } from "@/components/legacy-erp/stored-image";
 import { firstImageAttachment } from "@/lib/stored-file";
@@ -29,6 +31,7 @@ import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { navigateOrOpenTab, replaceWorkspaceUrl } from "@/lib/workspace/navigate";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
+import { CustomizedFieldsPanel, type CustomizedFieldsHandle } from "@/components/custom-fields/customized-fields-panel";
 
 import { DatePicker } from "@/components/ui/date-picker";
 const CURRENT_ACCOUNTS_LIST_PATH = "/legacy-erp/current-accounts-list";
@@ -260,6 +263,18 @@ export default function WorkOrderPage() {
   // BOM rows/tab state now live entirely inside BomTab (mounted below in "workOrder" mode) — no
   // parallel bomLines/bomTab state here anymore.
   const [bomReloadTick, setBomReloadTick] = useState(0);
+  const [bomTransfer, setBomTransfer] = useState<{ token: number; linesByType: Record<string, any[]> } | null>(null);
+  const [bomDirty, setBomDirty] = useState(false);
+  const bomSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  // Customized Fields (User Defined Fields, entity "WorkOrder") — stored by this screen's Save
+  // below, after the header and before the reload, same as the BOM.
+  const udfRef = useRef<CustomizedFieldsHandle>(null);
+  const [udfDirty, setUdfDirty] = useState(false);
+  const [outerTab, setOuterTab] = useState("General");
+  const registerBomSave = useCallback((fn: (() => Promise<boolean>) | null) => { bomSaveRef.current = fn; }, []);
+  // BomTab mounts on the first visit to the BOM tab and then stays mounted (hidden) so an unsaved
+  // transfer/edit survives switching tabs until Save.
+  const [bomTabVisited, setBomTabVisited] = useState(false);
 
   // Material x Production Color columns for the C/S Details grid — an INDEPENDENT read (and,
   // for the Choose-Color cells, write) of the Work Order's own real BOM (MA_RecipeItem via
@@ -732,7 +747,7 @@ export default function WorkOrderPage() {
   }, [initialId, initialStyleCardId]);
 
   const set = (key: keyof typeof header, value: any) => setHeader((p) => ({ ...p, [key]: value }));
-  const isDirty = !readOnly && (JSON.stringify(header) !== JSON.stringify(lastSaved));
+  const isDirty = !readOnly && (JSON.stringify(header) !== JSON.stringify(lastSaved) || bomDirty || udfDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
   useWorkspaceRecordLabel(woId ? header.workOrderNo || undefined : undefined);
 
@@ -876,11 +891,13 @@ export default function WorkOrderPage() {
     barcode: r.lot || "",
   })));
   // ── Save ─────────────────────────────────────────────────────────────────────────────────
-  // BOM is intentionally NOT part of this save — BomTab (the reused Sample BOM component,
-  // mounted below in "workOrder" mode) owns its own Save action, exactly like it already does for
-  // Style Card/Sample Card. Two Save buttons (header vs. BOM) is the existing Sample BOM
-  // behavior, not a new inconsistency introduced for Work Order.
+  // Also persists the BOM grid's unsaved changes (incl. a Transfer from Style Card) through
+  // BomTab's own save() — the same upsertBom path as the BOM toolbar's Save button, not a second
+  // mechanism. BomTab (the reused Sample BOM component, mounted below in "workOrder" mode) keeps
+  // that Save button too, exactly like it does for Style Card/Sample Card.
   const save = async () => {
+    // Required Customized Fields are checked before anything is written.
+    if (udfRef.current && !udfRef.current.validate()) { setOuterTab("Customized Fields"); return; }
     setSaving(true);
     try {
       const dto = buildHeaderDto();
@@ -901,6 +918,13 @@ export default function WorkOrderPage() {
       const primId = Array.isArray(savedItems) ? savedItems[0]?.id : undefined;
       setPrimaryItemId(primId);
       if (primId) await legacyErpApi.workOrders.upsertItemVariants(primId, buildVariantRows());
+      if (bomDirty && bomSaveRef.current) {
+        if (!(await bomSaveRef.current())) throw new Error("The BOM could not be saved");
+        setBomTransfer(null);
+        setBomDirty(false);
+      }
+      // A refused value is reported by the panel itself and stays on screen, unsaved.
+      await udfRef.current?.save(String(id));
 
       toast.success("Work order saved");
       setLastSaved(header);
@@ -1055,16 +1079,21 @@ export default function WorkOrderPage() {
   // adding one would mean touching its internals just for this — a key-based remount reuses what
   // already exists).
   const [transferring, setTransferring] = useState(false);
-  const transferFromStyleCard = async () => {
+  // Transfer is an UNSAVED edit: the read-only transfer API returns the Style Card BOM mapped to
+  // this Work Order's BOM line shape, BomTab loads it into its grid (in memory), and nothing is
+  // written until this screen's Save — which persists the BOM through BomTab's own save()
+  // (registered below). Closing without Save leaves the saved BOM untouched.
+  // One of STYLE_CARD_TRANSFER_OPTIONS: "Recipe All Detail" transfers every line type; the others
+  // only their own type (only those rows are replaced in the grid).
+  const transferFromStyleCard = async (option: (typeof STYLE_CARD_TRANSFER_OPTIONS)[number]) => {
     const styleCardId = styleRows[0]?.styleCardId;
     if (!styleCardId) return toast.error("Select a Style first");
     if (!woId) return toast.error("Save the work order first, then Transfer from Style Card");
     setTransferring(true);
     try {
-      await legacyErpApi.workOrders.transferBomFromStyleCard(woId, styleCardId);
-      setBomReloadTick((t) => t + 1);
-      loadBomMaterialGroups(woId);
-      toast.success("BOM transferred from Style Card");
+      const preview: any = await legacyErpApi.workOrders.previewBomTransferFromStyleCard(woId, styleCardId, option.lineType);
+      setBomTransfer({ token: Date.now(), linesByType: preview?.lines ?? {} });
+      toast.success(`${option.label.replace(/^Transfer /, "")} transferred from Style Card — Save the Work Order to keep it`);
     } catch (e: any) {
       toast.error(e.message || "Transfer failed");
     } finally {
@@ -1086,7 +1115,7 @@ export default function WorkOrderPage() {
   };
 
   const titleText = woId ? `Work Order ${header.workOrderNo}` : "New Work Order";
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   const detailInput = "h-7 w-full rounded border bg-background px-1.5 text-xs outline-none disabled:opacity-60";
@@ -1132,7 +1161,7 @@ export default function WorkOrderPage() {
             </Alert>
           )}
 
-          <Tabs defaultValue="General">
+          <Tabs value={outerTab} onValueChange={setOuterTab}>
         <TabsList className="h-8 flex-wrap">{OUTER_TABS.map((t) => <TabsTrigger key={t} value={t} className="h-7 text-xs">{t}</TabsTrigger>)}</TabsList>
 
         <TabsContent value="General" className="pt-2 space-y-2">
@@ -1167,7 +1196,7 @@ export default function WorkOrderPage() {
             {/* Style Info grid */}
             <div className="rounded-md border overflow-x-auto">
               <table className="w-full min-w-[1500px] table-fixed border-collapse text-[11.5px]">
-                <thead><tr>
+                <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                   <th className={th} style={{ width: 120 }}>Style Code</th>
                   <th className={th} style={{ width: 200 }}>Style Name</th>
                   <th className={th} style={{ width: 220 }}>Explanation</th>
@@ -1237,7 +1266,7 @@ export default function WorkOrderPage() {
             />
 
             {/* Secondary tabs */}
-            <Tabs defaultValue="C/S Details" onValueChange={(v) => { if (v === "C/S Details" && woId) loadBomMaterialGroups(woId); }}>
+            <Tabs defaultValue="C/S Details" onValueChange={(v) => { if (v === "BOM") setBomTabVisited(true); if (v === "C/S Details" && woId) loadBomMaterialGroups(woId); }}>
               <TabsList className="h-7 flex-wrap justify-start overflow-x-auto">
                 {SECONDARY_TABS.map((t) => <TabsTrigger key={t} value={t} className="h-6 whitespace-nowrap px-2 text-[11px]">{t}</TabsTrigger>)}
               </TabsList>
@@ -1297,7 +1326,7 @@ export default function WorkOrderPage() {
                 <p className="text-[11.5px] text-muted-foreground">No existing Work Order revenue data structure identified — not implemented this pass.</p>
               </TabsContent>
 
-              <TabsContent value="BOM" className="pt-2 space-y-2">
+              <TabsContent value="BOM" forceMount className="pt-2 space-y-2 data-[state=inactive]:hidden">
                 {/* Reuses the EXACT existing Sample BOM component (BomTab, from
                     plm/style-cards/[id]/_components/bom-tab.tsx — the same one plm/sample-cards
                     already mounts) in "workOrder" mode: same columns, calculations, column
@@ -1305,16 +1334,30 @@ export default function WorkOrderPage() {
                     MA_RecipeItem instead of StyleBomLine). Not a second BOM implementation. */}
                 {!woId ? (
                   <p className="text-[11.5px] text-muted-foreground">Save the Work Order first — BOM lines persist under this Work Order's own record (MA_Recipe.WorkOrderId).</p>
-                ) : (
+                ) : bomTabVisited && (
                   <BomTab
                     key={bomReloadTick}
                     workOrder={{
                       workOrderId: woId,
+                      transfer: bomTransfer,
+                      onDirtyChange: setBomDirty,
+                      registerSave: registerBomSave,
                       toolbarExtra: (
                         <div className="flex gap-1.5">
-                          <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled={readOnly || transferring} onClick={transferFromStyleCard}>
-                            <ArrowDownToLine className="h-3 w-3 mr-1" />Transfer from Style Card
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled={readOnly || transferring}>
+                                <ArrowDownToLine className="h-3 w-3 mr-1" />Transfer from Style Card<ChevronDown className="h-3 w-3 ml-1" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start">
+                              {STYLE_CARD_TRANSFER_OPTIONS.map((option) => (
+                                <DropdownMenuItem key={option.key} className="text-xs" onSelect={() => transferFromStyleCard(option)}>
+                                  {option.label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                           <Button variant="outline" size="sm" className="h-6 text-[11px]" disabled title="No existing Customer Trim source identified for this Work Order's Customer — not implemented this pass (Sample BOM has no Customer Trim transfer either)">
                             <ArrowDownToLine className="h-3 w-3 mr-1" />Transfer Customer Trims
                           </Button>
@@ -1478,8 +1521,10 @@ export default function WorkOrderPage() {
         <TabsContent value="General Explanation" className="pt-2">
           <p className="text-[11.5px] text-muted-foreground">See the Explanation tab under General's secondary tab bar (MA_WorkOrderExplanation).</p>
         </TabsContent>
-        <TabsContent value="Customized Fields" className="pt-2">
-          <p className="text-[11.5px] text-muted-foreground">No existing custom-fields structure identified for Work Order — not implemented this pass.</p>
+        {/* Usable before the first Save (stored with it); kept mounted so unsaved values survive
+            switching tabs. */}
+        <TabsContent value="Customized Fields" forceMount className="pt-2 data-[state=inactive]:hidden">
+          <CustomizedFieldsPanel ref={udfRef} entity="WorkOrder" entityId={woId ? String(woId) : null} readOnly={readOnly} saveWithDocument onDirtyChange={setUdfDirty} />
         </TabsContent>
           </Tabs>
         </div>
@@ -1615,7 +1660,7 @@ function ManufacturingQuantitiesGrid({
   // that doesn't pass it (e.g. a future reuse with no Cutting Card concept at all).
   onOpenCutting?: (row: QtyRow) => void;
 }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   const rowTotal = (r: QtyRow) => round(selectedSizes.reduce((s, sz) => s + num(r.sizes[sz]), 0), "quantity");
@@ -1644,7 +1689,7 @@ function ManufacturingQuantitiesGrid({
   return (
     <div className="rounded-md border overflow-x-auto">
       <table className="w-full min-w-[1600px] table-fixed border-collapse text-[11.5px]">
-        <thead><tr>
+        <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
           <th className={th} style={{ width: 140 }}>Color</th>
           <th className={th} style={{ width: 130 }}>Customer Order No</th>
           <th className={th} style={{ width: 120 }}>Part Order No</th>
@@ -1744,14 +1789,14 @@ function ManufacturingQuantitiesGrid({
 function LotByColorGrid({ readOnly, qtyRows, setQtyRows, selectedSizes }: {
   readOnly: boolean; qtyRows: QtyRow[]; setQtyRows: (fn: (rs: QtyRow[]) => QtyRow[]) => void; selectedSizes: string[];
 }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   if (!selectedSizes.length) return <p className="text-[11.5px] text-muted-foreground">No sizes selected.</p>;
   return (
     <div className="rounded-md border overflow-x-auto">
       <table className="w-full min-w-[600px] table-fixed border-collapse text-[11.5px]">
-        <thead><tr>
+        <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
           <th className={th} style={{ width: 160 }}>Color</th>
           <th className={th} style={{ width: 120 }}>Lot</th>
           {selectedSizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
@@ -1774,13 +1819,13 @@ function LotByColorGrid({ readOnly, qtyRows, setQtyRows, selectedSizes }: {
 }
 
 function QtySurplusGrid({ readOnly, qtyRows, setQtyRows }: { readOnly: boolean; qtyRows: QtyRow[]; setQtyRows: (fn: (rs: QtyRow[]) => QtyRow[]) => void }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 focus:rounded-sm disabled:cursor-not-allowed";
   return (
     <div className="rounded-md border overflow-x-auto">
       <table className="w-full min-w-[400px] table-fixed border-collapse text-[11.5px]">
-        <thead><tr><th className={th} style={{ width: 200 }}>Color</th><th className={`${th} text-right`} style={{ width: 140 }}>Cutting/Mfg Surplus</th></tr></thead>
+        <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white"><th className={th} style={{ width: 200 }}>Color</th><th className={`${th} text-right`} style={{ width: 140 }}>Cutting/Mfg Surplus</th></tr></thead>
         <tbody>
           {qtyRows.map((r) => (
             <tr key={r.id}>
@@ -1806,7 +1851,7 @@ function QtySurplusGrid({ readOnly, qtyRows, setQtyRows }: { readOnly: boolean; 
 function WillCutQtyGrid({ qtyRows, selectedSizes, extraCuttingPercent }: {
   qtyRows: QtyRow[]; selectedSizes: string[]; extraCuttingPercent: number;
 }) {
-  const th = "border-r border-border/70 bg-muted/50 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-6 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-white h-6 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   if (!selectedSizes.length) return <p className="text-[11.5px] text-muted-foreground">No sizes selected.</p>;
   const rowCut = (r: QtyRow) => selectedSizes.map((s) => willBeCutQty(num(r.sizes[s]), extraCuttingPercent));
@@ -1819,7 +1864,7 @@ function WillCutQtyGrid({ qtyRows, selectedSizes, extraCuttingPercent }: {
       </p>
       <div className="rounded-md border overflow-x-auto">
         <table className="w-full min-w-[900px] table-fixed border-collapse text-[11.5px]">
-          <thead><tr>
+          <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
             <th className={th} style={{ width: 160 }}>Color</th>
             {selectedSizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
             <th className={`${th} text-right`} style={{ width: 100 }}>Total</th>

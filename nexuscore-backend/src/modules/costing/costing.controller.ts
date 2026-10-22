@@ -1,8 +1,19 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { PermissionModule } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { CostingService } from './costing.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+
+// Costing sheets are kept per branch (CostingSheet.branchId is required). A user account with no
+// branch assigned gets a clear 400 instead of a raw Prisma validation error — never another branch's
+// sheets and never a guessed default branch.
+export function requireBranch(user: { branchId?: string | null } | undefined): string {
+  if (user?.branchId) return user.branchId;
+  throw new BadRequestException({
+    message: 'Your user account has no branch assigned. Costing sheets are kept per branch — ask an administrator to assign you a branch.',
+    errors: { code: 'BRANCH_REQUIRED' },
+  });
+}
 
 @ApiTags('PLM Costing')
 @PermissionModule('costing', 'Costing sheets')
@@ -10,8 +21,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 export class CostingController {
   constructor(private readonly svc: CostingService) {}
 
-  @Get('costing-sheets') list(@CurrentUser() u: any, @Query() q: any) { return this.svc.list(u.branchId, q); }
-  @Post('costing-sheets') create(@Body() dto: any, @CurrentUser() u: any) { return this.svc.create(dto, u.branchId, u.id); }
+  @Get('costing-sheets') list(@CurrentUser() u: any, @Query() q: any) { return this.svc.list(requireBranch(u), q); }
+  @Post('costing-sheets') create(@Body() dto: any, @CurrentUser() u: any) { return this.svc.create(dto, requireBranch(u), u.id, u.companyId); }
   @Get('costing-sheets/:id') get(@Param('id') id: string) { return this.svc.get(id); }
   @Put('costing-sheets/:id') update(@Param('id') id: string, @Body() dto: any) { return this.svc.update(id, dto); }
   @Delete('costing-sheets/:id') remove(@Param('id') id: string) { return this.svc.delete(id); }
@@ -23,8 +34,8 @@ export class CostingController {
   @Get('costing-sheets/:id/profit-breakdown') getProfitBreakdown(@Param('id') id: string) { return this.svc.getProfitBreakdown(id); }
 
   @Get('style-cards/:id/costing-sheets') listForStyleCard(@Param('id') id: string) { return this.svc.listForStyleCard(id); }
-  @Post('style-cards/:id/issue-costing-sheet') issueForStyleCard(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.issueForStyleCard(id, dto, u.branchId, u.id); }
+  @Post('style-cards/:id/issue-costing-sheet') issueForStyleCard(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.issueForStyleCard(id, dto, requireBranch(u), u.id, u.companyId); }
 
   @Get('sample-cards/:id/costing-sheets') listForSampleCard(@Param('id') id: string) { return this.svc.listForSampleCard(id); }
-  @Post('sample-cards/:id/issue-costing-sheet') issueForSampleCard(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.issueForSampleCard(id, dto, u.branchId, u.id); }
+  @Post('sample-cards/:id/issue-costing-sheet') issueForSampleCard(@Param('id') id: string, @Body() dto: any, @CurrentUser() u: any) { return this.svc.issueForSampleCard(id, dto, requireBranch(u), u.id, u.companyId); }
 }

@@ -70,7 +70,7 @@ export function PriceContractDialog({ workOrderId, workOrderNo, onClose }: { wor
     }
   };
 
-  const th = "border border-border/70 bg-muted px-1.5 h-7 text-[10.5px] font-semibold text-muted-foreground text-left whitespace-nowrap";
+  const th = "border border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 h-7 text-[10.5px] font-semibold text-white text-left whitespace-nowrap";
   const td = "border border-border/50 p-0";
   const cell = "h-7 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50";
   const ro = !!lockReason;
@@ -83,7 +83,7 @@ export function PriceContractDialog({ workOrderId, workOrderNo, onClose }: { wor
         <div className="max-h-[50vh] overflow-auto rounded-sm border border-border/70">
           <table className="w-full min-w-[820px] border-collapse">
             <thead>
-              <tr>
+              <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                 <th className={th} style={{ width: 130 }}>Factory</th><th className={th} style={{ width: 150 }}>Factory Name</th>
                 <th className={th} style={{ width: 90 }}>Price</th><th className={th} style={{ width: 90 }}>Currency</th>
                 <th className={th} style={{ width: 80 }}>Quantity</th><th className={th} style={{ width: 120 }}>Start Date</th>

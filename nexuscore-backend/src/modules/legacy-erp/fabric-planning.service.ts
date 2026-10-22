@@ -6,6 +6,10 @@ import { WorkOrderService } from './work-order.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
 import { ItemAllocationService } from './item-allocation.service';
 
+/** Planning-row key of a receipt aggregate: Work Order, Item and Material Color (none = ''). */
+export const receiptRowKey = (workOrderId: unknown, inventoryId: unknown, colorCardId: unknown) =>
+  `${workOrderId}:${inventoryId}:${colorCardId == null || colorCardId === '' ? '' : String(colorCardId)}`;
+
 // ── Fabric Planning — NOT a second calculation engine. This is a cross-Work-Order planning/
 // reporting VIEW over data that already exists and is already correctly computed elsewhere:
 //
@@ -26,12 +30,14 @@ import { ItemAllocationService } from './item-allocation.service';
 //
 // Row identity/grouping matches getMaterialRequirements' own — one row per (Work Order, BOM line,
 // Production Color scope), i.e. exactly what the Fabric Requirements screen itself would show for
-// that Work Order's Fabric tab, merged with Work Order/Style/Customer header fields. Procurement/
-// receiving columns (Purchase/Received/Process/Manufacturing) are real data at (Work Order,
-// Inventory Item) granularity ONLY — neither IM_Receipt nor IM_OrderReceipt carries a Production
-// Color dimension, so those columns are the SAME total across every color-split row of the same
-// material within one Work Order (documented per-column in the controller/frontend, not silently
-// implied to be color-specific).
+// that Work Order's Fabric tab, merged with Work Order/Style/Customer header fields.
+// Receipt-backed columns (Received, Manufacturing Send, every Subcontract Send/Receive) are scoped
+// to (Work Order, Inventory Item, Material Color): IM_ReceiptItem.ColorCardId is the Material
+// Color a receipt created from a planning row is stamped with, and the key Transaction Details
+// already filters a row's receipts by. Rows of one common BOM line expanded per Production Color
+// share one Material Color, so they still share these figures — a receipt line has no Production
+// Color of its own. Purchase (IM_OrderReceiptItem) and Received Allocation stay at (Work Order,
+// Inventory Item) granularity.
 @Injectable()
 export class FabricPlanningService {
   constructor(
@@ -153,13 +159,19 @@ export class FabricPlanningService {
   // kept alongside). Not private — reused by YarnPlanningService/TrimPlanningService, same
   // reasoning as aggregatePurchase above: this is a generic (Work Order, Inventory Item) receipt
   // aggregation, not Fabric-specific.
-  async aggregateReceipts(workOrderIds: number[], inventoryIds: number[]) {
+  //
+  // `byColor` (Fabric/Yarn/Trim Planning): also split by the receipt line's Material Color
+  // (IM_ReceiptItem.ColorCardId) and key by receiptRowKey(workOrderId, inventoryId, colorCardId) —
+  // see listPlanningRows. Default off: Yarn/Trim Planning keep their (Work Order, Item) totals.
+  async aggregateReceipts(workOrderIds: number[], inventoryIds: number[], opts: { byColor?: boolean } = {}) {
     const out = new Map<string, { received: number; manufacturingSend: number }>();
     if (!workOrderIds.length || !inventoryIds.length) return out;
+    const colorCol = opts.byColor ? Prisma.sql`, ri."ColorCardId" as "colorCardId"` : Prisma.empty;
+    const colorGroup = opts.byColor ? Prisma.sql`, ri."ColorCardId"` : Prisma.empty;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         wi."WorkOrderId" as "workOrderId",
-        ri."InventoryId" as "inventoryId",
+        ri."InventoryId" as "inventoryId"${colorCol},
         SUM(CASE WHEN r."ReceiptType" = 2 THEN ri."Quantity" ELSE 0 END) as received,
         SUM(CASE WHEN r."ReceiptType" = 140 THEN ri."Quantity" ELSE 0 END) as "manufacturingSend"
       FROM "IM_ReceiptItem" ri
@@ -169,10 +181,10 @@ export class FabricPlanningService {
         AND wi."WorkOrderId" IN (${Prisma.join(workOrderIds)})
         AND ri."InventoryId" IN (${Prisma.join(inventoryIds)})
         AND r."ReceiptType" IN (2, 140)
-      GROUP BY wi."WorkOrderId", ri."InventoryId"
+      GROUP BY wi."WorkOrderId", ri."InventoryId"${colorGroup}
     `);
     for (const r of sanitizeRawRow(rows)) {
-      out.set(`${r.workOrderId}:${r.inventoryId}`, {
+      out.set(opts.byColor ? receiptRowKey(r.workOrderId, r.inventoryId, r.colorCardId) : `${r.workOrderId}:${r.inventoryId}`, {
         received: Number(r.received) || 0,
         manufacturingSend: Number(r.manufacturingSend) || 0,
       });
@@ -203,13 +215,17 @@ export class FabricPlanningService {
   // result — GROUP BY already collapses to (Work Order, Item, Type) triples, not per-row. Not
   // private — reused by YarnPlanningService/TrimPlanningService, same as every other aggregate*
   // method in this file.
-  async aggregateSubcontractReceipts(workOrderIds: number[], inventoryIds: number[]): Promise<Map<string, Map<number, { send: number; receive: number }>>> {
+  //
+  // `byColor` — same opt-in Material Color split as aggregateReceipts above (Fabric/Yarn/Trim Planning).
+  async aggregateSubcontractReceipts(workOrderIds: number[], inventoryIds: number[], opts: { byColor?: boolean } = {}): Promise<Map<string, Map<number, { send: number; receive: number }>>> {
     const out = new Map<string, Map<number, { send: number; receive: number }>>();
     if (!workOrderIds.length || !inventoryIds.length) return out;
+    const colorCol = opts.byColor ? Prisma.sql`, ri."ColorCardId" as "colorCardId"` : Prisma.empty;
+    const colorGroup = opts.byColor ? Prisma.sql`, ri."ColorCardId"` : Prisma.empty;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         wi."WorkOrderId" as "workOrderId",
-        ri."InventoryId" as "inventoryId",
+        ri."InventoryId" as "inventoryId"${colorCol},
         r."SubcontractTypeId" as "subcontractTypeId",
         SUM(CASE WHEN r."ReceiptType" = 134 THEN ri."Quantity" ELSE 0 END) as send,
         SUM(CASE WHEN r."ReceiptType" = 11 THEN ri."Quantity" ELSE 0 END) as receive
@@ -221,10 +237,10 @@ export class FabricPlanningService {
         AND ri."InventoryId" IN (${Prisma.join(inventoryIds)})
         AND r."ReceiptType" IN (134, 11)
         AND r."SubcontractTypeId" IS NOT NULL
-      GROUP BY wi."WorkOrderId", ri."InventoryId", r."SubcontractTypeId"
+      GROUP BY wi."WorkOrderId", ri."InventoryId"${colorGroup}, r."SubcontractTypeId"
     `);
     for (const r of sanitizeRawRow(rows)) {
-      const key = `${r.workOrderId}:${r.inventoryId}`;
+      const key = opts.byColor ? receiptRowKey(r.workOrderId, r.inventoryId, r.colorCardId) : `${r.workOrderId}:${r.inventoryId}`;
       const inner = out.get(key) ?? new Map<number, { send: number; receive: number }>();
       inner.set(Number(r.subcontractTypeId), { send: Number(r.send) || 0, receive: Number(r.receive) || 0 });
       out.set(key, inner);
@@ -279,14 +295,20 @@ export class FabricPlanningService {
     const inventoryIds = Array.from(new Set(flat.map((r) => r.inventoryId).filter((id): id is number => id != null)));
     const [purchaseByKey, receiptsByKey, subcontractByKey, allocatedByKey] = await Promise.all([
       this.aggregatePurchase(workOrderIds, inventoryIds),
-      this.aggregateReceipts(workOrderIds, inventoryIds),
-      this.aggregateSubcontractReceipts(workOrderIds, inventoryIds),
+      this.aggregateReceipts(workOrderIds, inventoryIds, { byColor: true }),
+      this.aggregateSubcontractReceipts(workOrderIds, inventoryIds, { byColor: true }),
       this.allocationSvc.aggregateAllocations(workOrderIds, inventoryIds),
     ]);
 
     return flat.map((r) => {
       const key = r.inventoryId != null ? `${r.workOrderId}:${r.inventoryId}` : null;
-      const receipts = key ? receiptsByKey.get(key) : undefined;
+      // Receipt-backed columns (Received, Manufacturing Send, every Subcontract Send/Receive such
+      // as Knitting Receive) belong to the row whose (Work Order, Item, Material Color) the receipt
+      // line carries — the same scope Transaction Details lists for this row and the one a receipt
+      // created from this row is stamped with (receipt-menu.ts buildPrefillLines copies the row's
+      // colorCardId). A row without a Material Color matches only receipt lines without one.
+      const colorKey = r.inventoryId != null ? receiptRowKey(r.workOrderId, r.inventoryId, r.colorCardId) : null;
+      const receipts = colorKey ? receiptsByKey.get(colorKey) : undefined;
       const purchase = key ? purchaseByKey.get(key) ?? 0 : 0;
       // Received Allocation — a reservation against an already-received receipt line, never a
       // stock transaction (see item-allocation.service.ts's own header comment). Shown as its own
@@ -304,7 +326,7 @@ export class FabricPlanningService {
       // frontend's own dynamic column builder (subcontract-planning-columns.tsx) can look up
       // {send,receive} per type without a second request.
       const subcontractTransactions = Object.fromEntries(
-        Array.from((key ? subcontractByKey.get(key) : undefined) ?? new Map()).map(([typeId, v]) => [String(typeId), v]),
+        Array.from((colorKey ? subcontractByKey.get(colorKey) : undefined) ?? new Map()).map(([typeId, v]) => [String(typeId), v]),
       );
       return {
         id: `${r.workOrderId}:${r.id}`,

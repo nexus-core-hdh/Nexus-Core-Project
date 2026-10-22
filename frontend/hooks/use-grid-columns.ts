@@ -50,6 +50,10 @@ export interface UseGridColumnsOptions<K extends string> {
    *  (the key is absent from their saved order), instead of appending it visible. Columns the
    *  user's saved order already knows keep whatever state they saved. */
   hideNewDefaultHiddenColumns?: boolean;
+  /** Columns that can be reordered and resized like any other but never hidden — listed in
+   *  Manage Columns with a locked checkbox (e.g. a row's Actions column when it is the only way to
+   *  open the record). Unlike `fixedColumns` they keep their place in the order and can be moved. */
+  requiredColumns?: K[];
 }
 
 export interface HeaderDragProps {
@@ -137,18 +141,53 @@ const permOrderKey = (storageKey: string) => `${storageKey}ColumnOrder`;
 const permHiddenKey = (storageKey: string) => `${storageKey}HiddenColumns`;
 const permWidthsKey = (storageKey: string) => `${storageKey}ColumnWidths`;
 
-function sanitizeOrder<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
+// Grid-level User Defined Field columns (`udf:<field code>`, hooks/use-grid-udf.ts) are declared
+// only once their definitions load — after this hook has already restored the saved preference.
+// Their saved position/visibility/width is kept instead of being dropped as unknown;
+// displayColumnDefs still renders only columns that are actually declared.
+const isLateColumn = (k: unknown) => typeof k === "string" && k.startsWith("udf:");
+
+export function sanitizeOrder<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
   if (!Array.isArray(saved)) return reorderableDefault;
-  const validSaved = saved.filter((k): k is K => reorderableDefault.includes(k as K));
+  const validSaved = saved.filter((k): k is K => reorderableDefault.includes(k as K) || isLateColumn(k));
   const missing = reorderableDefault.filter((k) => !validSaved.includes(k));
   return [...validSaved, ...missing];
 }
 
-function sanitizeHidden<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
-  return Array.isArray(saved) ? saved.filter((k): k is K => reorderableDefault.includes(k as K)) : [];
+/**
+ * The order to render: `order` (the user's current/saved order) plus every declared reorderable
+ * column it doesn't know yet, each inserted right after its nearest declared predecessor — i.e.
+ * where the caller declared it, not appended at the end. Needed for columns that appear AFTER the
+ * grid mounted (e.g. Packing List's per-Order size columns, which only exist once the Work Order
+ * has loaded): `order` state and saved preferences are seeded/sanitized against the mount-time
+ * column set, so without this such columns were silently never rendered. Returns `order` itself
+ * when nothing is missing, so grids with a static column set behave exactly as before.
+ */
+export function mergeDeclaredOrder<K extends string>(order: K[], declared: K[]): K[] {
+  const missing = declared.filter((k) => !order.includes(k));
+  if (!missing.length) return order;
+  const result = [...order];
+  for (const key of missing) {
+    let insertAt = 0;
+    for (let i = declared.indexOf(key) - 1; i >= 0; i--) {
+      const at = result.indexOf(declared[i]);
+      if (at >= 0) { insertAt = at + 1; break; }
+    }
+    result.splice(insertAt, 0, key);
+  }
+  return result;
 }
 
-function sanitizeWidths<K extends string>(
+/** `hidden` minus every required column — a required column is never hidden, shown or saved. */
+export function withoutRequired<K extends string>(hidden: Iterable<K>, required: readonly K[]): Set<K> {
+  return new Set([...hidden].filter((k) => !required.includes(k)));
+}
+
+export function sanitizeHidden<K extends string>(saved: unknown, reorderableDefault: K[]): K[] {
+  return Array.isArray(saved) ? saved.filter((k): k is K => reorderableDefault.includes(k as K) || isLateColumn(k)) : [];
+}
+
+export function sanitizeWidths<K extends string>(
   saved: unknown,
   columnByKey: Map<K, GridColumnDef<K>>,
 ): Partial<Record<K, number>> {
@@ -156,8 +195,8 @@ function sanitizeWidths<K extends string>(
   const out: Partial<Record<K, number>> = {};
   for (const [k, v] of Object.entries(saved as Record<string, unknown>)) {
     const col = columnByKey.get(k as K);
-    if (!col || typeof v !== "number" || !Number.isFinite(v)) continue;
-    out[k as K] = Math.max(col.minWidth, v);
+    if ((!col && !isLateColumn(k)) || typeof v !== "number" || !Number.isFinite(v)) continue;
+    out[k as K] = Math.max(col?.minWidth ?? 40, v);
   }
   return out;
 }
@@ -168,6 +207,7 @@ export function useGridColumns<K extends string>({
   fixedColumns = [],
   defaultHidden = [],
   hideNewDefaultHiddenColumns = false,
+  requiredColumns = [],
 }: UseGridColumnsOptions<K>): UseGridColumnsResult<K> {
   const columnByKey = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns]);
   const reorderableDefault = useMemo(
@@ -223,6 +263,10 @@ export function useGridColumns<K extends string>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
+  // Columns declared after mount (or unknown to a restored preference) join at their declared
+  // position — see mergeDeclaredOrder. Identical to `columnOrder` for a static column set.
+  const effectiveOrder = useMemo(() => mergeDeclaredOrder(columnOrder, reorderableDefault), [columnOrder, reorderableDefault]);
+
   const displayColumnDefs = useMemo(
     // `.filter((k) => columnByKey.has(k))` guards against `columnOrder` (state, only ever
     // updated via drag-reorder or the Manage Columns modal) briefly or permanently disagreeing
@@ -232,10 +276,11 @@ export function useGridColumns<K extends string>({
     // missing from the current `columns` would resolve through `columnByKey.get(k)!` to
     // `undefined`, and every consumer here maps over this array assuming real column defs —
     // `undefined.key` throws.
-    () => [...fixedColumns, ...columnOrder.filter((k) => !hiddenColumns.has(k))]
+    () => [...fixedColumns, ...effectiveOrder.filter((k) => !withoutRequired(hiddenColumns, requiredColumns).has(k))]
       .filter((k) => columnByKey.has(k))
       .map((k) => columnByKey.get(k)!),
-    [columnOrder, hiddenColumns, fixedColumns, columnByKey],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveOrder, hiddenColumns, fixedColumns, columnByKey, requiredColumns.join("|")],
   );
 
   const getWidth = useCallback((key: K) => colWidths[key] ?? columnByKey.get(key)?.defaultWidth ?? 120, [colWidths, columnByKey]);
@@ -322,12 +367,12 @@ export function useGridColumns<K extends string>({
   const [modalDragOver, setModalDragOver] = useState<K | null>(null);
 
   const openModal = useCallback(() => {
-    setModalOrder(columnOrder);
+    setModalOrder(effectiveOrder);
     setModalHidden(new Set(hiddenColumns));
     setSearch("");
     setResetWidthsPending(false);
     setOpen(true);
-  }, [columnOrder, hiddenColumns]);
+  }, [effectiveOrder, hiddenColumns]);
   const closeModal = useCallback(() => setOpen(false), []);
 
   const getRowDragProps = useCallback((key: K): HeaderDragProps => ({
@@ -355,12 +400,14 @@ export function useGridColumns<K extends string>({
   }), [modalDragOver]);
 
   const toggleHidden = useCallback((key: K, visible: boolean) => {
+    if (!visible && requiredColumns.includes(key)) return; // a required column is never hidden
     setModalHidden((prev) => {
       const next = new Set(prev);
       if (visible) next.delete(key); else next.add(key);
       return next;
     });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requiredColumns.join("|")]);
 
   const resetToDefault = useCallback(() => {
     setModalOrder(reorderableDefault);
@@ -369,7 +416,8 @@ export function useGridColumns<K extends string>({
   }, [reorderableDefault, defaultHidden]);
 
   // Returns the widths that were applied (the defaults after "Reset Default", else the live ones).
-  const applySession = useCallback((order: K[], hidden: Set<K>): Record<K, number> => {
+  const applySession = useCallback((order: K[], draftHidden: Set<K>): Record<K, number> => {
+    const hidden = withoutRequired(draftHidden, requiredColumns);
     const widths = resetWidthsPending ? defaultWidths : colWidths;
     setColumnOrder(order);
     setHiddenColumns(hidden);
@@ -380,7 +428,8 @@ export function useGridColumns<K extends string>({
       sessionStorage.setItem(sessionWidthsKey(storageKey), JSON.stringify(widths));
     } catch { /* sessionStorage unavailable — live grid still updated above */ }
     return widths;
-  }, [storageKey, colWidths, defaultWidths, resetWidthsPending]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey, colWidths, defaultWidths, resetWidthsPending, requiredColumns.join("|")]);
 
   const saveForSession = useCallback(() => {
     applySession(modalOrder, modalHidden);
@@ -394,7 +443,7 @@ export function useGridColumns<K extends string>({
       await settingsApi.updateCurrentSettings({
         tablePreferences: {
           [permOrderKey(storageKey)]: modalOrder,
-          [permHiddenKey(storageKey)]: Array.from(modalHidden),
+          [permHiddenKey(storageKey)]: Array.from(withoutRequired(modalHidden, requiredColumns)),
           [permWidthsKey(storageKey)]: widths,
         },
       });
@@ -402,7 +451,8 @@ export function useGridColumns<K extends string>({
     } finally {
       setSaving(false);
     }
-  }, [applySession, modalOrder, modalHidden, storageKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applySession, modalOrder, modalHidden, storageKey, requiredColumns.join("|")]);
 
   const orderFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -421,7 +471,7 @@ export function useGridColumns<K extends string>({
   return {
     fixedColumns,
     displayColumnDefs,
-    columnOrder,
+    columnOrder: effectiveOrder,
     hiddenColumns,
     colWidths,
     getWidth,

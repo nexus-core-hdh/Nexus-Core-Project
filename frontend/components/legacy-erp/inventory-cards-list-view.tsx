@@ -25,6 +25,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useStockValueColumns } from "@/components/legacy-erp/stock-value";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 // The Inventory Card List — Fabric Card, Yarn Card and Trim Card in one grid, a read-only
@@ -142,6 +143,9 @@ export function InventoryCardsListView({ mode, sourceTypeFilter, onSelect, onClo
 
   // Unified column model for WorklistTable — a custom worklist's dynamic fields (formatCell,
   // prefix-stripped via rawKey) or the Standard fixed set (own renderers/sortable headers).
+  // Stock In Hand / Unit / Stock Value — the same standard stock columns as the Yarn/Fabric/Trim
+  // card lists (server-computed per page — see components/legacy-erp/stock-value.tsx).
+  const stockColumns = useStockValueColumns();
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
       return activeColumns.map((c) => ({
@@ -157,8 +161,7 @@ export function InventoryCardsListView({ mode, sourceTypeFilter, onSelect, onClo
       },
       { key: "inventoryName", label: "Inventory Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span> },
       { key: "inventoryType", label: "Inventory Type", render: (row: any) => <Badge variant="outline" className="text-[11px] font-normal">{row.inventoryType}</Badge> },
-      { key: "unit", label: "Unit", render: (row: any) => row.unit || <span className="text-muted-foreground">—</span> },
-      { key: "stockOnHand", label: "Stock On Hand", render: (row: any) => row.stockOnHand },
+      ...stockColumns,
       {
         key: "insertedAt", label: "Inserted At", sortable: true,
         render: (row: any) => <span className="text-muted-foreground">{row.insertedAt ? format(new Date(row.insertedAt), "dd MMM yyyy, hh:mm a") : "—"}</span>,
@@ -166,7 +169,7 @@ export function InventoryCardsListView({ mode, sourceTypeFilter, onSelect, onClo
       { key: "insertedBy", label: "Inserted By", sortable: true, render: (row: any) => row.insertedBy },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeColumns]);
+  }, [activeColumns, stockColumns]);
 
   const getRowActions = (row: any): RowAction[] => [
     { key: "statement", label: "View Statement", icon: FileClock, onSelect: () => viewStatement(row) },

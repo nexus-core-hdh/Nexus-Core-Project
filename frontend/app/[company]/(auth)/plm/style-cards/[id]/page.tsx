@@ -18,6 +18,7 @@ import { FormGrid } from "@/components/forms/form-grid";
 import { FormSwitchField as FieldCheck, FieldLabel, spanClass } from "@/components/forms/form-field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 
 import { GeneralTab } from "./_components/general-tab";
 import { CARD_TAB_ICONS } from "./_components/tab-icons";
@@ -59,6 +60,7 @@ export default function StyleCardDetailPage() {
   const [nameError, setNameError] = useState('');
   const [codePreview, setCodePreview] = useState('');
   const [activeTab, setActiveTab] = useState("General");
+  useWorkspaceRecordLabel(card?.title || card?.styleNumber || undefined);
 
   const load = async (targetId: string) => {
     setLoading(true);

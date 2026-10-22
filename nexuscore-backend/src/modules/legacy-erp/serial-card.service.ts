@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
 import { screenKeyFor } from './inventory-receipt.service';
+import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
+import { FabricYarnRecipeService } from './fabric-yarn-recipe.service';
 
 // Generate Serial Cards for a FABRIC receipt line — backed by the real, pre-existing
 // IM_SerialCard / IM_SerialTransaction tables (confirmed via a live schema audit: 49 and 14
@@ -24,6 +26,90 @@ import { screenKeyFor } from './inventory-receipt.service';
 // already uses for IM_ItemAllocationHistory.RowStatus): 1 = Receipt Inbound, the only type
 // this feature ever writes.
 const SERIAL_TXN_TYPE_RECEIPT = 1;
+
+// The Serial No IS the card's barcode (Code 128 on the label, scanned back through getByCode), so
+// it must never repeat. IM_SerialCard has no unique index on SerialCode, so produce() takes this
+// transaction-scoped advisory lock before choosing numbers: concurrent Produce calls run one after
+// another, and each sees every code the previous one committed. Arbitrary fixed key ("SERL").
+const SERIAL_CODE_LOCK_KEY = 0x5345524c;
+const SERIAL_CODE_MAX_LENGTH = 30; // IM_SerialCard.SerialCode varchar(30)
+// Code 128 set B — printable ASCII. A Serial No outside it could not be printed as a barcode.
+const BARCODE_SAFE = /^[!-~](?:[ -~]*[!-~])?$/;
+
+// Production identity every serial card row carries (list(), listAll(), getDetail()) — all read
+// live from the records the card is linked to, never copied onto the card: Work Order (via
+// WorkOrderReceiptItemId) -> its Style Card; the Fabric Card's own Composition / Finish GSM master
+// (IM_Item stores the master's RecId as text — see fabric-card.service.ts) and spec Width/Weight;
+// the receipt line's Material Color (ColorCardId, which picks a Color-Specific Yarn Recipe).
+// Needs the `it`, `wo` and `ri` aliases of the queries it is spliced into; PRODUCTION_JOINS
+// must come after the `wo` join.
+const PRODUCTION_SELECT = Prisma.sql`
+  wo."RecId" as "workOrderId", stc.id as "styleCardId", stc."styleNumber" as "styleNumber", stc.title as "styleName",
+  ri."ColorCardId" as "colorCardId",
+  comp."CompositionName" as "fabricComposition", gsm."FinishGSMName" as "fabricGsm",
+  it."FWidth" as "fabricWidth", it."FWeight" as "fabricWeight"`;
+const PRODUCTION_JOINS = Prisma.sql`
+  LEFT JOIN "StyleCard" stc ON stc.id = wo."StyleCardId"
+  LEFT JOIN "MD_Composition" comp ON comp."RecId"::text = it."UD_FabComposition"
+  LEFT JOIN "MD_FinishGSM" gsm ON gsm."RecId"::text = it."UD_FabGSM"`;
+
+export type SerialCardYarnRecipe = {
+  status: 'ok' | 'no-work-order' | 'not-in-bom' | 'ambiguous' | 'not-defined';
+  message: string | null;
+  /** 'color' = the Fabric's Color-Specific recipe for the BOM line's Material Color; 'common' = its Common/Overall recipe. */
+  source: 'color' | 'common' | null;
+  bomLineColorCardId: string | null;
+  lines: {
+    yarnInventoryId: number | null; yarnCode: string | null; yarnName: string | null;
+    percentage: number; process: string | null; variant1: string | null; variant2: string | null;
+    explanation: string | null; wastePct: number; dyeWastagePct: number;
+  }[];
+};
+
+// ── Serial Card QR Code ──────────────────────────────────────────────────────────────────────
+// Labels printed now hold the card's complete data as plain text (frontend
+// lib/legacy-erp/serial-card-qr-text.ts, from getLabels()), readable offline. The link below is
+// what EARLIER labels encoded; detail/by-code still return it so those labels keep working:
+// A label's QR Code holds a short link to the card's own details page: <base>/s/<Serial No>.
+// A phone's camera opens it as a readable page (fields + Yarn Recipe, the same layout as the ERP
+// detail dialog); the page requires an ERP login and serial-cards read permission, so no card
+// data is readable from a label without the ERP. The link carries only the Serial No (already
+// printed on the label) — unique per card and never changed by edits, so a reprint encodes the
+// identical link and the page always shows the card's current data.
+// Base = QR_PUBLIC_BASE_URL (the ERP's public https address, set per deployment); until that is
+// set, the address the ERP was opened on (sent by the browser as `origin`).
+export function serialCardQrBase(origin?: string | null): string | null {
+  const parse = (v?: string | null) => {
+    if (!v || !String(v).trim()) return null;
+    try {
+      const u = new URL(String(v).trim());
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+      return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+    } catch {
+      return null;
+    }
+  };
+  return parse(process.env.QR_PUBLIC_BASE_URL) ?? parse(origin);
+}
+
+export function serialCardQrUrl(serialCode: string, origin?: string | null): string | null {
+  const base = serialCardQrBase(origin);
+  return base && serialCode ? `${base}/s/${encodeURIComponent(String(serialCode).trim())}` : null;
+}
+
+// Product Date / Expiration Date are calendar dates held in timestamp-without-time-zone columns.
+// Bound as a JS Date they would be converted to the DB session's timezone on the way in (a
+// "2026-10-12" entered in a UTC-7 session was stored as 2026-10-11 17:00), so they are sent as a
+// plain YYYY-MM-DD string and cast in SQL: stored as that date at 00:00, exactly as entered.
+// An ISO timestamp (an untouched value echoed back from a loaded row) keeps its date part.
+export function calendarDate(v: string | null | undefined): string | null {
+  if (v == null || String(v).trim() === '') return null;
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) throw new BadRequestException(`Invalid date: ${s}`);
+  return d.toISOString().slice(0, 10);
+}
 
 // Every editable IM_SerialCard field this feature's UI exposes, shared between Produce (as
 // batch DEFAULTS stamped onto every newly-created card — matching the reference legacy screen's
@@ -63,10 +149,10 @@ export interface SerialCardFieldDefaults {
 
 export interface ProduceSerialCardsDto extends SerialCardFieldDefaults {
   count: number;
-  /** Blank = auto-generate via the persisted global sequence. A template containing one or
-   *  more trailing "#" characters (matching the reference screen's own "AF####" hint) numbers
-   *  each generated card within this batch starting at 1. A literal value with no "#" is only
-   *  valid when count === 1 (a fixed string can't represent more than one distinct card). */
+  /** Blank = auto-generate: the next numbers after the highest all-digit Serial No ever issued.
+   *  A template with trailing "#" characters (the reference screen's own "AF####" hint) continues
+   *  after the highest existing Serial No of that prefix and width. A literal value with no "#" is
+   *  only valid when count === 1 (a fixed string can't represent more than one distinct card). */
   serialNo?: string | null;
 }
 
@@ -79,6 +165,8 @@ export class SerialCardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly yarnRequirements: FabricYarnRequirementsService,
+    private readonly yarnRecipes: FabricYarnRecipeService,
   ) {}
 
   // Resolves the dialog's "General" section straight from the DB — every field is read fresh
@@ -98,7 +186,7 @@ export class SerialCardService {
       JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId"
       JOIN "IM_Item" it ON it."RecId" = ri."InventoryId"
       LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = ri."UnitId"
-      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId"
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "ColorCard" cc ON cc.id = ri."ColorCardId"
       WHERE ri."RecId" = ${inventoryReceiptItemId} AND ri."InventoryReceiptId" = ${inventoryReceiptId} AND ri."IsDeleted" = 0
@@ -164,6 +252,7 @@ export class SerialCardService {
         res."ResourceCode" as "resourceCode",
         emp."EmployeeCode" as "employeeCode", emp."EmployeeName" as "employeeName",
         ca."CurrentAccountCode" as "currentAccountCode", ca."CurrentAccountName" as "currentAccountName",
+        ${PRODUCTION_SELECT},
         COALESCE(txn."warehouseQuantity", 0) as "warehouseQuantity",
         (COALESCE(txn."txnCount", 0) > 1) as "hasTransaction"
       FROM "IM_SerialTransaction" st
@@ -171,9 +260,10 @@ export class SerialCardService {
       LEFT JOIN "IM_Item" it ON it."RecId" = sc."InventoryId"
       LEFT JOIN "IM_ItemVariant" iv ON iv."RecId" = sc."InventoryVariantId" AND iv."IsDeleted" = 0
       LEFT JOIN "IM_VariantItem" vi ON vi."RecId" = iv."Variant1Id" AND vi."IsDeleted" = 0
-      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId"
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "FI_Account" ca ON ca."RecId" = sc."CurrentAccountId"
+      ${PRODUCTION_JOINS}
       LEFT JOIN "IM_ReceiptItem" ri ON ri."RecId" = st."ReceiptItemId"
       LEFT JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId"
       LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = ri."UnitId"
@@ -217,12 +307,19 @@ export class SerialCardService {
      *  IM_SerialCard.ManufacturingDate ("Product Date" in the UI). */
     dateFrom?: string; dateTo?: string;
     status?: 'has' | 'none';
+    /** Party No column filter (Serial Cards grid) — cards whose Party No (trimmed) is one of these. */
+    partyNos?: string[];
     skip?: number; take?: number;
+    /** Internal (getDetail/getByCode/getLabels) — cards by RecId, or one by its exact Serial No. */
+    id?: number; ids?: number[]; serialCodeEquals?: string;
   }) {
     const skip = params.skip ?? 0;
     const take = Math.min(params.take ?? 100, 500);
 
     const filters: Prisma.Sql[] = [Prisma.sql`sc."IsDeleted" = 0`];
+    if (params.id != null) filters.push(Prisma.sql`sc."RecId" = ${params.id}`);
+    if (params.ids) filters.push(params.ids.length ? Prisma.sql`sc."RecId" IN (${Prisma.join(params.ids)})` : Prisma.sql`false`);
+    if (params.serialCodeEquals != null) filters.push(Prisma.sql`sc."SerialCode" = ${params.serialCodeEquals}`);
     if (params.receiptItemId != null) filters.push(Prisma.sql`firstTxn."receiptItemId" = ${params.receiptItemId}`);
     if (params.inventoryId != null) filters.push(Prisma.sql`sc."InventoryId" = ${params.inventoryId}`);
     if (params.workOrderId != null) filters.push(Prisma.sql`wo."RecId" = ${params.workOrderId}`);
@@ -245,19 +342,28 @@ export class SerialCardService {
     if (params.dateTo) filters.push(Prisma.sql`sc."ManufacturingDate" <= ${new Date(params.dateTo)}`);
     if (params.status === 'has') filters.push(Prisma.sql`COALESCE(txn."txnCount", 0) > 1`);
     if (params.status === 'none') filters.push(Prisma.sql`COALESCE(txn."txnCount", 0) <= 1`);
+    // Every filter except Party No — the Party No column filter's option list is drawn from this
+    // set, so choosing one Party No never hides the others from the list.
+    const optionWhere = Prisma.join(filters, ' AND ');
+    const partyNos = [...new Set((params.partyNos ?? []).map((v) => String(v).trim()).filter(Boolean))];
+    if (partyNos.length) filters.push(Prisma.sql`TRIM(sc."PartyNo") IN (${Prisma.join(partyNos)})`);
     const whereClause = Prisma.join(filters, ' AND ');
 
+    // The Work Order item is joined even when soft-deleted: saving a Work Order's Style Info
+    // replaces every MA_WorkOrderItem (WorkOrderService.upsertItems), yet the roll was still produced
+    // against that Work Order. Only a deleted Work Order itself drops the link.
     const fromJoins = Prisma.sql`
       FROM "IM_SerialCard" sc
       LEFT JOIN "IM_Item" it ON it."RecId" = sc."InventoryId"
       LEFT JOIN "IM_ItemVariant" iv ON iv."RecId" = sc."InventoryVariantId" AND iv."IsDeleted" = 0
       LEFT JOIN "IM_VariantItem" vi ON vi."RecId" = iv."Variant1Id" AND vi."IsDeleted" = 0
-      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId"
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "MA_QualityType" qt ON qt."RecId" = sc."QualityTypeId" AND qt."IsDeleted" = 0
       LEFT JOIN "MA_Resource" res ON res."RecId" = sc."ResourceId" AND res."IsDeleted" = 0
       LEFT JOIN "HR_Employee" emp ON emp."RecId" = sc."EmployeeId" AND emp."IsDeleted" = 0
       LEFT JOIN "FI_Account" ca ON ca."RecId" = sc."CurrentAccountId"
+      ${PRODUCTION_JOINS}
       LEFT JOIN LATERAL (
         SELECT st."ReceiptItemId" as "receiptItemId" FROM "IM_SerialTransaction" st
         WHERE st."SerialCardId" = sc."RecId" AND st."TransactionType" = ${SERIAL_TXN_TYPE_RECEIPT}
@@ -286,6 +392,7 @@ export class SerialCardService {
           res."ResourceCode" as "resourceCode",
           emp."EmployeeCode" as "employeeCode", emp."EmployeeName" as "employeeName",
           ca."CurrentAccountCode" as "currentAccountCode", ca."CurrentAccountName" as "currentAccountName",
+        ${PRODUCTION_SELECT},
           COALESCE(txn."warehouseQuantity", 0) as "warehouseQuantity",
           (COALESCE(txn."txnCount", 0) > 1) as "hasTransaction"
         ${fromJoins}
@@ -298,7 +405,110 @@ export class SerialCardService {
       `),
     ]);
 
-    return { rows: sanitizeRawRow(rows), total: countRows[0]?.count ?? 0, skip, take };
+    // Distinct non-blank Party Nos across ALL matching cards (not just this page) — the Party No
+    // column filter's options. Skipped for the internal single-card lookups.
+    const partyNoOptions = params.id != null || params.ids != null || params.serialCodeEquals != null ? [] : (await this.prisma.$queryRaw<{ v: string }[]>(Prisma.sql`
+      SELECT DISTINCT TRIM(sc."PartyNo") as v ${fromJoins}
+      WHERE ${optionWhere} AND NULLIF(TRIM(sc."PartyNo"), '') IS NOT NULL
+      ORDER BY 1 LIMIT 1000
+    `)).map((r) => r.v);
+
+    return { rows: sanitizeRawRow(rows), total: countRows[0]?.count ?? 0, skip, take, partyNoOptions };
+  }
+
+  // Serial Card detail — the list row (every card field + its production identity) plus the Yarn
+  // Recipe of the BOM it was produced against. Backs the detail screen and barcode scan.
+  async getDetail(id: number, origin?: string | null) {
+    const { rows } = await this.listAll({ id, take: 1 });
+    if (!rows[0]) throw new NotFoundException('Serial card not found.');
+    const yarnRecipe = await this.resolveYarnRecipe(rows[0]);
+    return { ...rows[0], yarnRecipe, qrPayload: serialCardQrUrl(rows[0].SerialCode, origin) };
+  }
+
+  // Label printing — every requested card (in the requested order) with its Yarn Recipe: the
+  // label's QR holds the card's complete data as text (built by the frontend, format NXSC/2), so
+  // printing needs no ERP address (QR_PUBLIC_BASE_URL) and the QR needs no server to be read.
+  async getLabels(ids: number[]) {
+    const unique = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!unique.length) throw new BadRequestException('Select at least one serial card.');
+    if (unique.length > 500) throw new BadRequestException('Too many serial cards selected (max 500).');
+    const { rows } = await this.listAll({ ids: unique, take: 500 });
+    if (rows.length !== unique.length) throw new NotFoundException('Some selected serial cards no longer exist.');
+    const byId = new Map(rows.map((r: any) => [Number(r.RecId), r]));
+    const out: any[] = [];
+    // A few recipes at a time — each resolves the Work Order's BOM (several queries).
+    for (let i = 0; i < unique.length; i += 8) {
+      const batch = unique.slice(i, i + 8).map((id) => byId.get(id));
+      out.push(...await Promise.all(batch.map(async (row: any) => ({ ...row, yarnRecipe: await this.resolveYarnRecipe(row) }))));
+    }
+    return out;
+  }
+
+  // Barcode scan / Serial No lookup. The barcode is the Serial No itself, so this is an exact match;
+  // a scanner that sends a different letter case still finds the card when exactly one matches.
+  async getByCode(code: string, origin?: string | null) {
+    const value = String(code ?? '').trim();
+    if (!value) throw new BadRequestException('Scan or enter a Serial No.');
+    let { rows } = await this.listAll({ serialCodeEquals: value, take: 2 });
+    if (!rows.length) {
+      const ci = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT "RecId" as id FROM "IM_SerialCard" WHERE "IsDeleted" = 0 AND UPPER("SerialCode") = UPPER(${value}) LIMIT 2
+      `);
+      if (ci.length === 1) rows = (await this.listAll({ id: Number(ci[0].id), take: 1 })).rows;
+    }
+    if (!rows.length) throw new NotFoundException(`No serial card with Serial No ${value}.`);
+    if (rows.length > 1) throw new ConflictException(`More than one serial card has Serial No ${value}.`);
+    const yarnRecipe = await this.resolveYarnRecipe(rows[0]);
+    return { ...rows[0], yarnRecipe, qrPayload: serialCardQrUrl(rows[0].SerialCode, origin) };
+  }
+
+  // The Yarn Recipe for the roll, from the BOM it was actually produced against — never a guess:
+  //  1. the card's Work Order (no Work Order -> no BOM -> 'no-work-order');
+  //  2. that Work Order's Fabric BOM as every other screen resolves it (its own lines, else its
+  //     Style Card's — FabricYarnRequirementsService.resolveBomLines), the line(s) for this fabric:
+  //     the only one, else the one whose Material Color is the roll's color, else the only
+  //     colorless (common) line; otherwise 'ambiguous' rather than picking one;
+  //  3. that line's effective recipe — Color-Specific for its Material Color, else the Fabric's
+  //     Common/Overall (FabricYarnRecipeService.resolveEffectiveRecipe, the same rule Yarn
+  //     Requirements use); none -> 'not-defined'.
+  async resolveYarnRecipe(card: any): Promise<SerialCardYarnRecipe> {
+    const empty = (status: SerialCardYarnRecipe['status'], message: string): SerialCardYarnRecipe =>
+      ({ status, message, source: null, bomLineColorCardId: null, lines: [] });
+    if (!card?.workOrderId) return empty('no-work-order', 'This serial card is not linked to a Work Order, so there is no BOM to take a Yarn Recipe from.');
+    const bom = await this.yarnRequirements.resolveBomLines(Number(card.workOrderId), 'fabric');
+    const matches = bom.filter((l: any) => l.inventoryId != null && Number(l.inventoryId) === Number(card.InventoryId));
+    if (!matches.length) return empty('not-in-bom', `${card.inventoryCode ?? 'This fabric'} is not on Work Order ${card.workOrderNo ?? ''}'s Fabric BOM.`);
+    let line: any = matches.length === 1 ? matches[0] : null;
+    if (!line && card.colorCardId) line = matches.find((l: any) => l.colorCardId && String(l.colorCardId) === String(card.colorCardId)) ?? null;
+    if (!line) {
+      const common = matches.filter((l: any) => !l.colorCardId);
+      if (common.length === 1) line = common[0];
+    }
+    if (!line) return empty('ambiguous', `${card.inventoryCode ?? 'This fabric'} is on the Work Order's Fabric BOM ${matches.length} times and none matches this roll's color.`);
+    const recipe = await this.yarnRecipes.resolveEffectiveRecipe(Number(card.InventoryId), line.colorCardId ?? null);
+    if (!recipe.length) return empty('not-defined', `No Yarn Recipe is defined for ${card.inventoryCode ?? 'this fabric'}.`);
+    const yarnIds = [...new Set(recipe.map((r) => r.yarnInventoryId).filter((v): v is number => v != null))];
+    const yarns = yarnIds.length
+      ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT "RecId" as id, "InventoryCode" as code, "InventoryName" as name FROM "IM_Item" WHERE "RecId" IN (${Prisma.join(yarnIds)})`)
+      : [];
+    const yarnById = new Map(yarns.map((y) => [Number(y.id), y]));
+    return {
+      status: 'ok', message: null,
+      source: recipe[0].colorCardId ? 'color' : 'common',
+      bomLineColorCardId: line.colorCardId ?? null,
+      lines: recipe.map((r) => {
+        const y = r.yarnInventoryId != null ? yarnById.get(r.yarnInventoryId) : null;
+        return {
+          yarnInventoryId: r.yarnInventoryId ?? null,
+          yarnCode: y?.code ?? r.yarnCode ?? null,
+          yarnName: y?.name ?? r.yarnName ?? null,
+          percentage: Number(r.percentage) || 0,
+          process: r.process ?? null, variant1: r.variant1 ?? null, variant2: r.variant2 ?? null,
+          explanation: r.explanation ?? null,
+          wastePct: Number(r.wastePct) || 0, dyeWastagePct: Number(r.dyeWastagePct) || 0,
+        };
+      }),
+    };
   }
 
   async remove(id: number, userId: string, companyId: string) {
@@ -340,27 +550,60 @@ export class SerialCardService {
     });
   }
 
-  private buildSerialCodes(template: string | null | undefined, count: number, lastGlobal: string | null): string[] {
+  // Serial Nos for a new batch — each one the barcode of its card, so never one already issued.
+  // Must run inside produce()'s transaction AFTER SERIAL_CODE_LOCK_KEY is taken. Deleted cards
+  // count too: their Serial No may still be on a printed label, so it is never handed out again.
+  //  - blank: 8-digit numbers continuing after the highest all-digit Serial No;
+  //  - "PREFIX####": continues after the highest existing Serial No of that prefix and width
+  //    (a template used again keeps counting instead of colliding with its first batch);
+  //  - a fixed value: exactly one card.
+  private async allocateSerialCodes(tx: Prisma.TransactionClient, template: string | null | undefined, count: number): Promise<string[]> {
     const trimmed = (template ?? '').trim();
+    const nextAfter = async (prefix: string, width: number | null) => {
+      // SerialCode is the UdtBarcode domain — cast to text for the string functions.
+      const digits = width ? Prisma.sql`length("SerialCode"::text) = ${prefix.length + width}::int` : Prisma.sql`length("SerialCode"::text) <= ${SERIAL_CODE_MAX_LENGTH}::int`;
+      const rows = await tx.$queryRaw<{ mx: string | null }[]>(Prisma.sql`
+        SELECT MAX(substr("SerialCode"::text, ${prefix.length + 1}::int)::numeric)::text as mx FROM "IM_SerialCard"
+        WHERE left("SerialCode"::text, ${prefix.length}::int) = ${prefix}::text
+          AND substr("SerialCode"::text, ${prefix.length + 1}::int) ~ '^[0-9]+$' AND ${digits}
+      `);
+      return rows[0]?.mx != null ? BigInt(rows[0].mx) + 1n : 1n;
+    };
+    let codes: string[];
     if (!trimmed) {
-      // Auto-generate: persisted global sequence, 8-digit zero-padded, next after the
-      // highest existing numeric SerialCode (0 if the table is still empty).
-      const start = (() => {
-        const n = lastGlobal ? parseInt(lastGlobal, 10) : NaN;
-        return Number.isFinite(n) ? n + 1 : 1;
-      })();
-      return Array.from({ length: count }, (_, i) => String(start + i).padStart(8, '0'));
-    }
-    const hashMatch = trimmed.match(/#+$/);
-    if (!hashMatch) {
-      if (count !== 1) {
-        throw new BadRequestException('A fixed Serial No (with no "#" digits) can only be used when Serials Count is 1.');
+      const start = await nextAfter('', null);
+      codes = Array.from({ length: count }, (_, i) => String(start + BigInt(i)).padStart(8, '0'));
+    } else {
+      const hashMatch = trimmed.match(/#+$/);
+      if (!hashMatch) {
+        if (count !== 1) {
+          throw new BadRequestException('A fixed Serial No (with no "#" digits) can only be used when Serials Count is 1.');
+        }
+        codes = [trimmed];
+      } else {
+        const prefix = trimmed.slice(0, trimmed.length - hashMatch[0].length);
+        const width = hashMatch[0].length;
+        const start = await nextAfter(prefix, width);
+        codes = Array.from({ length: count }, (_, i) => `${prefix}${String(start + BigInt(i)).padStart(width, '0')}`);
+        if (codes.some((c) => c.length !== prefix.length + width)) {
+          throw new BadRequestException(`Serial No template ${trimmed} has no numbers left for ${count} card(s) — use a longer "#" run or another prefix.`);
+        }
       }
-      return [trimmed];
     }
-    const prefix = trimmed.slice(0, trimmed.length - hashMatch[0].length);
-    const width = hashMatch[0].length;
-    return Array.from({ length: count }, (_, i) => `${prefix}${String(i + 1).padStart(width, '0')}`);
+    const tooLong = codes.find((c) => c.length > SERIAL_CODE_MAX_LENGTH);
+    if (tooLong) throw new BadRequestException(`Serial No ${tooLong} is longer than ${SERIAL_CODE_MAX_LENGTH} characters.`);
+    const unprintable = codes.find((c) => !BARCODE_SAFE.test(c));
+    if (unprintable) {
+      throw new BadRequestException(`Serial No "${unprintable}" can't be printed as a barcode — use letters, digits and standard symbols only.`);
+    }
+    // Case-insensitive, deleted cards included: a barcode must identify one card, ever.
+    const collisions = await tx.$queryRaw<any[]>(Prisma.sql`
+      SELECT "SerialCode" as code FROM "IM_SerialCard" WHERE UPPER("SerialCode") IN (${Prisma.join(codes.map((c) => c.toUpperCase()))})
+    `);
+    if (collisions.length) {
+      throw new ConflictException(`Serial No already exists: ${collisions.map((c) => c.code).join(', ')}`);
+    }
+    return codes;
   }
 
   async produce(
@@ -389,24 +632,9 @@ export class SerialCardService {
         throw new BadRequestException('Generate Serial Cards is only available for Fabric receipt lines.');
       }
 
-      // Quantity-cap guard — only relevant now that Produce can stamp a real, non-zero default
-      // Quantity onto every card in the batch (see the header-defaults comment below). Same rule
-      // update() already enforces per-record, applied here to the WHOLE new batch at once so N
-      // cards x a real default Quantity can never silently exceed the receipt line's own
-      // Quantity in one Produce call.
-      if (dto.quantity) {
-        const existingRows = await tx.$queryRaw<any[]>(Prisma.sql`
-          SELECT COALESCE(SUM(sc."Quantity"), 0) as "sum" FROM "IM_SerialTransaction" st
-          JOIN "IM_SerialCard" sc ON sc."RecId" = st."SerialCardId" AND sc."IsDeleted" = 0
-          WHERE st."ReceiptItemId" = ${inventoryReceiptItemId}
-        `);
-        const wouldBe = Number(existingRows[0]?.sum ?? 0) + Number(dto.quantity) * dto.count;
-        if (wouldBe > Number(line.lineQuantity) + 0.0001) {
-          throw new ConflictException(
-            `Total roll Quantity (${wouldBe}) would exceed this receipt line's Quantity (${line.lineQuantity}).`,
-          );
-        }
-      }
+      // No roll-quantity cap: the cards' combined Quantity may exceed the receipt line's Quantity
+      // (rolls are measured as produced). Serial cards are metadata — the receipt line, its
+      // quantity and stock are never touched here.
 
       // Resolve the line's own single variant (see getContext's own comment) — copied onto
       // every generated card, never guessed.
@@ -416,24 +644,11 @@ export class SerialCardService {
       `);
       const inventoryVariantId = variantRows.length === 1 ? Number(variantRows[0].id) : null;
 
-      // Lock the globally-last SerialCode row (if any) so two concurrent Produce calls can
-      // never compute the same next auto-generated number — same FOR UPDATE serialization
-      // pattern item-allocation.service.ts's own saveAllocation already establishes.
-      const lastRows = await tx.$queryRaw<any[]>(Prisma.sql`
-        SELECT "SerialCode" as code FROM "IM_SerialCard" WHERE "CompanyId" = 1
-        ORDER BY "RecId" DESC LIMIT 1 FOR UPDATE
-      `);
-      const codes = this.buildSerialCodes(dto.serialNo, dto.count, lastRows[0]?.code ?? null);
-
-      // Application-level uniqueness guard — IM_SerialCard has no DB-level unique index on
-      // SerialCode (confirmed via pg_indexes: only the RecId primary key), so a manual/template
-      // Serial No must be checked explicitly rather than relying on a constraint violation.
-      const collisions = await tx.$queryRaw<any[]>(Prisma.sql`
-        SELECT "SerialCode" as code FROM "IM_SerialCard" WHERE "IsDeleted" = 0 AND "SerialCode" IN (${Prisma.join(codes)})
-      `);
-      if (collisions.length) {
-        throw new ConflictException(`Serial No already exists: ${collisions.map((c) => c.code).join(', ')}`);
-      }
+      // Serial No = barcode. IM_SerialCard has no unique index on SerialCode, so uniqueness is
+      // enforced here: the advisory lock serializes every Produce (held until this transaction
+      // commits), then allocateSerialCodes picks numbers no card — live or deleted — has used.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SERIAL_CODE_LOCK_KEY})`;
+      const codes = await this.allocateSerialCodes(tx, dto.serialNo, dto.count);
 
       // Header-row defaults (see SerialCardFieldDefaults's own comment) — stamped onto every
       // card in this batch, matching the reference legacy screen's own behavior (the General
@@ -458,7 +673,7 @@ export class SerialCardService {
             1, ${code}, ${line.inventoryId}, ${inventoryVariantId},
             ${line.workOrderReceiptItemId ?? null}, 1,
             ${dto.explanation ?? null}, ${dto.partyNo ?? null}, ${dto.qualityTypeId ?? null}, ${dto.resourceId ?? null}, ${dto.employeeId ?? null}, ${dto.currentAccountId ?? null},
-            ${dto.producerSerialCode ?? null}, ${dto.manufacturingDate ? new Date(dto.manufacturingDate) : null}, ${dto.expirationDate ? new Date(dto.expirationDate) : null}, ${dto.shelfLife ?? null},
+            ${dto.producerSerialCode ?? null}, ${calendarDate(dto.manufacturingDate)}::timestamp, ${calendarDate(dto.expirationDate)}::timestamp, ${dto.shelfLife ?? null},
             ${dto.quantity ?? 0}, ${dto.quantityMT ?? null}, ${dto.quantity3 ?? null},
             ${dto.width ?? null}, ${dto.weight ?? null}, ${dto.rawWidth ?? null}, ${dto.rawWeight ?? null}, ${dto.rawLength ?? null}, ${dto.productLength ?? null},
             ${dto.weightM2 ?? null}, ${dto.weightMt ?? null}, ${dto.pus ?? null}, ${dto.fine ?? null}, ${dto.pieceCount ?? null},
@@ -501,6 +716,100 @@ export class SerialCardService {
     });
   }
 
+  // "Assign to Qty" (Serial Cards screen) — for each receipt line the selected cards belong to,
+  // the line's REMAINING quantity (its Quantity minus every other live card's Quantity on that
+  // line) is split equally across the selected cards of that line: 4-decimal shares, the rounding
+  // remainder on the last card, so the line total ends exactly at the receipt line's Quantity.
+  // (Produce/Update no longer cap at that Quantity; this action still only distributes what is
+  // left of it.) Only IM_SerialCard.Quantity changes; locking and auditing are
+  // the same as update()'s. Nothing is written unless every line has something left to assign.
+  async assignQuantityEqually(ids: number[], userId: string, companyId: string) {
+    const unique = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!unique.length) throw new BadRequestException('Select at least one serial card.');
+    if (unique.length > 500) throw new BadRequestException('Too many serial cards selected (max 500).');
+
+    return this.prisma.$transaction(async (tx) => {
+      const cards = await tx.$queryRaw<any[]>(Prisma.sql`
+        SELECT sc.*, (
+          SELECT st."ReceiptItemId" FROM "IM_SerialTransaction" st
+          WHERE st."SerialCardId" = sc."RecId" AND st."TransactionType" = ${SERIAL_TXN_TYPE_RECEIPT}
+          ORDER BY st."RecId" ASC LIMIT 1
+        ) as "receiptItemId"
+        FROM "IM_SerialCard" sc WHERE sc."RecId" IN (${Prisma.join(unique)}) AND sc."IsDeleted" = 0
+        ORDER BY sc."RecId" ASC
+        FOR UPDATE OF sc
+      `);
+      if (cards.length !== unique.length) throw new NotFoundException('Some selected serial cards no longer exist.');
+      const unlinked = cards.filter((c) => c.receiptItemId == null);
+      if (unlinked.length) {
+        throw new BadRequestException(`Not linked to a receipt line, so there is no quantity to assign: ${unlinked.map((c) => c.SerialCode).join(', ')}`);
+      }
+
+      const byLine = new Map<number, any[]>();
+      for (const c of cards) {
+        const line = Number(c.receiptItemId);
+        (byLine.get(line) ?? byLine.set(line, []).get(line)!).push(c);
+      }
+
+      const plan: { card: any; quantity: number }[] = [];
+      for (const [receiptItemId, lineCards] of byLine) {
+        const lineRows = await tx.$queryRaw<any[]>(Prisma.sql`
+          SELECT ri."Quantity" as "lineQuantity", r."ReceiptNo" as "receiptNo",
+            COALESCE((
+              SELECT SUM(sc."Quantity") FROM "IM_SerialTransaction" st
+              JOIN "IM_SerialCard" sc ON sc."RecId" = st."SerialCardId" AND sc."IsDeleted" = 0
+              WHERE st."ReceiptItemId" = ri."RecId" AND st."TransactionType" = ${SERIAL_TXN_TYPE_RECEIPT}
+                AND sc."RecId" NOT IN (${Prisma.join(lineCards.map((c) => Number(c.RecId)))})
+            ), 0) as "otherSum"
+          FROM "IM_ReceiptItem" ri JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId"
+          WHERE ri."RecId" = ${receiptItemId}
+          FOR UPDATE OF ri
+        `);
+        const line = lineRows[0];
+        if (!line) throw new NotFoundException('Receipt line not found.');
+        const remaining = Math.round((Number(line.lineQuantity) - Number(line.otherSum)) * 1e4) / 1e4;
+        if (!(remaining > 0)) {
+          throw new ConflictException(
+            `Receipt ${line.receiptNo ?? ''} line has no unassigned quantity left (line ${Number(line.lineQuantity)}, already on other cards ${Number(line.otherSum)}).`,
+          );
+        }
+        const share = Math.floor((remaining / lineCards.length) * 1e4) / 1e4;
+        lineCards.forEach((card, i) => {
+          const quantity = i === lineCards.length - 1 ? Math.round((remaining - share * (lineCards.length - 1)) * 1e4) / 1e4 : share;
+          plan.push({ card, quantity });
+        });
+      }
+
+      const results: any[] = [];
+      for (const { card, quantity } of plan) {
+        await tx.$executeRaw`
+          UPDATE "IM_SerialCard" SET "Quantity" = ${quantity}, "UpdatedAt" = now(), "UpdatedBy" = ${Number(userId) || 1}
+          WHERE "RecId" = ${card.RecId}
+        `;
+        const afterRows = await tx.$queryRaw<any[]>(Prisma.sql`SELECT * FROM "IM_SerialCard" WHERE "RecId" = ${card.RecId}`);
+        const after = sanitizeRawRow(afterRows[0]);
+        const { receiptItemId, ...beforeRow } = card;
+        const before = sanitizeRawRow(beforeRow);
+        if (hasRealChanges(before, after, ['UpdatedAt', 'UpdatedBy'])) {
+          const ctxRows = await tx.$queryRaw<any[]>(Prisma.sql`
+            SELECT r."ReceiptNo" as "receiptNo", r."ReceiptType" as "receiptType"
+            FROM "IM_ReceiptItem" ri JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" WHERE ri."RecId" = ${receiptItemId}
+          `);
+          await this.audit.record({
+            userId, companyId, screenKey: ctxRows[0] ? screenKeyFor(Number(ctxRows[0].receiptType)) : null,
+            entityType: 'SerialCard', entityId: String(card.RecId), action: AUDIT_ACTIONS.UPDATE,
+            documentNo: after.SerialCode,
+            parentEntityType: 'InventoryReceiptItem', parentEntityId: String(receiptItemId),
+            parentDocumentNo: ctxRows[0]?.receiptNo ?? null,
+            before, after,
+          }, tx);
+        }
+        results.push(after);
+      }
+      return results;
+    });
+  }
+
   async update(items: UpdateSerialCardDto[], userId: string, companyId: string) {
     if (!items.length) return [];
 
@@ -513,37 +822,9 @@ export class SerialCardService {
         const before = beforeRows[0];
         if (!before) throw new NotFoundException(`Serial Card ${dto.id} not found.`);
 
-        // Quantity-sum-vs-receipt-quantity guard — enforced here (the point at which a real
-        // roll quantity is actually entered), not at Produce time (every newly-produced card
-        // starts at Quantity 0 — see produce()'s own INSERT — so there is nothing to over-
-        // allocate against until the user fills a real value in via Update).
-        if (dto.quantity != null) {
-          const txnRows = await tx.$queryRaw<any[]>(Prisma.sql`
-            SELECT st."ReceiptItemId" as "receiptItemId" FROM "IM_SerialTransaction" st
-            WHERE st."SerialCardId" = ${dto.id} LIMIT 1
-          `);
-          const receiptItemId = txnRows[0]?.receiptItemId;
-          if (receiptItemId) {
-            const capRows = await tx.$queryRaw<any[]>(Prisma.sql`
-              SELECT ri."Quantity" as "lineQuantity",
-                COALESCE((
-                  SELECT SUM(sc."Quantity") FROM "IM_SerialTransaction" st2
-                  JOIN "IM_SerialCard" sc ON sc."RecId" = st2."SerialCardId" AND sc."IsDeleted" = 0
-                  WHERE st2."ReceiptItemId" = ri."RecId" AND sc."RecId" != ${dto.id}
-                ), 0) as "otherSum"
-              FROM "IM_ReceiptItem" ri WHERE ri."RecId" = ${receiptItemId}
-            `);
-            const cap = capRows[0];
-            if (cap) {
-              const wouldBe = Number(cap.otherSum) + Number(dto.quantity);
-              if (wouldBe > Number(cap.lineQuantity) + 0.0001) {
-                throw new ConflictException(
-                  `Total roll Quantity (${wouldBe}) would exceed this receipt line's Quantity (${cap.lineQuantity}).`,
-                );
-              }
-            }
-          }
-        }
+        // No roll-quantity cap (same as produce()): a card's Quantity may take the line's total
+        // past the receipt line's Quantity. SerialCode is never written here, so a card's
+        // barcode survives every edit.
 
         await tx.$executeRaw`
           UPDATE "IM_SerialCard" SET
@@ -554,8 +835,8 @@ export class SerialCardService {
             "EmployeeId" = ${dto.employeeId ?? null},
             "CurrentAccountId" = ${dto.currentAccountId ?? null},
             "ProducerSerialCode" = ${dto.producerSerialCode ?? null},
-            "ManufacturingDate" = ${dto.manufacturingDate ? new Date(dto.manufacturingDate) : null},
-            "ExpirationDate" = ${dto.expirationDate ? new Date(dto.expirationDate) : null},
+            "ManufacturingDate" = ${calendarDate(dto.manufacturingDate)}::timestamp,
+            "ExpirationDate" = ${calendarDate(dto.expirationDate)}::timestamp,
             "ShelfLife" = ${dto.shelfLife ?? null},
             "Quantity" = ${dto.quantity ?? 0},
             "QuantityMT" = ${dto.quantityMT ?? null},

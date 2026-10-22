@@ -49,6 +49,7 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { Badge } from "@/components/ui/badge";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { useGlobalScreenSearch } from "@/hooks/use-global-screen-search";
+import { searchKeywordsFor } from "@/lib/search/screen-index";
 import type { NavGroup, NavItem } from "@/components/layout/sidebar/nav-main";
 
 interface LauncherRow {
@@ -216,12 +217,14 @@ export function ModuleLauncher({ groupTitle, icon: Icon, open, onOpenChange }: M
   const router = useRouter();
   const pathname = usePathname();
   const [query, setQuery] = useState("");
-  const { groups, ensureLoaded } = useGlobalScreenSearch();
+  const { groups, refresh } = useGlobalScreenSearch();
 
+  // Re-read the menu each time the launcher opens (previous rows stay listed meanwhile), so a
+  // screen added to the menu since the page loaded shows up without a full reload.
   useEffect(() => {
-    if (open) ensureLoaded();
+    if (open) refresh();
     else setQuery("");
-  }, [open, ensureLoaded]);
+  }, [open, refresh]);
 
   // Read when the dialog opens: workspace tabs update the URL via history.replaceState, which
   // usePathname tracks but this component does not otherwise re-render for.
@@ -282,6 +285,7 @@ export function ModuleLauncher({ groupTitle, icon: Icon, open, onOpenChange }: M
                       <CommandItem
                         key={row.key}
                         value={row.title}
+                        keywords={searchKeywordsFor(row.href)}
                         onSelect={() => select(row)}
                         onDoubleClick={() => select(row)}
                         className={cn("min-w-0 py-2.5", isActive && "bg-primary/8 text-foreground font-medium")}

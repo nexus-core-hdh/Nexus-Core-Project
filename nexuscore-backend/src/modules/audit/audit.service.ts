@@ -212,29 +212,45 @@ export class AuditService {
     }
   }
 
+  // recordSafe for a batch of events from one operation (e.g. one per changed User Defined Field
+  // value of a whole grid): each distinct screen is resolved once and every event is written in a
+  // single insert, instead of two queries per event. Same never-throws contract as recordSafe.
+  async recordManySafe(events: RecordAuditParams[]): Promise<void> {
+    if (!events.length) return;
+    try {
+      const screens = new Map<string, { module: string | null; menu: string | null }>();
+      for (const key of new Set(events.map((e) => e.screenKey ?? ''))) screens.set(key, await this.resolveScreen(key || null));
+      await this.prisma.auditLog.createMany({ data: events.map((e) => this.auditRow(e, screens.get(e.screenKey ?? '')!)) });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[AuditService] Failed to record audit events', { count: events.length, entityType: events[0].entityType, err });
+    }
+  }
+
   async record(params: RecordAuditParams, tx?: Prisma.TransactionClient): Promise<void> {
     const client = tx ?? this.prisma;
-    const { module: moduleName, menu: menuTitle } = await this.resolveScreen(params.screenKey);
-    await client.auditLog.create({
-      data: {
-        entityType: params.entityType,
-        entityId: params.entityId,
-        action: params.action,
-        changedBy: params.userId,
-        companyId: params.companyId,
-        screenKey: params.screenKey ?? null,
-        moduleName,
-        menuTitle,
-        documentNo: params.documentNo ?? null,
-        parentEntityType: params.parentEntityType ?? null,
-        parentEntityId: params.parentEntityId ?? null,
-        parentDocumentNo: params.parentDocumentNo ?? null,
-        correlationId: params.correlationId ?? null,
-        ipAddress: params.ipAddress ?? null,
-        oldValues: params.before !== undefined ? (scrub(params.before) as Prisma.InputJsonValue) : undefined,
-        newValues: params.after !== undefined ? (scrub(params.after) as Prisma.InputJsonValue) : undefined,
-      },
-    });
+    await client.auditLog.create({ data: this.auditRow(params, await this.resolveScreen(params.screenKey)) });
+  }
+
+  private auditRow(params: RecordAuditParams, screen: { module: string | null; menu: string | null }) {
+    return {
+      entityType: params.entityType,
+      entityId: params.entityId,
+      action: params.action,
+      changedBy: params.userId,
+      companyId: params.companyId,
+      screenKey: params.screenKey ?? null,
+      moduleName: screen.module,
+      menuTitle: screen.menu,
+      documentNo: params.documentNo ?? null,
+      parentEntityType: params.parentEntityType ?? null,
+      parentEntityId: params.parentEntityId ?? null,
+      parentDocumentNo: params.parentDocumentNo ?? null,
+      correlationId: params.correlationId ?? null,
+      ipAddress: params.ipAddress ?? null,
+      oldValues: params.before !== undefined ? (scrub(params.before) as Prisma.InputJsonValue) : undefined,
+      newValues: params.after !== undefined ? (scrub(params.after) as Prisma.InputJsonValue) : undefined,
+    };
   }
 
   async list(params: ListAuditParams) {

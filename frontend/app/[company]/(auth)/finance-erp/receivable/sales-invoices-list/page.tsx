@@ -60,9 +60,11 @@ export default function SalesInvoicesListPage() {
       </div>
     ) },
     {
-      id: "actions", header: "Actions", enableHiding: false, size: 90,
+      // Listed in Manage Columns (reorder/resize) but locked visible: it is the only way to open or
+      // edit an invoice from this list. minSize keeps both icons from clipping when narrowed.
+      id: "actions", header: "Actions", enableHiding: false, size: 90, minSize: 80, meta: { manageColumns: "required" },
       cell: ({ row }) => (
-        <div className="flex items-center gap-1">
+        <div className="inline-flex shrink-0 items-center gap-1">
           <Button variant="ghost" size="icon" className="h-7 w-7" title="View" onClick={() => navigateOrOpenTab(router, `${BASE_HREF}?id=${row.original.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" title="Edit" onClick={() => navigateOrOpenTab(router, `${BASE_HREF}?id=${row.original.id}`)}><Pencil className="h-3.5 w-3.5" /></Button>
         </div>

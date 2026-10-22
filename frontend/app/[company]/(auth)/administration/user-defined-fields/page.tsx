@@ -24,15 +24,18 @@ import { entitiesApi } from "@/lib/nexuscore-api";
 import { getCurrentUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import {
-  UDF_ENTITIES, controlLabel, controlOf, dataTypeLabel, definitionsCsv, draftFromField, emptyDraft, payloadOf, runtimeFieldOf,
-  type UdfDraft, type UdfEntity, type UdfField,
+  UDF_ENTITIES, controlLabel, controlOf, dataTypeLabel, definitionsCsv, draftFromField, emptyDraft, payloadOf, runtimeFieldOf, withRuntimeTargets,
+  type UdfDraft, type UdfEntity, type UdfField, type UdfLevel, type UdfRuntimeTargets,
 } from "@/lib/custom-fields/udf-model";
 import { FieldConfigPanel } from "./_components/field-config-panel";
 
 // Administration > User Defined Fields — configuration of the CustomField engine whose fields the
-// screens' "Customized Fields" tabs render (see lib/custom-fields/udf-model.ts and the backend's
-// custom-fields.service.ts). Only runtime-supported entities and controls are configurable here;
-// everything is persisted and enforced server-side (scope, immutable codes, delete safety, audit).
+// screens' "Customized Fields" tabs and the shared grids' UDF columns render (see
+// lib/custom-fields/udf-model.ts and the backend's custom-fields.service.ts / custom-field-grids.ts).
+// Screen mode lists record screens, Grid mode the logical detail grids with every screen that shows
+// them. Only targets the server's runtime registry reports (custom-field-targets) and runtime
+// controls are configurable here; everything is persisted and enforced server-side (scope,
+// immutable codes, delete safety, audit).
 
 type StatusFilter = "all" | "active" | "inactive";
 
@@ -42,6 +45,9 @@ export default function UserDefinedFieldsPage() {
   const [fields, setFields] = useState<UdfField[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [level, setLevel] = useState<UdfLevel>("screen");
+  const [targets, setTargets] = useState<UdfRuntimeTargets | null>(null);
+  const entities = useMemo(() => withRuntimeTargets(UDF_ENTITIES, targets), [targets]);
   const [entityKey, setEntityKey] = useState(UDF_ENTITIES[0].key);
   const [entitySearch, setEntitySearch] = useState("");
   const [fieldSearch, setFieldSearch] = useState("");
@@ -52,8 +58,9 @@ export default function UserDefinedFieldsPage() {
   const [screenPreviewOpen, setScreenPreviewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UdfField | null>(null);
 
-  const entity = UDF_ENTITIES.find((e) => e.key === entityKey)!;
+  const entity = entities.find((e) => e.key === entityKey) ?? entities[0];
   const supported = entity.capability === "supported";
+  const isGrid = entity.level === "grid";
 
   const load = async () => {
     setLoading(true);
@@ -67,7 +74,11 @@ export default function UserDefinedFieldsPage() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Supported/definitions-only comes from the runtime registry; the offline default stays if this fails.
+    entitiesApi.getCustomFieldTargets().then((t: any) => setTargets(t?.screens && t?.grids ? t : null)).catch(() => {});
+  }, []);
 
   const countByEntity = useMemo(() => {
     const m = new Map<string, number>();
@@ -87,9 +98,15 @@ export default function UserDefinedFieldsPage() {
   }, [entityFields, fieldSearch, status]);
   const reorderable = status === "all" && !fieldSearch.trim();
 
-  const visibleEntities = UDF_ENTITIES.filter((e) => !entitySearch.trim() || e.label.toLowerCase().includes(entitySearch.trim().toLowerCase()));
+  const visibleEntities = entities.filter((e) => e.level === level && (!entitySearch.trim() || e.label.toLowerCase().includes(entitySearch.trim().toLowerCase())));
 
   const selectEntity = (e: UdfEntity) => { setEntityKey(e.key); setDraft(null); setFieldSearch(""); };
+  const selectLevel = (next: UdfLevel) => {
+    if (next === level) return;
+    setLevel(next);
+    const first = entities.find((e) => e.level === next);
+    if (first) selectEntity(first);
+  };
   const newField = () => supported && setDraft(emptyDraft(entityKey, "company"));
   const editField = (f: UdfField) => setDraft(draftFromField(f));
   const duplicateField = (f: UdfField) => setDraft({ ...draftFromField(f), id: null, code: `${f.code}_Copy`, codeTouched: true, name: `${f.name} (Copy)`, valueCount: 0 });
@@ -210,7 +227,15 @@ export default function UserDefinedFieldsPage() {
         {/* LEFT — business entities */}
         <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
           <div className="space-y-2 border-b p-3">
-            <h2 className="text-sm font-semibold">Business Entities</h2>
+            <h2 className="text-sm font-semibold">{level === "grid" ? "Shared Grids" : "Business Entities"}</h2>
+            <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-0.5" role="tablist" aria-label="Field level">
+              {(["screen", "grid"] as UdfLevel[]).map((l) => (
+                <button key={l} type="button" role="tab" aria-selected={level === l} onClick={() => selectLevel(l)}
+                  className={cn("rounded px-2 py-1 text-xs font-medium transition-colors", level === l ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                  {l === "screen" ? "Screens" : "Grids"}
+                </button>
+              ))}
+            </div>
             <InputGroup className="h-8">
               <InputGroupAddon><Search className="h-3.5 w-3.5 text-muted-foreground" /></InputGroupAddon>
               <InputGroupInput placeholder="Search entities..." value={entitySearch} onChange={(e) => setEntitySearch(e.target.value)} className="text-sm" />
@@ -270,7 +295,15 @@ export default function UserDefinedFieldsPage() {
           <div className="min-h-0 flex-1 overflow-auto">
             {!supported && (
               <div className="m-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-                <span className="font-medium">Not supported at runtime.</span> The {entity.label} screen does not display User Defined Fields yet, so fields cannot be created or activated for it.
+                <span className="font-medium">Not supported at runtime.</span> {isGrid ? `The ${entity.label} grid does` : `The ${entity.label} screen does`} not display User Defined Fields yet, so fields cannot be created or activated for it.
+              </div>
+            )}
+            {isGrid && supported && (
+              <div className="m-3 space-y-1 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+                <p><span className="font-medium">One definition, every usage:</span> columns defined here appear in {(entity.usages ?? []).join(", ") || "every screen showing this grid"}; each line keeps its own values.</p>
+                {(entity.unsupportedUsages ?? []).map((u) => (
+                  <p key={u.usage} className="text-muted-foreground"><span className="font-medium">Not shown in {u.usage}:</span> {u.reason}</p>
+                ))}
               </div>
             )}
             {loading ? (
@@ -292,18 +325,18 @@ export default function UserDefinedFieldsPage() {
                 {!entityFields.length && supported && <EmptyContent><Button size="sm" onClick={newField}><Plus className="mr-1.5 h-3.5 w-3.5" />Add Field</Button></EmptyContent>}
               </Empty>
             ) : (
-              <table className="w-full table-fixed border-collapse text-sm">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-slate-700 text-left text-[11px] font-semibold uppercase tracking-wide text-white dark:bg-slate-800">
-                    <th className="w-8 px-2 py-2" />
-                    <th className="px-3 py-2">Field Code</th>
-                    <th className="px-3 py-2">Caption</th>
-                    <th className="w-32 px-3 py-2">Data Type</th>
-                    <th className="w-24 px-3 py-2">Status</th>
-                    <th className="w-14 px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                <table className="w-full table-fixed border-collapse text-sm">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-slate-700 text-left text-[11px] font-semibold uppercase tracking-wide text-white dark:bg-slate-800">
+                      <th className="w-8 px-2 py-2" />
+                      <th className="px-3 py-2">Field Code</th>
+                      <th className="px-3 py-2">Caption</th>
+                      <th className="w-32 px-3 py-2">Data Type</th>
+                      <th className="w-24 px-3 py-2">Status</th>
+                      <th className="w-14 px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
                   <SortableContext items={shownFields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
                     <tbody>
                       {shownFields.map((f) => (
@@ -318,8 +351,8 @@ export default function UserDefinedFieldsPage() {
                       ))}
                     </tbody>
                   </SortableContext>
-                </DndContext>
-              </table>
+                </table>
+              </DndContext>
             )}
           </div>
           {!loading && !loadError && entityFields.length > 1 && (
@@ -359,7 +392,7 @@ export default function UserDefinedFieldsPage() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Field Preview</DialogTitle>
-            <DialogDescription>How this field appears in the {entity.screen ?? entity.label} screen&apos;s Customized Fields tab (nothing is saved).</DialogDescription>
+            <DialogDescription>{isGrid ? `How this field's values are entered as a column of the ${entity.screen ?? entity.label} grid` : `How this field appears in the ${entity.screen ?? entity.label} screen's Customized Fields tab`} (nothing is saved).</DialogDescription>
           </DialogHeader>
           {previewDraft && <CustomFieldFormPreview fields={[runtimeFieldOf(previewDraft)]} />}
         </DialogContent>
@@ -369,8 +402,8 @@ export default function UserDefinedFieldsPage() {
       <Dialog open={screenPreviewOpen} onOpenChange={setScreenPreviewOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{entity.screen ?? entity.label} — Customized Fields</DialogTitle>
-            <DialogDescription>The active fields, in order, as the screen&apos;s Customized Fields tab shows them (saved configuration only; nothing is saved here).</DialogDescription>
+            <DialogTitle>{entity.screen ?? entity.label} — {isGrid ? "Grid Columns" : "Customized Fields"}</DialogTitle>
+            <DialogDescription>{isGrid ? "The active fields, in order — each is one column of the grid, with this control in every line" : "The active fields, in order, as the screen's Customized Fields tab shows them"} (saved configuration only; nothing is saved here).</DialogDescription>
           </DialogHeader>
           {screenPreviewFields.length
             ? <CustomFieldFormPreview fields={screenPreviewFields} />

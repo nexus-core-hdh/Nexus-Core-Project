@@ -88,12 +88,12 @@ export default function LedgerTrialBalancePage() {
           <div className="rounded-lg border">
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                   <TableHead>Date</TableHead><TableHead>Journal No.</TableHead><TableHead>Reference</TableHead><TableHead>Description</TableHead>
                   <TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead><TableHead className="text-right">Balance</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                 {ledgerRows.length === 0 ? (
                   <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">No posted transactions for {selectedAccount?.name ?? "this account"}.</TableCell></TableRow>
                 ) : ledgerRows.map((r, i) => (
@@ -116,9 +116,9 @@ export default function LedgerTrialBalancePage() {
           <div className="rounded-lg border">
             <Table>
               <TableHeader>
-                <TableRow><TableHead>Account Code</TableHead><TableHead>Account Name</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead></TableRow>
+                <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Account Code</TableHead><TableHead>Account Name</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Debit</TableHead><TableHead className="text-right">Credit</TableHead></TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                 {trialBalance.map((r) => (
                   <TableRow key={r.accountId}>
                     <TableCell className="font-mono text-xs">{r.code}</TableCell>

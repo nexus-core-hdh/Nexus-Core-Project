@@ -296,9 +296,15 @@ export function WorkspaceTabBar() {
                   }}
                   role="tab"
                   aria-selected={isActive}
+                  aria-label={title}
                   onClick={() => goTo(tab)}
+                  // Width follows the title (min 130px), capped well above a full record title
+                  // ("Inventory Receipt [1-Purchase Receipt] - [Trim] - 00000595") but never past
+                  // 70% of the viewport, so one tab can't swallow a narrow window. Tabs don't shrink
+                  // — the strip scrolls instead — so the ellipsis only appears past that cap, and
+                  // the label's `title` tooltip / this aria-label always carry the complete title.
                   className={cn(
-                    "group/tab relative flex h-8 min-w-[130px] max-w-[220px] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
+                    "group/tab relative flex h-8 min-w-[130px] max-w-[min(40rem,70vw)] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
                     // Active tab: raised surface plus a primary accent bar along its bottom edge, so it
                     // stands out at a glance in both light and dark themes.
                     isActive
@@ -360,7 +366,7 @@ export function WorkspaceTabBar() {
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-[60vh] w-64 overflow-y-auto">
+            <DropdownMenuContent align="end" className="max-h-[60vh] w-96 max-w-[90vw] overflow-y-auto">
               {tabs.map((tab) => {
                 const { title, icon: Icon } = resolveWorkspaceTabTitle(tab, entryByHref);
                 const isActive = tab.key === activeKey;

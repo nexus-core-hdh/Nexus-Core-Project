@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Search, Save, FilePlus2, UserSquare2, Lock, LayoutGrid, Wallet, Users, ShieldCheck, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
@@ -102,6 +103,7 @@ export default function CurrentAccountCardPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [accountId, setAccountId] = useState<number | null>(null);
+  useWorkspaceRecordId(accountId);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -214,7 +216,7 @@ export default function CurrentAccountCardPage() {
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Current Account [<this>]" on the Workspace tab.
-  useWorkspaceRecordLabel(accountId ? form.currentAccountCode || undefined : undefined);
+  useWorkspaceRecordLabel(accountId ? [form.currentAccountCode, form.currentAccountName].filter(Boolean).join(" — ") || undefined : undefined);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-6 lg:p-8">

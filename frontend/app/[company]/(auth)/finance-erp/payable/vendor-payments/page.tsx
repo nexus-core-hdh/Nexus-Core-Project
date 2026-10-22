@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { Wallet } from "lucide-react";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ export default function VendorPaymentFormPage() {
   const isEdit = !!id;
 
   const [existing, setExisting] = useState<VendorPayment | null>(null);
+  useWorkspaceRecordLabel(isEdit ? existing?.paymentNumber || undefined : undefined);
   const [bills, setBills] = useState<VendorBill[]>([]);
   const [vendorId, setVendorId] = useState("");
   const [date, setDate] = useState(todayIso());
@@ -137,7 +139,7 @@ export default function VendorPaymentFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Invoice Allocation</div>
+        <div className="mb-2 text-sm font-semibold">Invoice Allocation</div>
         {vendorId ? (
           <LineItemsTable
             columns={columns}

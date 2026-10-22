@@ -2,7 +2,7 @@ import type { useRouter } from "@/lib/app-navigation";
 
 import { toBrowserPath } from "@/lib/company-path";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
-import { findWorkspaceModule, resolveTabKey } from "@/lib/workspace/registry";
+import { findWorkspaceModule, isCreateHref, resolveTabKey } from "@/lib/workspace/registry";
 
 type Router = ReturnType<typeof useRouter>;
 
@@ -51,4 +51,27 @@ export function replaceWorkspaceUrl(router: Router, href: string) {
   if (window.location.pathname + window.location.search !== browserHref) {
     window.history.replaceState(null, "", browserHref);
   }
+}
+
+/**
+ * Route -> tab sync for workspace module routes (WorkspaceContentStack runs it on every URL change):
+ * opens/activates the tab for the URL now showing — one per list screen, one per record (`?id=`).
+ * A create form that saved and moved its URL to the new record (`?mode=create` -> `?id=9`) takes
+ * that record's identity in place, without remounting mid-save, instead of opening a second tab
+ * and leaving a stale "New ..." one behind.
+ */
+export function syncModuleRouteTab(pathname: string, query: string) {
+  const mod = findWorkspaceModule(pathname);
+  if (!mod) return;
+  const href = query ? `${pathname}?${query}` : pathname;
+  const key = resolveTabKey(mod.path, href);
+  const { tabs, activeKey, openTab, replaceTab } = useWorkspaceStore.getState();
+  const alreadyOpen = tabs.some((t) => t.key === key);
+  if (alreadyOpen && activeKey === key) return;
+  const current = tabs.find((t) => t.key === activeKey);
+  if (!alreadyOpen && current && key !== mod.path && findWorkspaceModule(current.key) === mod && isCreateHref(current.href)) {
+    replaceTab(current.key, { key, href });
+    return;
+  }
+  openTab({ key, href });
 }

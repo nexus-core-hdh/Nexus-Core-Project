@@ -9,10 +9,12 @@ import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createBackendMonitor, httpProbe } from "./dev-all-core.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BACKEND_PORT = 4000;
 const WAIT_MS = 5 * 60 * 1000;
+const MONITOR_INTERVAL_MS = 2000;
 
 const children = [];
 const start = (name, cwd, script) => {
@@ -31,7 +33,10 @@ const isListening = (port) =>
     s.once("error", () => resolve(false));
   });
 
+let stopping = false;
 const stopAll = () => {
+  if (stopping) return;
+  stopping = true;
   for (const c of children) {
     if (!c.pid) continue;
     if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(c.pid), "/T", "/F"]);
@@ -39,8 +44,10 @@ const stopAll = () => {
   }
   process.exit(0);
 };
-process.on("SIGINT", stopAll);
-process.on("SIGTERM", stopAll);
+// Ctrl+C, a closed console window (SIGHUP) and Ctrl+Break (SIGBREAK, Windows) all stop both servers.
+// A hard kill of this launcher cannot be intercepted: the servers then keep running, and the next
+// `npm run dev` refuses to start duplicates (ensure-port-free) until they are stopped.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) process.on(signal, stopAll);
 
 const backend = start("backend", "nexuscore-backend", "start:dev");
 const deadline = Date.now() + WAIT_MS;
@@ -56,3 +63,16 @@ while (!(await isListening(BACKEND_PORT))) {
 }
 console.log(`[dev-all] backend is up on :${BACKEND_PORT} — starting frontend`);
 start("frontend", "frontend", "dev");
+
+// Report when the API stops answering / comes back (see dev-all-core.mjs) — no automatic restarts.
+const monitor = createBackendMonitor({
+  probe: httpProbe(`http://127.0.0.1:${BACKEND_PORT}/api/v1/health`),
+  log: (message) => console.log(message),
+  port: BACKEND_PORT,
+});
+const tick = async () => {
+  if (stopping) return;
+  await monitor.check();
+  setTimeout(tick, MONITOR_INTERVAL_MS).unref();
+};
+void tick();

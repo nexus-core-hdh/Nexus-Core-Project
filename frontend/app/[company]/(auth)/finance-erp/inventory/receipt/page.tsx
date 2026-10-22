@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { ArrowDownToLine } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +36,7 @@ export default function ReceiptFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [receiptNumber, setReceiptNumber] = useState<string | null>(null);
+  useWorkspaceRecordLabel(isEdit ? receiptNumber || undefined : undefined);
   const [status, setStatus] = useState<ReceiptStatus>("Draft");
 
   const [receiptDate, setReceiptDate] = useState(todayIso());
@@ -134,7 +136,7 @@ export default function ReceiptFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Items</div>
+        <div className="mb-2 text-sm font-semibold">Items</div>
         <LineItemsTable columns={columns} rows={items} onAddRow={() => setItems((p) => [...p, newReceiptLine()])} onRemoveRow={(i) => setItems((p) => p.filter((_, idx) => idx !== i))}
           footer={<span className="text-sm font-semibold">Total: {formatAmount(totalAmount)}</span>} />
       </div>

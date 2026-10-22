@@ -189,16 +189,16 @@ export function RecipeUsageDialog({ open, onOpenChange, inventoryId, itemLabel }
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="bg-background hover:bg-muted/60">
-                  <TableHead className="h-8 w-24 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Type</TableHead>
-                  <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Code</TableHead>
-                  <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Name</TableHead>
-                  <TableHead className="h-8 w-28 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Order</TableHead>
-                  <TableHead className="h-8 w-24 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Quantity</TableHead>
+                <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+                  <TableHead className="h-8 w-24 text-[11px] font-semibold uppercase tracking-wide text-white">Type</TableHead>
+                  <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-white">Code</TableHead>
+                  <TableHead className="h-8 text-[11px] font-semibold uppercase tracking-wide text-white">Name</TableHead>
+                  <TableHead className="h-8 w-28 text-[11px] font-semibold uppercase tracking-wide text-white">Order</TableHead>
+                  <TableHead className="h-8 w-24 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Quantity</TableHead>
                   <TableHead className="h-8 w-8" />
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                 {rows.map((row, i) => {
                   const route = sourceRoute(row);
                   return (

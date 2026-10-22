@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { ClipboardList } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ export default function DemandFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [demandNumber, setDemandNumber] = useState<string | null>(null);
+  useWorkspaceRecordLabel(isEdit ? demandNumber || undefined : undefined);
   const [status, setStatus] = useState<DemandStatus>("Draft");
 
   const [demandDate, setDemandDate] = useState(todayIso());
@@ -153,7 +155,7 @@ export default function DemandFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Items</div>
+        <div className="mb-2 text-sm font-semibold">Items</div>
         <LineItemsTable
           columns={columns}
           rows={items}

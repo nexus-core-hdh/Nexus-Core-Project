@@ -20,6 +20,7 @@ import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Factory, Lock, Trash2, Plus, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
@@ -27,6 +28,7 @@ import { FormTextField as FieldText } from "@/components/forms/form-field";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { AttachmentsTab } from "@/components/legacy-erp/attachments-tab";
 import { PurchaseOrderLineGrid, type PurchaseOrderLineGridHandle } from "@/components/legacy-erp/purchase-order-line-grid";
+import { CustomizedFieldsPanel, type CustomizedFieldsHandle } from "@/components/custom-fields/customized-fields-panel";
 import { consumePlanningPrefillLines } from "@/lib/legacy-erp/planning-prefill";
 import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
 import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
@@ -43,7 +45,7 @@ import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 // (-> FI_Account, confirmed live) — kept labeled "Current Account" for consistency with every
 // other screen in this module, exactly like Purchase Order's own vendor field.
 const client = legacyErpApi.orders(3);
-const TABS = ["General", "Detail", "Explanation", "Attachments", "Certificates"];
+const TABS = ["General", "Detail", "Explanation", "Attachments", "Certificates", "Customized Fields"];
 const CURRENT_ACCOUNTS_LIST_PATH = "/legacy-erp/current-accounts-list";
 // General Settings -> Approval Configuration screenKey for this screen — must match
 // purchase-order.service.ts's own screenKeyFor(3) exactly.
@@ -88,6 +90,7 @@ export default function SubcontractOrderPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [orderId, setOrderId] = useState<number | null>(null);
+  useWorkspaceRecordId(orderId);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -97,6 +100,11 @@ export default function SubcontractOrderPage() {
 
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
   const lineGridRef = useRef<PurchaseOrderLineGridHandle>(null);
+  // User Defined Fields — screen-level (Customized Fields tab, entity "SubcontractOrder") and the
+  // shared line grid's own (logical grid "OrderLine"), both stored by this screen's Save below.
+  const udfRef = useRef<CustomizedFieldsHandle>(null);
+  const [udfDirty, setUdfDirty] = useState(false);
+  const [gridUdfDirty, setGridUdfDirty] = useState(false);
 
   // New-record draft preservation — see use-draft-form.ts. Active only while this screen has no
   // id yet (a genuine New Subcontract Order flow); an Edit/View of an existing record never
@@ -244,6 +252,9 @@ export default function SubcontractOrderPage() {
   const save = async () => {
     if (!form.currentAccountId) return toast.error("Current Account is required");
     if (!form.warehouseId) return toast.error("Warehouse is required");
+    // Required User Defined Fields are checked before anything is written.
+    if (udfRef.current && !udfRef.current.validate()) { setActiveTab("Customized Fields"); return; }
+    if (orderId && lineGridRef.current && !lineGridRef.current.validateUdf()) { setActiveTab("General"); return; }
     setSaving(true);
     try {
       const dto: Record<string, any> = { receiptDate: form.receiptDate, documentNo: form.documentNo, currentAccountId: Number(form.currentAccountId), warehouseId: Number(form.warehouseId) };
@@ -258,6 +269,9 @@ export default function SubcontractOrderPage() {
         setForm(f);
         lastSavedRef.current = f;
         savedId = r.id;
+        // Lines of an existing order already have their ids; their grid UDF values go with this Save.
+        await lineGridRef.current?.saveUdf(r.id);
+        await udfRef.current?.save(String(r.id));
         toast.success("Updated");
       } else {
         // Standard ERP transaction workflow: header first, then any lines the user already
@@ -275,6 +289,7 @@ export default function SubcontractOrderPage() {
         setCodeInput(r.receiptNo);
         await lineGridRef.current?.commitDrafts(r.id);
         savedId = r.id;
+        await udfRef.current?.save(String(r.id));
         clearDraft();
         toast.success("Created");
       }
@@ -295,7 +310,7 @@ export default function SubcontractOrderPage() {
     }
   };
 
-  const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
+  const isDirty = !readOnly && (JSON.stringify(form) !== JSON.stringify(lastSavedRef.current) || udfDirty || gridUdfDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Subcontract Order [<this>]" on the Workspace tab.
@@ -457,7 +472,8 @@ export default function SubcontractOrderPage() {
           <ScrollableTabsList tabs={TABS} activeTab={activeTab} />
 
           <div className="p-6">
-            <TabsContent value="General" className="space-y-4">
+            {/* Kept mounted while another tab is open: the line grid holds unsaved grid UDF edits. */}
+            <TabsContent value="General" forceMount className="space-y-4 data-[state=inactive]:hidden">
               <fieldset disabled={readOnly} className="contents">
                 <IdentitySection>
                   <fieldset disabled={!!orderId} className="contents">
@@ -488,12 +504,18 @@ export default function SubcontractOrderPage() {
               </fieldset>
 
               <div className="space-y-2">
-                <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
-                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
-                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
+                <div className="flex items-center gap-2">
+                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
                 </div>
-                <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={orderId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
+                <PurchaseOrderLineGrid ref={lineGridRef} orderReceiptId={orderId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} onUdfDirtyChange={setGridUdfDirty} />
               </div>
+            </TabsContent>
+
+            {/* Customized Fields — usable before the first Save (stored with it); kept mounted so
+                unsaved values survive switching tabs. */}
+            <TabsContent value="Customized Fields" forceMount className="data-[state=inactive]:hidden">
+              <CustomizedFieldsPanel ref={udfRef} entity="SubcontractOrder" entityId={orderId ? String(orderId) : null} readOnly={readOnly} saveWithDocument onDirtyChange={setUdfDirty} />
             </TabsContent>
 
             {!orderId ? (
@@ -708,9 +730,9 @@ function SubcontractOrderExplanationTab({ orderReceiptId, readOnly }: { orderRec
       <div className="rounded-xl border shadow-sm overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Date</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Explanation</TableHead>
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Date</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Explanation</TableHead>
               {!readOnly && <TableHead className="h-10 w-10" />}
             </TableRow>
           </TableHeader>

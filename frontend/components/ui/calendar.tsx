@@ -393,6 +393,19 @@ function MonthGrid({
   );
 }
 
+// `selected` is a Date in single mode, a Date[] in multiple mode and a { from, to } range in range
+// mode — pick the date whose month the year switcher should keep.
+function selectedReferenceDate(selected: unknown): Date | undefined {
+  if (selected instanceof Date) return selected;
+  if (Array.isArray(selected)) return selected.find((d) => d instanceof Date);
+  if (selected && typeof selected === "object") {
+    const { from, to } = selected as { from?: unknown; to?: unknown };
+    if (from instanceof Date) return from;
+    if (to instanceof Date) return to;
+  }
+  return undefined;
+}
+
 function YearGrid({
   className,
   displayYears,
@@ -433,7 +446,7 @@ function YearGrid({
             onClick={() => {
               setNavView("days");
               goToMonth(
-                new Date(displayYears.from + i, (selected as Date | undefined)?.getMonth() ?? 0)
+                new Date(displayYears.from + i, selectedReferenceDate(selected)?.getMonth() ?? 0)
               );
             }}
             disabled={navView === "years" ? isDisabled : undefined}>

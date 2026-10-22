@@ -7,6 +7,8 @@ import type { PlanningPrefillLine } from "@/lib/legacy-erp/planning-prefill";
 import { getCurrentUser } from "@/lib/auth";
 import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useGridUdf, isUdfColumnKey, type UdfColumnKey } from "@/hooks/use-grid-udf";
+import { UdfGridCell } from "@/components/custom-fields/udf-grid-cell";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import type { DecimalFieldKey } from "@/lib/legacy-erp/decimal-parameters";
 import { toast } from "sonner";
@@ -82,6 +84,13 @@ const COLUMNS: ColumnDef[] = [
   { key: "workOrder", label: "Work Order No", align: "right", navigable: true, editable: true },
 ];
 const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
+
+// Grid-level User Defined Fields ("OrderLine" — the same logical grid on Purchase and Subcontract
+// Orders, hooks/use-grid-udf.ts) join the column set as `udf:<code>` columns: reorderable,
+// hideable and resizable like any other, outside the arrow-key cell cursor (their cells carry
+// their own editor).
+type GridKey = ColKey | UdfColumnKey;
+type DisplayColumn = Omit<ColumnDef, "key"> & { key: GridKey };
 
 // Column reordering — Type/Code/Name are permanently first; every other column (including
 // Variant and Delete's neighbors) is user-reorderable via native HTML5 drag-and-drop on its
@@ -303,6 +312,8 @@ interface Props {
    *  real persisted lines via listItems() as before, this is never consulted then. Omitted (every
    *  existing caller), the grid behaves byte-for-byte as before: one blank starter row. */
   initialLines?: PlanningPrefillLine[];
+  /** Whether any grid UDF value has been edited and not saved yet (feeds the screen's dirty state). */
+  onUdfDirtyChange?: (dirty: boolean) => void;
 }
 
 // Imperative handle so the parent transaction screen can trigger the "commit draft lines"
@@ -311,13 +322,19 @@ interface Props {
 // still unsaved drafts, so it owns persisting them, not the parent.
 export interface PurchaseOrderLineGridHandle {
   commitDrafts: (newOrderReceiptId: number) => Promise<void>;
+  /** Grid UDF Required check over the saved lines — call before the document's Save writes anything. */
+  validateUdf: () => boolean;
+  /** Stores the grid UDF values of every saved line — part of the document's Save. */
+  saveUdf: (orderReceiptId: number) => Promise<boolean>;
 }
 
 export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Props>(function PurchaseOrderLineGrid(
-  { orderReceiptId, readOnly = false, api = legacyErpApi.purchaseOrders, initialLines },
+  { orderReceiptId, readOnly = false, api = legacyErpApi.purchaseOrders, initialLines, onUdfDirtyChange },
   ref,
 ) {
   const [loading, setLoading] = useState(false);
+  const udf = useGridUdf({ grid: "OrderLine", parentId: orderReceiptId });
+  useEffect(() => { onUdfDirtyChange?.(udf.dirty); }, [udf.dirty]); // eslint-disable-line react-hooks/exhaustive-deps
   // Never starts empty — the screen must always open with one editable row. `initialLines` (real
   // Planning row context, see its own Props comment) seeds one real row per entry instead of the
   // usual single blank one; ignored once `orderReceiptId` is set (an existing order's own load
@@ -624,7 +641,12 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
     await load(newOrderReceiptId);
   };
 
-  useImperativeHandle(ref, () => ({ commitDrafts }), [rows]);
+  const savedRowIds = () => rows.map((r) => r.__rowId).filter((id): id is number => id != null);
+  useImperativeHandle(ref, () => ({
+    commitDrafts,
+    validateUdf: () => udf.validate(savedRowIds()),
+    saveUdf: (id: number) => udf.save(id, savedRowIds()),
+  }), [rows, udf]);
 
   // Unconditional append — same as Costing Sheet's own addRaw/addLabor/addOther.
   const addRow = () => setRows((prev) => [...prev, emptyLine()]);
@@ -755,10 +777,13 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
   const gridColumnDefs = useMemo(
-    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
-    [],
+    () => [
+      ...COLUMNS.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+      ...udf.columnDefs,
+    ],
+    [udf.columnDefs],
   );
-  const gridColumns = useGridColumns<ColKey>({
+  const gridColumns = useGridColumns<GridKey>({
     storageKey: "poLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
@@ -768,10 +793,11 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   // Everything downstream (colgroup, header, body cells, keyboard nav) reads from this instead
   // of the static COLUMNS declaration order.
   const displayColumnDefs = useMemo(
-    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    () => gridColumns.displayColumnDefs.map((c): DisplayColumn =>
+      COLUMN_BY_KEY.get(c.key as ColKey) ?? { key: c.key, label: c.label, align: "left", navigable: false, editable: true }),
     [gridColumns.displayColumnDefs],
   );
-  const navOrder = useMemo(() => displayColumnDefs.filter((c) => c.navigable).map((c) => c.key), [displayColumnDefs]);
+  const navOrder = useMemo(() => displayColumnDefs.filter((c) => c.navigable).map((c) => c.key as ColKey), [displayColumnDefs]);
 
   const moveCursor = useCallback((rowDelta: number, colDelta: number) => {
     setCursor((current) => {
@@ -839,7 +865,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
   const gridRootRef = useRef<HTMLDivElement>(null);
   const colWidths = gridColumns.colWidths;
   const startResize = gridColumns.startResize;
-  const autoFitColumn = (key: ColKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
+  const autoFitColumn = (key: GridKey) => gridColumns.autoFitColumn(key, gridRootRef.current);
 
   // Footer totals — computed from the full row set (not the search-narrowed visibleRows);
   // search should never make the running totals lie about what's actually on the document.
@@ -968,13 +994,13 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
             guessing, no header/body drift). Resizing a column just updates colWidths, which
             re-renders this colgroup — every cell in that column follows automatically. */}
         <colgroup>
-          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: colWidths[col.key] }} />)}
+          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.getWidth(col.key) }} />)}
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow role="row" className={cn(HEADER_H, "bg-background hover:bg-muted/60")}>
+          <TableRow role="row" className={cn(HEADER_H, "bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white")}>
             {displayColumnDefs.map((col, colIdx) => {
-              const fixed = FIXED_COLS.includes(col.key);
+              const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
               return (
                 <TableHead
                   key={col.key}
@@ -990,7 +1016,7 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   onDragOver={gridColumns.getHeaderDragProps(col.key).onDragOver}
                   onDrop={gridColumns.getHeaderDragProps(col.key).onDrop}
                   className={cn(
-                    "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
+                    "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-white",
                     CELL_BORDER,
                     colIdx === 0 && FIRST_COL_BORDER,
                     gridColumns.dragOverColumn === col.key && "bg-primary/15",
@@ -1491,7 +1517,24 @@ export const PurchaseOrderLineGrid = forwardRef<PurchaseOrderLineGridHandle, Pro
                   aria-rowindex={idx + 2}
                   className={cn(ROW_H, "group transition-colors [&>td]:p-0", rowHover, rowBg)}
                 >
-                  {displayColumnDefs.map((col) => cells[col.key])}
+                  {displayColumnDefs.map((col) => {
+                    if (!isUdfColumnKey(col.key)) return cells[col.key];
+                    const field = udf.fieldForColumn(col.key);
+                    return (
+                      <TableCell key={col.key} className={cn(CELL_BORDER, "p-0")} data-col={col.key}>
+                        {field && (
+                          <UdfGridCell
+                            field={field}
+                            value={udf.valueOf(r.__rowId, field.id)}
+                            onChange={(v) => r.__rowId != null && udf.setValue(r.__rowId, field.id, v)}
+                            readOnly={readOnly}
+                            unsavedRow={r.__rowId == null}
+                            invalid={udf.isMissing(r.__rowId, field.id)}
+                          />
+                        )}
+                      </TableCell>
+                    );
+                  })}
 
                   {/* DELETE — bare icon, no button chrome, hidden at 1 row. Not part of the
                       reorderable set — always rendered last, like every other grid library's

@@ -8,6 +8,7 @@
 // summary is the backend read model, so it only changes after a successful Save.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -159,18 +160,19 @@ export default function ManufacturingEntryPage() {
     if (workOrderId) navigateOrOpenTab(router, `${OM_ROUTE}?id=${workOrderId}${processId ? `&processId=${processId}` : ""}&color=${encodeURIComponent(color)}`);
   };
 
+  const contextLine = data
+    ? [data.workOrder.workOrderNo, data.style ? `${data.style.styleNumber} - ${data.style.title}` : null, data.color,
+        ...data.materialColumns.map((m) => (data.colorCells[m.key]?.code ? `${m.label} [${data.colorCells[m.key].code}]` : null))].filter(Boolean).join(",  ")
+    : "";
+  useWorkspaceRecordLabel(contextLine || undefined);
   if (!workOrderId || !processId || !color || !mode) {
     return <p className="p-3 text-sm text-muted-foreground">Open this from Order Manufacturing Entry — select an Order, Process and row, then choose Manufacturing IN / OUT / Sent (Repair) / Received (Repair).</p>;
   }
 
   const ro = !!data?.lockReason;
-  const th = "border border-border/70 bg-muted px-1.5 h-8 text-[10.5px] font-semibold text-muted-foreground text-left align-bottom whitespace-nowrap";
+  const th = "border border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 h-8 text-[10.5px] font-semibold text-white text-left align-bottom whitespace-nowrap";
   const td = "border border-border/50 p-0";
   const cell = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none focus:bg-accent/50 disabled:opacity-70";
-  const contextLine = data
-    ? [data.workOrder.workOrderNo, data.style ? `${data.style.styleNumber} - ${data.style.title}` : null, data.color,
-        ...data.materialColumns.map((m) => (data.colorCells[m.key]?.code ? `${m.label} [${data.colorCells[m.key].code}]` : null))].filter(Boolean).join(",  ")
-    : "";
 
   return (
     <div className="flex min-h-[calc(100vh-7.5rem)] flex-col text-[11.5px]">
@@ -184,7 +186,7 @@ export default function ManufacturingEntryPage() {
         {loading && !data ? <Skeleton className="m-2 h-32" /> : data && (
           <table className="min-w-max border-collapse">
             <thead>
-              <tr>
+              <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                 <th className={th} style={{ width: 96 }}>Factory</th><th className={th} style={{ width: 150 }}>Factory Name</th>
                 <th className={th} style={{ width: 112 }}>Date</th><th className={th} style={{ width: 140 }}>Explanation</th>
                 <th className={th} style={{ width: 130 }}>Additional Information</th><th className={th} style={{ width: 90 }}>Party No</th>

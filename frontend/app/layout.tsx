@@ -11,6 +11,7 @@ import "./globals.css";
 import { ActiveThemeProvider } from "@/components/active-theme";
 import { DEFAULT_THEME, THEME_VERSION } from "@/lib/themes";
 import { Toaster } from "@/components/ui/sonner";
+import { ClipboardFallback } from "@/components/clipboard-fallback";
 
 export default async function RootLayout({
   children
@@ -60,6 +61,7 @@ export default async function RootLayout({
           <ActiveThemeProvider initialTheme={themeSettings}>
             {children}
             <Toaster position="top-center" richColors />
+            <ClipboardFallback />
             <NextTopLoader color="var(--primary)" showSpinner={false} height={2} shadow-sm="none" />
             {process.env.NODE_ENV === "production" ? <GoogleAnalyticsInit /> : null}
           </ActiveThemeProvider>

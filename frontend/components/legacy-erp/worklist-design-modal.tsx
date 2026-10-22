@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, ChevronsRight, Plus, Search, Trash2, X } from "lucide-react";
-import { humanizeColumn } from "@/lib/legacy-erp/humanize";
+import { worklistFieldLabel } from "@/lib/legacy-erp/humanize";
 import {
   STANDARD_WORKLIST_ID, fieldKey,
   type Worklist, type WorklistField, type WorklistSource,
@@ -166,7 +166,7 @@ export function WorklistDesignModal({
       const existing = new Set(w.fields.filter((f) => f.source === activeTableSource).map((f) => f.key));
       const additions = sf.fields
         .filter((k) => !existing.has(k))
-        .map((k): WorklistField => ({ source: activeTableSource, key: k, label: humanizeColumn(k) }));
+        .map((k): WorklistField => ({ source: activeTableSource, key: k, label: worklistFieldLabel(k) }));
       return { ...w, fields: [...w.fields, ...additions] };
     });
   };
@@ -212,7 +212,7 @@ export function WorklistDesignModal({
         name: w.name.trim(),
         // A blanked-out Display Name falls back to the humanized key rather than saving an
         // empty grid header — same "trim then fall back" treatment as the worklist name above.
-        fields: w.fields.map((f) => ({ ...f, label: f.label.trim() || humanizeColumn(f.key) })),
+        fields: w.fields.map((f) => ({ ...f, label: f.label.trim() || worklistFieldLabel(f.key) })),
       })));
       onOpenChange(false);
     } catch (e: any) {
@@ -295,7 +295,7 @@ export function WorklistDesignModal({
                   <Accordion type="multiple" className="w-full">
                     {sourceFields.map((sf) => {
                       const visibleFields = sf.fields.filter((key) =>
-                        !treeSearch.trim() || humanizeColumn(key).toLowerCase().includes(treeSearch.trim().toLowerCase()) || key.toLowerCase().includes(treeSearch.trim().toLowerCase()),
+                        !treeSearch.trim() || worklistFieldLabel(key).toLowerCase().includes(treeSearch.trim().toLowerCase()) || key.toLowerCase().includes(treeSearch.trim().toLowerCase()),
                       );
                       if (treeSearch.trim() && visibleFields.length === 0) return null;
                       return (
@@ -304,7 +304,7 @@ export function WorklistDesignModal({
                           <AccordionContent className="px-1 pb-2">
                             <div className="space-y-0.5">
                               {visibleFields.map((key) => {
-                                const label = humanizeColumn(key);
+                                const label = worklistFieldLabel(key);
                                 const selected = isFieldSelected(sf.source, key);
                                 const isHighlighted = highlighted?.source === sf.source && highlighted.key === key;
                                 return (
@@ -394,15 +394,15 @@ export function WorklistDesignModal({
                   <div className="overflow-hidden rounded-md border border-border">
                     <Table>
                       <TableHeader className="sticky top-0 z-10 bg-background">
-                        <TableRow className="hover:bg-muted/60">
-                          <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">#</TableHead>
-                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Source</TableHead>
-                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Field</TableHead>
-                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Display Name</TableHead>
-                          <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80" />
+                        <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0 hover:bg-muted/60">
+                          <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-white">#</TableHead>
+                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Source</TableHead>
+                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Field</TableHead>
+                          <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wide text-white">Display Name</TableHead>
+                          <TableHead className="h-9 w-10 text-[11px] font-semibold uppercase tracking-wide text-white" />
                         </TableRow>
                       </TableHeader>
-                      <TableBody>
+                      <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                         {activeDraft.fields.map((f, i) => (
                           <TableRow
                             key={fieldKey(f)}

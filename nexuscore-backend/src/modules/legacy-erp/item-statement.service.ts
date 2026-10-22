@@ -329,6 +329,9 @@ export class ItemStatementService {
         itemCode: row.itemCode,
         itemName: row.itemName,
         date: row.receiptDate,
+        // receiptId + receiptType: lets the statement open the receipt itself (by its id, never by
+        // its displayed number) on double-click.
+        receiptId: row.receiptId,
         receiptNo: row.receiptNo,
         documentNo: row.documentNo,
         receiptType: row.receiptType,

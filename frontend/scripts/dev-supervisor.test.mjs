@@ -2,16 +2,19 @@
 // children are fakes and time is a fake clock.   Run: npm run test:dev-supervisor
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import {
   classifyExit,
+  createMemoryGuard,
   createSupervisor,
   describeExit,
   normalizeExitCode,
   STATES,
   STATUS_CONTROL_C_EXIT,
   STATUS_DLL_INIT_FAILED,
+  withJitter,
 } from "./dev-supervisor-core.mjs";
 
 const DLL_INIT_FAILED = 3221225794; // how Node reports 0xC0000142 on Windows
@@ -83,6 +86,8 @@ function harness(opts = {}) {
     stderr: sink(),
     overlaps: 0,
     spawnImpl: null,
+    portOwner: null, // what describePortOwner reports while the port is taken
+    portOwnerStops: [],
   };
   h.spawnImpl = () => {
     if (h.children.some((c) => c.pid && c.exitCode === null && c.signalCode === null)) h.overlaps++;
@@ -100,6 +105,12 @@ function harness(opts = {}) {
       if (h.killWorks && run.proc?.pid && run.proc.exitCode === null && run.proc.signalCode === null) run.proc.exit(null, "SIGTERM");
     },
     portFree: async () => h.portIsFree,
+    describePortOwner: async () => (typeof h.portOwner === "function" ? h.portOwner() : h.portOwner),
+    stopPortOwner: async (owner) => {
+      h.portOwnerStops.push(owner.pid);
+      h.portIsFree = true;
+    },
+    random: () => 0.5, // no jitter unless a test asks for it
     probeReady: async () => (typeof h.probeOk === "function" ? h.probeOk() : h.probeOk),
     prepareStart: async (o) => void h.prepareCalls.push(o),
     writeIncident: (kind) => (h.incidents.push(kind), `.next/dev-supervisor/${kind}.log`),
@@ -250,7 +261,7 @@ describe("supervisor lifecycle", () => {
     assert.ok(h2.has("restart attempt 1/3 scheduled in 15s"));
   });
 
-  it("7-11. retries after exactly 15s, 30s, 60s, then stops with no 4th attempt", async () => {
+  it("7-11. retries after exactly 15s, 30s, 60s, then keeps recovering slowly instead of exiting", async () => {
     const h = harness();
     await h.startReady();
     h.last().exit(DLL_INIT_FAILED);
@@ -269,18 +280,25 @@ describe("supervisor lifecycle", () => {
       h.last().exit(DLL_INIT_FAILED);
       await h.clock.advance(500);
     }
-    assert.ok(h.has("frontend could not be recovered after 3 attempts"));
-    assert.ok(h.has("automatic restart stopped"));
-    assert.equal(h.sup.state, STATES.FAILED);
-    assert.deepEqual(h.exits, [1]);
-    const total = h.children.length;
-    await h.clock.advance(60 * 60_000);
-    assert.equal(h.children.length, total, "no 4th automatic retry");
-    assert.equal(total, 4); // original + 3 retries
+    assert.equal(h.children.length, 4); // original + 3 fast retries
+    assert.ok(h.has("Fast retries exhausted — automatic recovery continues with slow retries"));
+    assert.equal(h.sup.state, STATES.RECOVERING);
+    assert.deepEqual(h.exits, [], "the supervisor no longer exits and leaves localhost down");
+    // Slow retries: 2 min, doubling, capped at 10 min.
+    for (const [i, delay] of [120_000, 240_000, 480_000, 600_000, 600_000].entries()) {
+      assert.deepEqual(h.clock.pendingDelays(), [delay], `recovery attempt ${i + 1} delay`);
+      assert.ok(h.has(`recovery attempt ${i + 1} scheduled in ${delay / 1000}s`));
+      const before = h.children.length;
+      await h.clock.advance(delay);
+      assert.equal(h.children.length, before + 1);
+      h.last().exit(DLL_INIT_FAILED);
+      await h.clock.advance(500);
+    }
+    assert.equal(h.overlaps, 0);
     assert.ok(h.prepareCalls.every((c) => c.force === false), "start failures never clear the cache");
   });
 
-  it("12. a healthy restart resets the failure counter", async () => {
+  it("12. the failure counter resets only after a sustained healthy run", async () => {
     const h = harness();
     await h.startReady();
     h.last().exit(DLL_INIT_FAILED);
@@ -294,7 +312,11 @@ describe("supervisor lifecycle", () => {
     await flush();
     assert.equal(h.sup.state, STATES.RUNNING);
     assert.ok(h.has("restart recovery successful"));
-    assert.ok(h.has("failure counter reset"));
+    assert.equal(h.sup.startFailures, 2, "printing Ready is not enough");
+    await h.clock.advance(10 * 60_000 - 1);
+    assert.equal(h.sup.startFailures, 2);
+    await h.clock.advance(1);
+    assert.ok(h.has("frontend healthy for 600s — failure counters reset"));
     assert.equal(h.sup.startFailures, 0);
     assert.equal(h.sup.hasPendingTimer(), false);
 
@@ -486,8 +508,10 @@ describe("supervisor lifecycle", () => {
     await h.clock.advance(500 + 8000);
     h.last().exit(1);
     await h.clock.advance(500);
-    assert.ok(h.has("Giving up after repeated failures"));
-    assert.deepEqual(h.exits, [1]);
+    assert.ok(h.has("crash restart budget used up"));
+    assert.equal(h.sup.state, STATES.RECOVERING, "repeated startup crashes keep retrying slowly");
+    assert.deepEqual(h.exits, []);
+    assert.deepEqual(h.clock.pendingDelays(), [120_000]);
   });
 
   it("replays the real incident: worker failure → restart → 0xC0000142 x3 → recovered", async () => {
@@ -507,5 +531,267 @@ describe("supervisor lifecycle", () => {
     assert.ok(h.has("restart recovery successful"));
     assert.equal(h.children.length, 4);
     assert.deepEqual(h.exits, []);
+  });
+});
+
+describe("hardened recovery (Oct 12 incident: 46h run, worker crash, 0xC0000142, supervisor stopped)", () => {
+  it("backoff delays carry bounded jitter", () => {
+    assert.equal(withJitter(15_000, 0.2, () => 0.5), 15_000);
+    assert.equal(withJitter(15_000, 0.2, () => 0), 12_000);
+    assert.equal(withJitter(15_000, 0.2, () => 1), 18_000);
+    assert.equal(withJitter(15_000, 0, () => 0), 15_000);
+    const h = harness({ random: () => 0 });
+    h.sup.start();
+    return (async () => {
+      await flush();
+      h.last().exit(DLL_INIT_FAILED);
+      await h.clock.advance(500);
+      assert.deepEqual(h.clock.pendingDelays(), [12_000]);
+      assert.ok(h.has("restart attempt 1/3 scheduled in 12s"));
+    })();
+  });
+
+  it("replays Oct 12: worker crash → 0xC0000142 on every start → slow recovery → success → reset after sustained health", async () => {
+    const h = harness();
+    await h.startReady();
+    await h.clock.advance(46 * 60 * 60_000);
+    h.last().stderr.write("Error: Jest worker encountered 2 child process exceptions, exceeding retry limit\n");
+    await flush();
+    assert.ok(h.has("restart reason: worker-failure"));
+    // The old supervisor wrote 4 start-failure incidents (the restart itself + 3 retries) and exited.
+    for (let i = 0; i < 4; i++) {
+      h.last().exit(DLL_INIT_FAILED);
+      await h.clock.advance(500);
+      if (i < 3) await h.clock.advance(h.clock.pendingDelays()[0]);
+    }
+    assert.equal(h.incidents.filter((k) => k === "start-failure").length, 4);
+    assert.equal(h.sup.state, STATES.RECOVERING);
+    assert.deepEqual(h.exits, []);
+    // Windows recovers later; the next slow retry succeeds.
+    await h.clock.advance(120_000);
+    h.last().ready();
+    await flush();
+    assert.equal(h.sup.state, STATES.RUNNING);
+    assert.ok(h.has("restart recovery successful"));
+    assert.equal(h.sup.recoveryAttempts, 1, "not reset on Ready alone");
+    await h.clock.advance(10 * 60_000);
+    assert.equal(h.sup.recoveryAttempts, 0);
+    assert.equal(h.sup.startFailures, 0);
+    // A fresh failure event later gets the fast budget again.
+    h.logs.length = 0;
+    h.last().exit(DLL_INIT_FAILED);
+    await h.clock.advance(500);
+    assert.ok(h.has("restart attempt 1/3 scheduled in 15s"));
+    assert.equal(h.overlaps, 0);
+  });
+
+  it("a run that dies soon after Ready keeps its failure history (no rapid restart loop)", async () => {
+    const h = harness();
+    await h.startReady();
+    for (let i = 0; i < 4; i++) {
+      h.last().exit(DLL_INIT_FAILED);
+      await h.clock.advance(500);
+      await h.clock.advance(h.clock.pendingDelays()[0]);
+    }
+    assert.equal(h.sup.state, STATES.STARTING, "first recovery attempt is starting");
+    h.last().ready();
+    await flush();
+    await h.clock.advance(2 * 60_000); // healthy for 2 min only
+    h.last().exit(DLL_INIT_FAILED);
+    await h.clock.advance(500);
+    assert.equal(h.sup.state, STATES.RECOVERING, "back to slow retries, not a new fast burst");
+    assert.deepEqual(h.clock.pendingDelays(), [240_000]);
+  });
+
+  it("an application crash is distinguished from a start failure in logs and incidents", async () => {
+    const h = harness();
+    await h.startReady();
+    await h.clock.advance(5 * 60_000);
+    h.last().exit(1);
+    await h.clock.advance(500);
+    assert.ok(h.has("restart reason: crash — frontend exited unexpectedly (code 1)"));
+    assert.ok(h.has("frontend exited unexpectedly (pid 1000, uptime 300s)"));
+    assert.deepEqual(h.incidents, ["crash"]);
+    await h.clock.advance(1000);
+    h.last().exit(DLL_INIT_FAILED);
+    await h.clock.advance(500);
+    assert.ok(h.has("restart reason: start-failure"));
+    assert.deepEqual(h.incidents, ["crash", "start-failure"]);
+  });
+
+  it("crash budget exhausted → slow recovery, never a burst of restarts", async () => {
+    const h = harness();
+    await h.startReady();
+    for (let i = 0; i < 3; i++) {
+      await h.clock.advance(5 * 60_000);
+      h.last().ready();
+      await flush();
+      h.last().exit(1);
+      await h.clock.advance(500);
+      await h.clock.advance(h.clock.pendingDelays()[0]);
+    }
+    await h.clock.advance(60_000);
+    h.last().ready();
+    await flush();
+    h.last().exit(1);
+    await h.clock.advance(500);
+    assert.equal(h.sup.state, STATES.RECOVERING);
+    assert.ok(h.has("crash restart budget used up"));
+    assert.deepEqual(h.exits, []);
+  });
+
+  it("Ctrl+C while recovering cancels the slow retry and exits 0", async () => {
+    const h = harness();
+    await h.startReady();
+    for (let i = 0; i < 4; i++) {
+      h.last().exit(DLL_INIT_FAILED);
+      await h.clock.advance(500);
+      if (i < 3) await h.clock.advance(h.clock.pendingDelays()[0]);
+    }
+    assert.equal(h.sup.state, STATES.RECOVERING);
+    const spawned = h.children.length;
+    await h.sup.shutdown(0);
+    assert.equal(h.sup.hasPendingTimer(), false);
+    await h.clock.advance(60 * 60_000);
+    assert.equal(h.children.length, spawned);
+    assert.deepEqual(h.exits, [0]);
+  });
+
+  it("logs every state transition with its reason", async () => {
+    const h = harness();
+    await h.startReady();
+    h.last().exit(DLL_INIT_FAILED);
+    await h.clock.advance(500);
+    assert.ok(h.has("state IDLE → STARTING"));
+    assert.ok(h.has("state STARTING → RUNNING (ready line seen and port responding)"));
+    assert.ok(h.has("state RUNNING → WAITING_TO_RESTART (pid 1000 ended: 0xC0000142 (STATUS_DLL_INIT_FAILED))"));
+    assert.ok(h.has("restart attempt 1/3 scheduled in 15s at 1970-01-01T"));
+  });
+
+  it("deliberate restarts pause when the budget is used up and resume after the window", async () => {
+    const h = harness();
+    await h.startReady();
+    for (let i = 0; i < 3; i++) {
+      assert.equal(h.sup.requestRestart("memory", "memory high"), true);
+      await flush();
+      h.last().ready();
+      await flush();
+    }
+    assert.equal(h.sup.requestRestart("memory", "memory high"), false);
+    assert.equal(h.sup.monitoringDisabled, true);
+    assert.ok(h.has("not restarting again until"));
+    await h.clock.advance(30 * 60_000 + 1);
+    assert.equal(h.sup.monitoringDisabled, false, "paused, not disabled for the rest of the session");
+    assert.equal(h.sup.requestRestart("memory", "memory high"), true);
+  });
+});
+
+describe("memory guard (sustained threshold with hysteresis)", () => {
+  const GBy = 1024 ** 3;
+  const g = () => createMemoryGuard({ limitBytes: 7 * GBy, samplesRequired: 3, lowFreeBytes: 0.8 * GBy });
+  const plenty = 6 * GBy;
+
+  it("restarts only after N consecutive high samples, then counts again", () => {
+    const m = g();
+    assert.equal(m.observe({ treeBytes: 7.5 * GBy, freeBytes: plenty }).status, "watch");
+    assert.equal(m.observe({ treeBytes: 7.5 * GBy, freeBytes: plenty }).status, "watch");
+    const r = m.observe({ treeBytes: 7.5 * GBy, freeBytes: plenty });
+    assert.deepEqual([r.status, r.reason, r.highSamples], ["restart", "over-limit", 3]);
+    assert.equal(m.highSamples, 0);
+  });
+
+  it("a normal build spike below the limit never triggers anything", () => {
+    const m = g();
+    for (const gb of [1, 3.6, 4.4, 5.3, 6.1, 4.2, 6.6]) assert.equal(m.observe({ treeBytes: gb * GBy, freeBytes: plenty }).status, "ok");
+  });
+
+  it("hovering just under the limit neither restarts nor resets the countdown", () => {
+    const m = g();
+    m.observe({ treeBytes: 7.2 * GBy, freeBytes: plenty });
+    m.observe({ treeBytes: 7.2 * GBy, freeBytes: plenty });
+    assert.equal(m.observe({ treeBytes: 6.8 * GBy, freeBytes: plenty }).status, "watch"); // above 90%
+    assert.equal(m.highSamples, 2);
+    assert.equal(m.observe({ treeBytes: 7.2 * GBy, freeBytes: plenty }).status, "restart");
+    m.observe({ treeBytes: 7.2 * GBy, freeBytes: plenty });
+    assert.equal(m.observe({ treeBytes: 5 * GBy, freeBytes: plenty }).status, "ok"); // clearly below
+    assert.equal(m.highSamples, 0);
+  });
+
+  it("the Oct 8 case: 6.1GB tree with 0.6GB RAM free counts as low-system-memory", () => {
+    const m = g();
+    m.observe({ treeBytes: 6.1 * GBy, freeBytes: 0.6 * GBy });
+    m.observe({ treeBytes: 6.1 * GBy, freeBytes: 0.6 * GBy });
+    const r = m.observe({ treeBytes: 6.1 * GBy, freeBytes: 0.6 * GBy });
+    assert.deepEqual([r.status, r.reason], ["restart", "low-system-memory"]);
+    // A small tree is not blamed for the machine being low on RAM (e.g. Chrome or tests using it).
+    const m2 = g();
+    for (let i = 0; i < 5; i++) assert.equal(m2.observe({ treeBytes: 1 * GBy, freeBytes: 0.3 * GBy }).status, "ok");
+  });
+});
+
+describe("port ownership (port 3000 held after a failed restart)", () => {
+  it("a verified leftover of this supervisor is stopped, then the new child starts", async () => {
+    const h = harness();
+    await h.startReady();
+    h.last().exit(DLL_INIT_FAILED);
+    await h.clock.advance(500);
+    h.portIsFree = false;
+    h.portOwner = { pid: 4321, ours: true, detail: "node.exe: next start-server.js" };
+    await h.clock.advance(15_000 + 15_000 + 1000);
+    assert.deepEqual(h.portOwnerStops, [4321]);
+    assert.ok(h.has("a leftover of this supervisor's previous frontend — stopping it"));
+    assert.equal(h.children.length, 2);
+    assert.equal(h.overlaps, 0);
+  });
+
+  it("an unrelated process on the port is never stopped; the supervisor keeps retrying", async () => {
+    const h = harness();
+    h.portIsFree = false;
+    h.portOwner = { pid: 777, ours: false, detail: "node.exe: another next dev" };
+    h.sup.start();
+    await h.clock.advance(16_000);
+    assert.deepEqual(h.portOwnerStops, []);
+    assert.ok(h.has("port 3000 is held by pid 777 (node.exe: another next dev), which this supervisor did not start — leaving it alone"));
+    assert.equal(h.children.length, 0);
+    assert.deepEqual(h.exits, []);
+    assert.ok(h.has("restart attempt 1/3 scheduled in 15s"));
+    // The other process goes away on its own: the next retry starts normally.
+    h.portIsFree = true;
+    await h.clock.advance(15_000);
+    assert.equal(h.children.length, 1);
+  });
+
+  it("an owner that cannot be identified is left alone", async () => {
+    const h = harness();
+    h.portIsFree = false;
+    h.portOwner = () => {
+      throw new Error("powershell unavailable");
+    };
+    h.sup.start();
+    await h.clock.advance(16_000);
+    assert.deepEqual(h.portOwnerStops, []);
+    assert.ok(h.has("could not identify the process holding port 3000"));
+    assert.equal(h.children.length, 0);
+  });
+
+  it("stop calls only ever target this supervisor's own children", async () => {
+    const h = harness();
+    await h.startReady();
+    h.sup.requestRestart("memory", "memory high");
+    await flush();
+    h.last().ready();
+    await flush();
+    await h.sup.shutdown();
+    const own = h.children.map((c) => c.pid);
+    assert.ok(h.stopCalls.every((pid) => own.includes(pid)), `stopped ${h.stopCalls} of own ${own}`);
+  });
+
+  it("the wiring only ever inspects its own port and never names the backend's", () => {
+    const src = readFileSync(new URL("./dev-supervisor.mjs", import.meta.url), "utf8");
+    assert.match(src, /Get-NetTCPConnection -LocalPort \$\{PORT\}/);
+    assert.doesNotMatch(src, /4000/, "the backend port is never referenced");
+    assert.match(src, /if \(!owner\?\.ours\) return;/, "stopPortOwner refuses anything not verified as ours");
+    assert.match(src, /isOwned\(ownerPid, Number\(start\)\)/, "ownership = pid AND creation time");
+    assert.doesNotMatch(src, /rmSync\([^)]*\.next[^)]*recursive/, "no cache deletion besides trim-dev-cache");
   });
 });

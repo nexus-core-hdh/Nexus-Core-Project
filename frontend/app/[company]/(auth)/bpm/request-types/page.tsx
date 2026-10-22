@@ -23,7 +23,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { bpmApi, entitySchemaApi } from "@/lib/api";
-import { customEntityPageApi } from "@/lib/nexuscore-api";
+import { customEntityPageApi, entitiesApi } from "@/lib/nexuscore-api";
+import { DATA_TYPES, UDF_ENTITIES, suggestCode, type ControlType } from "@/lib/custom-fields/udf-model";
 import { getCurrentUser } from "@/lib/auth";
 import { toast } from "sonner";
 import {
@@ -131,7 +132,6 @@ const ENTITY_LABEL_MAP: Record<string, string> = Object.fromEntries(
   ENTITY_GROUPS.flatMap((g) => g.entities.map((e) => [e.value, e.label]))
 );
 
-const FIELD_TYPES = ["text", "email", "phone", "number", "textarea", "select", "date", "boolean", "url", "image", "relation"];
 
 const TYPE_BADGE: Record<string, string> = {
   text: "bg-blue-100 text-blue-700", email: "bg-indigo-100 text-indigo-700",
@@ -157,7 +157,13 @@ const emptyForm = {
   prefix: "", entityValue: "", manualCustomName: "", processId: "", slaDays: "", isActive: true,
 };
 
-const emptyNewField = { name: "", label: "", type: "text", required: false, options: "" };
+// Custom fields here are User Defined Fields (CustomField), owned by Administration > User Defined
+// Fields: this tab creates them through the same service and rules — a Field Code, a supported
+// Control Type, and only for entities whose screens render them (lib/custom-fields/udf-model.ts).
+// `code` is the Field Code, `label` the caption, `type` a UDF control type.
+const emptyNewField = { code: "", label: "", type: "textbox" as ControlType, required: false, options: "" };
+const UDF_CONTROLS = DATA_TYPES.flatMap((d) => d.controls);
+const UDF_ADMIN_PATH = "/administration/user-defined-fields";
 
 type FormState = typeof emptyForm;
 type RequestType = any;
@@ -276,19 +282,25 @@ export default function BpmRequestTypesPage() {
     finally { setSaving(false); }
   };
 
+  // Only entities whose screens render User Defined Fields can get one (the server refuses others).
+  const udfEntity = UDF_ENTITIES.find((e) => e.key === resolvedEntityName && e.level === "screen" && e.capability === "supported");
+
   const handleAddCustomField = async () => {
-    if (!newField.name.trim()) { toast.error("Field name is required"); return; }
     if (!resolvedEntityName) { toast.error("Select an entity first"); return; }
+    if (!udfEntity) { toast.error("Custom fields can only be added for screens that display them."); return; }
+    if (!newField.label.trim()) { toast.error("Display label is required"); return; }
+    const code = (newField.code.trim() || suggestCode(newField.label)).trim();
+    if (!/^[A-Za-z][A-Za-z0-9_]{1,63}$/.test(code)) { toast.error("Field Code must start with a letter and use only letters, digits and underscores."); return; }
     setAddingField(true);
     try {
-      const options = newField.type === "select" && newField.options
-        ? newField.options.split(",").map((o) => o.trim()).filter(Boolean)
+      const options = newField.type === "dropdown"
+        ? newField.options.split(",").map((o) => o.trim()).filter(Boolean).map((label, i) => ({ code: String(i + 1).padStart(2, "0"), label, isActive: true }))
         : undefined;
-      const created: any = await entitySchemaApi.addCustomField({
-        entity: resolvedEntityName, name: newField.name.trim(),
-        label: newField.label || newField.name.trim(),
-        type: newField.type, required: newField.required,
-        options, ...scopeIds(),
+      // Same payload and server rules as Administration > User Defined Fields (company scope).
+      const created: any = await entitiesApi.createCustomField({
+        entity: resolvedEntityName, code, name: newField.label.trim(),
+        controlType: newField.type, required: newField.type === "checkbox" ? false : newField.required,
+        options, scope: "company",
       });
       setSchema((prev) => prev ? { ...prev, customFields: [...prev.customFields, created] } : prev);
       setNewField(emptyNewField);
@@ -504,7 +516,7 @@ export default function BpmRequestTypesPage() {
                 )}
                 {resolvedEntityName && (
                   <p className="text-xs text-primary font-medium mt-1">
-                    → Switch to "Entity Fields" tab to view and manage fields for <strong>{ENTITY_LABEL_MAP[resolvedEntityName] ?? resolvedEntityName}</strong>
+                    → Switch to &quot;Entity Fields&quot; tab to view and manage fields for <strong>{ENTITY_LABEL_MAP[resolvedEntityName] ?? resolvedEntityName}</strong>
                   </p>
                 )}
               </div>
@@ -575,16 +587,16 @@ export default function BpmRequestTypesPage() {
                       <Unlock className="h-3.5 w-3.5 text-primary" />
                       <span className="text-sm font-medium">Custom Fields</span>
                       <Badge variant="secondary" className="text-xs">{schema?.customFields.length ?? 0}</Badge>
-                      <span className="text-xs text-muted-foreground ml-1">— added via Form Designer</span>
+                      <span className="text-xs text-muted-foreground ml-1">— User Defined Fields</span>
                     </div>
 
                     <div className="rounded-md border divide-y mb-3">
                       {schema?.customFields.length === 0 ? (
-                        <p className="py-3 px-3 text-xs text-muted-foreground">No custom fields yet. Add one below.</p>
+                        <p className="py-3 px-3 text-xs text-muted-foreground">No custom fields yet.{udfEntity ? " Add one below." : ""}</p>
                       ) : schema?.customFields.map((f: any) => (
                         <div key={f.id} className="flex items-center gap-3 px-3 py-2 group">
-                          <span className="text-sm font-medium w-36 truncate">{f.label || f.name}</span>
-                          <span className="text-xs text-muted-foreground font-mono flex-1">{f.name}</span>
+                          <span className="text-sm font-medium w-36 truncate">{f.name}</span>
+                          <span className="text-xs text-muted-foreground font-mono flex-1">{f.code}</span>
                           <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${TYPE_BADGE[f.type] ?? "bg-gray-100 text-gray-700"}`}>{f.type}</span>
                           {f.required && <Badge variant="destructive" className="text-xs py-0">required</Badge>}
                           <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0"
@@ -595,39 +607,46 @@ export default function BpmRequestTypesPage() {
                       ))}
                     </div>
 
-                    {/* Add custom field form */}
+                    {/* Add custom field form — User Defined Fields, only for screens that render them */}
+                    {!udfEntity ? (
+                      <p className="rounded-md border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
+                        Custom fields can only be added for screens that display them ({UDF_ENTITIES.filter((e) => e.level === "screen" && e.capability === "supported").map((e) => e.label).join(", ")}).
+                        They are managed in{" "}
+                        <a href={UDF_ADMIN_PATH} className="font-medium text-primary underline-offset-2 hover:underline">Administration › User Defined Fields</a>.
+                      </p>
+                    ) : (
                     <div className="rounded-md border p-3 space-y-3 bg-muted/30">
                       <p className="text-xs font-medium text-muted-foreground">Add Custom Field</p>
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <Label className="text-xs">Field Name (key)</Label>
-                          <Input placeholder="e.g. custom_colour" className="h-8 text-sm font-mono"
-                            value={newField.name} onChange={(e) => setNF("name", e.target.value)} />
+                          <Label className="text-xs">Display Label</Label>
+                          <Input placeholder="e.g. Fabric Type" className="h-8 text-sm"
+                            value={newField.label} onChange={(e) => setNF("label", e.target.value)} />
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs">Display Label</Label>
-                          <Input placeholder="e.g. Custom Colour" className="h-8 text-sm"
-                            value={newField.label} onChange={(e) => setNF("label", e.target.value)} />
+                          <Label className="text-xs">Field Code</Label>
+                          <Input placeholder={newField.label.trim() ? suggestCode(newField.label) : "e.g. UD_FabricType"} className="h-8 text-sm font-mono"
+                            value={newField.code} onChange={(e) => setNF("code", e.target.value.replace(/\s+/g, "_"))} />
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
                           <Label className="text-xs">Type</Label>
-                          <Select value={newField.type} onValueChange={(v) => setNF("type", v)}>
+                          <Select value={newField.type} onValueChange={(v) => setNF("type", v as ControlType)}>
                             <SelectTrigger className="h-8 w-full text-sm"><SelectValue /></SelectTrigger>
                             <SelectContent className="w-full">
-                              {FIELD_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                              {UDF_CONTROLS.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>
                         <div className="flex items-end gap-2 pb-0.5">
                           <div className="flex items-center gap-1.5">
-                            <Switch id="nf-req" className="h-4 w-7" checked={newField.required} onCheckedChange={(v) => setNF("required", v)} />
+                            <Switch id="nf-req" className="h-4 w-7" checked={newField.required && newField.type !== "checkbox"} disabled={newField.type === "checkbox"} onCheckedChange={(v) => setNF("required", v)} />
                             <Label htmlFor="nf-req" className="text-xs cursor-pointer">Required</Label>
                           </div>
                         </div>
                       </div>
-                      {newField.type === "select" && (
+                      {newField.type === "dropdown" && (
                         <div className="space-y-1">
                           <Label className="text-xs">Options (comma separated)</Label>
                           <Input placeholder="e.g. option1, option2, option3" className="h-8 text-sm"
@@ -638,7 +657,12 @@ export default function BpmRequestTypesPage() {
                         {addingField ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
                         Add Field
                       </Button>
+                      <p className="text-[11px] text-muted-foreground">
+                        Created as a company-level User Defined Field for the {udfEntity.label} screen — defaults, option codes and ordering are configured in{" "}
+                        <a href={UDF_ADMIN_PATH} className="text-primary underline-offset-2 hover:underline">Administration › User Defined Fields</a>.
+                      </p>
                     </div>
+                    )}
                   </div>
                 </>
               )}

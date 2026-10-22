@@ -83,13 +83,13 @@ export function MeasurementChartTab({ styleCardId, sampleCardId, card, onReloadC
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                     <TableHead>Measurement</TableHead>
                     <TableHead className="text-center">Tolerance</TableHead>
                     {sizes.map((s) => <TableHead key={s} className="text-center">{s}</TableHead>)}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                   {chart.lines.map((line: any) => (
                     <TableRow key={line.id}>
                       <TableCell className="font-medium">{line.measurementDefinition?.name || "—"}</TableCell>

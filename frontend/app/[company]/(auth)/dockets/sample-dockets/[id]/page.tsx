@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +51,7 @@ export default function SampleDocketDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [docket, setDocket] = useState<any>(null);
+  useWorkspaceRecordLabel(docket?.title || undefined);
   const [loading, setLoading] = useState(true);
   const [recalculating, setRecalculating] = useState(false);
   const [locking, setLocking] = useState(false);

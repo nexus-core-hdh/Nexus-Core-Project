@@ -13,11 +13,12 @@ import { HEADER_COLUMNS as SIZE_SET_COLUMNS } from './size-set.service';
 import { HEADER_COLUMNS as UNIT_SET_COLUMNS } from './unit-set.service';
 import { INVENTORY_CARD_COLUMNS } from './inventory-card.service';
 import { HEADER_COLUMNS as WORK_ORDER_COLUMNS } from './work-order.service';
+import { HEADER_COLUMNS as PACKING_LIST_COLUMNS } from './packing-list.service';
 
 export type WorklistSourceKey =
   | 'purchase-receipt' | 'purchase-receipt-item' | 'yarn-card' | 'fabric-card' | 'current-account' | 'warehouse' | 'financial-receipt'
   | 'trim-card' | 'trim-inventory-card' | 'purchase-order' | 'contract' | 'size-set' | 'unit-set' | 'inventory-card'
-  | 'work-order' | 'subcontract-type' | 'subcontract-receipt' | 'script';
+  | 'work-order' | 'subcontract-type' | 'subcontract-receipt' | 'script' | 'packing-list';
 
 // Subcontract Type / Subcontract Receipt — the two real columns on MD_SubcontractType/
 // MD_SubcontractReceipt (see legacy-master-lookup.service.ts's TABLES config for the master CRUD
@@ -48,12 +49,15 @@ const SOURCES: WorklistSourceFields[] = [
   // other entry here — rather than a hand-picked subset.
   { source: 'purchase-receipt-item', label: 'Purchase Receipt Item List', fields: PURCHASE_RECEIPT_ITEM_COLUMNS },
   { source: 'yarn-card', label: 'Yarn Card List', fields: YARN_CARD_COLUMNS },
-  { source: 'fabric-card', label: 'Fabric Card List', fields: FABRIC_CARD_COLUMNS },
+  // Fabric/Trim cards keep their Unit only on the Unit tab (no Unit column in their own header
+  // columns), so "UnitId" is offered here too — worklist-rows.service.ts displays it as the item's
+  // Base Unit name, the same value Yarn's UnitId shows.
+  { source: 'fabric-card', label: 'Fabric Card List', fields: [...FABRIC_CARD_COLUMNS, 'UnitId'] },
   { source: 'current-account', label: 'Current Account List', fields: CURRENT_ACCOUNT_COLUMNS },
   { source: 'warehouse', label: 'Warehouse List', fields: WAREHOUSE_COLUMNS },
   { source: 'financial-receipt', label: 'Financial Receipt List', fields: FINANCIAL_RECEIPT_COLUMNS },
   { source: 'trim-card', label: 'Trim Card List', fields: TRIM_CARD_COLUMNS },
-  { source: 'trim-inventory-card', label: 'Trim Inventory Card List', fields: TRIM_INVENTORY_CARD_COLUMNS },
+  { source: 'trim-inventory-card', label: 'Trim Inventory Card List', fields: [...TRIM_INVENTORY_CARD_COLUMNS, 'UnitId'] },
   { source: 'purchase-order', label: 'Purchase Order List', fields: PURCHASE_ORDER_COLUMNS },
   { source: 'contract', label: 'Contract List', fields: CONTRACT_COLUMNS },
   { source: 'size-set', label: 'Size List', fields: SIZE_SET_COLUMNS },
@@ -63,6 +67,9 @@ const SOURCES: WorklistSourceFields[] = [
   // which that screen's existing list() already returns on each row; like Inventory Card List, a
   // custom worklist there is a client-side projection of those rows (no resolve() round-trip).
   { source: 'work-order', label: 'Work Order List', fields: WORK_ORDER_COLUMNS },
+  // Packing List — IM_PackagingList header columns (packing-list.service.ts); list() rows carry every
+  // one, so a custom worklist is a client-side projection like Work Order List above.
+  { source: 'packing-list', label: 'Packing List', fields: PACKING_LIST_COLUMNS },
   // Joined targets ONLY (see worklist-rows.service.ts's RELATIONSHIPS['purchase-receipt']) — a
   // worklist field with one of these sources resolves the real Name via a LEFT JOIN off the raw
   // SubcontractTypeId/SubcontractReceiptId columns already on IM_Receipt (Standard's own "Add
@@ -101,6 +108,7 @@ const ALLOWED_SOURCES_BY_PRIMARY: Partial<Record<string, WorklistSourceKey[]>> =
   'sale-contract-list': ['contract'],
   'inventory-card-list': ['inventory-card'],
   'work-order-list': ['work-order'],
+  'packing-list-list': ['packing-list'],
   // Purchase Return's "Import Related Receipt" dialog — not itself a *-list screen (it's a
   // selection dialog, not a page with a table-key), so it gets its own explicit primary key
   // rather than reusing "purchase-receipt-list" (which doesn't exist — Purchase Receipt has no

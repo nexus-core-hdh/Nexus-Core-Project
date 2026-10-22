@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../../prisma/prisma.service';
+import { smtpTransportFromEnv } from './smtp-env';
 
 interface Transport {
   transporter: nodemailer.Transporter;
@@ -39,18 +40,16 @@ export class MailService {
         source: `SmtpSetting "${setting.name}"`,
       };
     }
-    const host = process.env.SMTP_HOST;
-    if (!host) return null;
-    return {
-      transporter: nodemailer.createTransport({
-        host,
-        port: Number(process.env.SMTP_PORT || 587),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
-      }),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || `no-reply@${host}`,
-      source: 'SMTP_* environment',
-    };
+    // SMTP_* environment (smtp-env.ts — the same settings `npm run smtp:verify` checks).
+    const env = smtpTransportFromEnv();
+    if (!env) return null;
+    return { transporter: nodemailer.createTransport(env.options), from: env.from, source: env.source };
+  }
+
+  /** Whether a transport exists for this company (its SmtpSetting or the SMTP_* environment) — lets
+   *  a caller refuse up front instead of creating records for an email that cannot be sent. */
+  async isConfigured(companyId?: string | null): Promise<boolean> {
+    return !!(await this.transportFor(companyId));
   }
 
   /** Sends a message; returns false (and logs why, without content) when it could not be sent. */

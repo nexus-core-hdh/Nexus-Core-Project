@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,6 +36,7 @@ export default function BoardEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [document, setDocument] = useState<any>(null);
+  useWorkspaceRecordLabel(document?.name || undefined);
   const [columns, setColumns] = useState<Column[]>([]);
   const [isEditingName, setIsEditingName] = useState(false);
   const [documentName, setDocumentName] = useState("");

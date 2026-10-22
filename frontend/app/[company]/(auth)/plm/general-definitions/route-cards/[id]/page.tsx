@@ -183,7 +183,7 @@ export default function RouteCardDetailPage() {
   );
   const totalTableWidth = gridColumns.totalWidth(DEL_W);
 
-  const th = "border-r border-border/70 bg-muted/50 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground/90 h-7 whitespace-nowrap";
+  const th = "border-r border-border/70 bg-slate-700 dark:bg-slate-800 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-white h-7 whitespace-nowrap";
   const td = "border-r border-b border-border/50 p-0";
   const cellInput = "h-6 w-full bg-transparent px-1.5 text-[11.5px] outline-none";
 
@@ -310,7 +310,7 @@ export default function RouteCardDetailPage() {
               <col style={{ width: DEL_W }} />
             </colgroup>
             <thead>
-              <tr>
+              <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                 {displayColumnDefs.map((col) => {
                   const fixed = FIXED_COLS.includes(col.key);
                   return (
@@ -324,7 +324,7 @@ export default function RouteCardDetailPage() {
                       >
                         {col.label}
                       </span>
-                      <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary" onMouseDown={gridColumns.startResize(col.key)} onDoubleClick={() => gridColumns.resetWidth(col.key)} />
+                      <div className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40" onMouseDown={gridColumns.startResize(col.key)} onDoubleClick={() => gridColumns.resetWidth(col.key)} />
                     </th>
                   );
                 })}

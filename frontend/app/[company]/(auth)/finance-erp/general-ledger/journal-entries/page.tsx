@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { BookText, CheckCircle2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +36,7 @@ export default function JournalEntryFormPage() {
 
   const [accounts, setAccounts] = useState<AccountNode[]>([]);
   const [entry, setEntry] = useState<JournalEntry | null>(null);
+  useWorkspaceRecordLabel(!isNew ? entry?.journalNumber || undefined : undefined);
   const [date, setDate] = useState(todayIso());
   const [reference, setReference] = useState("");
   const [description, setDescription] = useState("");

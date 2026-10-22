@@ -34,8 +34,8 @@ export default function SalesTaxReportPage() {
       <div className="rounded-lg border">
         <div className="border-b bg-muted/30 px-4 py-2 text-sm font-semibold">Tax Rate Breakdown</div>
         <Table>
-          <TableHeader><TableRow><TableHead>Tax Name</TableHead><TableHead className="text-right">Rate</TableHead><TableHead>Account</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-          <TableBody>
+          <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Tax Name</TableHead><TableHead className="text-right">Rate</TableHead><TableHead>Account</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {salesRates.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>{r.name}</TableCell>

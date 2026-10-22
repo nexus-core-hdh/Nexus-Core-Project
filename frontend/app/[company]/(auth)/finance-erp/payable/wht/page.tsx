@@ -49,13 +49,13 @@ export default function WhtOnPurchasesPage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-background hover:bg-muted/60">
+              <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                 <TableHead>Vendor</TableHead><TableHead>Invoice</TableHead><TableHead>Tax Type</TableHead>
                 <TableHead className="text-right">Rate %</TableHead><TableHead className="text-right">Gross Amount</TableHead>
                 <TableHead className="text-right">WHT Amount</TableHead><TableHead className="text-right">Net Payable</TableHead><TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {filtered.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>{VENDORS.find((v) => v.id === r.vendorId)?.name ?? "—"}</TableCell>

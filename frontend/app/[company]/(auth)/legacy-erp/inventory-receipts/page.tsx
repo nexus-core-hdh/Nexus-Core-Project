@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { FormSection } from "@/components/forms/form-section";
 import { FormTextField as FieldText, FieldLabel } from "@/components/forms/form-field";
@@ -138,6 +139,7 @@ export default function InventoryReceiptPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [receiptId, setReceiptId] = useState<number | null>(null);
+  useWorkspaceRecordId(receiptId);
   const [form, setForm] = useState<Record<string, any>>(() =>
     incomingSubcontractTypeLabel
       ? { ...emptyForm, subcontractTypeId: incomingSubcontractTypeId ?? "", subcontractTypeLabel: incomingSubcontractTypeLabel }
@@ -160,6 +162,9 @@ export default function InventoryReceiptPage() {
   // moments after mount) would defeat the whole point of passing the process through.
   const { clearDraft } = useDraftForm({ storageKey: `inventoryReceiptDraft_${receiptType}`, enabled: receiptId == null && !incomingSubcontractTypeLabel, form, setForm });
   const lineGridRef = useRef<InventoryReceiptLineGridHandle>(null);
+  // Grid-level User Defined Fields of the line grid (logical grid "InventoryReceiptLine") — stored
+  // by this screen's Save. (The header's own Customized Fields tab keeps its own Save.)
+  const [gridUdfDirty, setGridUdfDirty] = useState(false);
   // Pending Orders (Current Account -> right-click) — Purchase Order (type 1) sources Purchase
   // Receipt (type 2); Subcontract Order (type 3 — see order-types.config.ts) sources Outside
   // Process Receive Receipt (type 11), the same pairing assertRelatedImportSource's own comment
@@ -356,6 +361,7 @@ export default function InventoryReceiptPage() {
   const save = async () => {
     if (!form.currentAccountId) return toast.error("Current Account is required");
     if (!form.inWarehouseId) return toast.error("Warehouse is required");
+    if (receiptId && lineGridRef.current && !lineGridRef.current.validateUdf()) { setActiveTab("General"); return; }
     setSaving(true);
     try {
       const dto: Record<string, any> = {
@@ -386,6 +392,8 @@ export default function InventoryReceiptPage() {
         });
         setForm(f);
         lastSavedRef.current = f;
+        // Lines of an existing receipt already have their ids; their grid UDF values go with this Save.
+        await lineGridRef.current?.saveUdf(receiptId);
         toast.success("Updated");
       } else {
         const r: any = await client.create(dto);
@@ -422,7 +430,7 @@ export default function InventoryReceiptPage() {
     }
   };
 
-  const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
+  const isDirty = !readOnly && (JSON.stringify(form) !== JSON.stringify(lastSavedRef.current) || gridUdfDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
 
   // Universal Action Menu -> Return/Purchase Receipt submenu — the same PO->Receipt family this
@@ -717,18 +725,17 @@ export default function InventoryReceiptPage() {
                 Purchase Order) and Detail (once the receipt exists). Two tab panels each holding
                 their own copy would desync two independent line lists; one instance that stays
                 mounted while moving between those two tabs keeps a single source of truth. Before
-                the first Save the lines are drafts, so Detail keeps its Save-required notice. */}
-            {(activeTab === "General" || (activeTab === "Detail" && receiptId)) && (
-              <div className={activeTab === "General" ? "mt-3 space-y-2" : "space-y-2"}>
-                {activeTab === "General" && (
-                  <div className="flex items-center gap-2">
-                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
-                  </div>
-                )}
-                <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} />
-              </div>
-            )}
+                the first Save the lines are drafts, so Detail keeps its Save-required notice.
+                Hidden (not unmounted) on the other tabs, so unsaved grid UDF edits survive. */}
+            <div className={activeTab === "General" ? "mt-3 space-y-2" : activeTab === "Detail" && receiptId ? "space-y-2" : "hidden"}>
+              {activeTab === "General" && (
+                <div className="flex items-center gap-2">
+                  <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
+                </div>
+              )}
+              <InventoryReceiptLineGrid ref={lineGridRef} inventoryReceiptId={receiptId} readOnly={readOnly} api={client} initialLines={incomingPrefillLines ?? undefined} onUdfDirtyChange={setGridUdfDirty} />
+            </div>
           </div>
         </div>
       </Tabs>

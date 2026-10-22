@@ -17,6 +17,8 @@ import { Search, Plus, Trash2, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell, type AutocompleteOption } from "@/components/legacy-erp/autocomplete-text-cell";
 import { useGridColumns } from "@/hooks/use-grid-columns";
+import { useGridUdf, isUdfColumnKey, type UdfColumnKey } from "@/hooks/use-grid-udf";
+import { UdfGridCell } from "@/components/custom-fields/udf-grid-cell";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 
 // Financial Receipt detail grid — the per-line allocation against FI_ReceiptItem (curated
@@ -44,6 +46,11 @@ const COLUMNS: ColumnDef[] = [
   { key: "credit", label: "Credit", align: "right" },
 ];
 const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
+
+// Grid-level User Defined Fields ("FiReceiptLine", hooks/use-grid-udf.ts) join the column set as
+// `udf:<code>` columns: reorderable, hideable and resizable like any other.
+type GridKey = ColKey | UdfColumnKey;
+type DisplayColumn = Omit<ColumnDef, "key"> & { key: GridKey };
 // Current Account identifies the line and always stays first & visible.
 const FIXED_COLS: ColKey[] = ["currentAccount"];
 const DEFAULT_WIDTHS: Record<ColKey, number> = {
@@ -85,17 +92,25 @@ interface Props {
   fiReceiptId: number | null;
   readOnly?: boolean;
   api?: FinancialReceiptItemsApi;
+  /** Whether any grid UDF value has been edited and not saved yet (feeds the screen's dirty state). */
+  onUdfDirtyChange?: (dirty: boolean) => void;
 }
 
 export interface FinancialReceiptLineGridHandle {
   commitDrafts: (newFiReceiptId: number) => Promise<void>;
+  /** Grid UDF Required check over the saved lines — call before the document's Save writes anything. */
+  validateUdf: () => boolean;
+  /** Stores the grid UDF values of every saved line — part of the document's Save. */
+  saveUdf: (fiReceiptId: number) => Promise<boolean>;
 }
 
 export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandle, Props>(function FinancialReceiptLineGrid(
-  { fiReceiptId, readOnly = false, api = legacyErpApi.financialReceipts },
+  { fiReceiptId, readOnly = false, api = legacyErpApi.financialReceipts, onUdfDirtyChange },
   ref,
 ) {
   const [loading, setLoading] = useState(false);
+  const udf = useGridUdf({ grid: "FiReceiptLine", parentId: fiReceiptId });
+  useEffect(() => { onUdfDirtyChange?.(udf.dirty); }, [udf.dirty]); // eslint-disable-line react-hooks/exhaustive-deps
   const [rows, setRows] = useState<LineRow[]>(() => [emptyLine()]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -188,7 +203,12 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
     await load(newFiReceiptId);
   };
 
-  useImperativeHandle(ref, () => ({ commitDrafts }), [rows]);
+  const savedRowIds = () => rows.map((r) => r.__rowId).filter((id): id is number => id != null);
+  useImperativeHandle(ref, () => ({
+    commitDrafts,
+    validateUdf: () => udf.validate(savedRowIds()),
+    saveUdf: (id: number) => udf.save(id, savedRowIds()),
+  }), [rows, udf]);
 
   const addRow = () => setRows((prev) => [...prev, emptyLine()]);
 
@@ -225,16 +245,19 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
   const gridColumnDefs = useMemo(
-    () => COLUMNS.map((c) => ({ key: c.key, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
-    [],
+    () => [
+      ...COLUMNS.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+      ...udf.columnDefs,
+    ],
+    [udf.columnDefs],
   );
-  const gridColumns = useGridColumns<ColKey>({
+  const gridColumns = useGridColumns<GridKey>({
     storageKey: "financialReceiptLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
   });
   const displayColumnDefs = useMemo(
-    () => gridColumns.displayColumnDefs.map((c) => COLUMN_BY_KEY.get(c.key)!),
+    () => gridColumns.displayColumnDefs.map((c): DisplayColumn => COLUMN_BY_KEY.get(c.key as ColKey) ?? { key: c.key, label: c.label }),
     [gridColumns.displayColumnDefs],
   );
   const totalTableWidth = gridColumns.totalWidth(!readOnly ? DEL_W : 0);
@@ -271,13 +294,13 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
 
       <Table className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
         <colgroup>
-          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.colWidths[col.key] }} />)}
+          {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.getWidth(col.key) }} />)}
           {!readOnly && <col style={{ width: DEL_W }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className="h-11 bg-background hover:bg-muted/60">
+          <TableRow className="h-11 bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
             {displayColumnDefs.map((col) => {
-              const fixed = FIXED_COLS.includes(col.key);
+              const fixed = (FIXED_COLS as GridKey[]).includes(col.key);
               return (
                 <TableHead
                   key={col.key}
@@ -299,7 +322,7 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
                     {col.label}
                   </span>
                   <div
-                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                     onMouseDown={gridColumns.startResize(col.key)}
                     onDoubleClick={() => gridColumns.resetWidth(col.key)}
                     title="Drag to resize · double-click to reset width"
@@ -398,7 +421,24 @@ export const FinancialReceiptLineGrid = forwardRef<FinancialReceiptLineGridHandl
             };
             return (
               <TableRow key={row.clientId} className="h-12">
-                {displayColumnDefs.map((col) => cells[col.key])}
+                {displayColumnDefs.map((col) => {
+                  if (!isUdfColumnKey(col.key)) return cells[col.key];
+                  const field = udf.fieldForColumn(col.key);
+                  return (
+                    <TableCell key={col.key} className={cn(CELL, "p-0")} data-col={col.key}>
+                      {field && (
+                        <UdfGridCell
+                          field={field}
+                          value={udf.valueOf(row.__rowId, field.id)}
+                          onChange={(v) => row.__rowId != null && udf.setValue(row.__rowId, field.id, v)}
+                          readOnly={readOnly}
+                          unsavedRow={row.__rowId == null}
+                          invalid={udf.isMissing(row.__rowId, field.id)}
+                        />
+                      )}
+                    </TableCell>
+                  );
+                })}
                 {!readOnly && (
                   <TableCell className="h-12 border-b border-border p-0 text-center">
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => setPendingDeleteId(row.clientId)}>

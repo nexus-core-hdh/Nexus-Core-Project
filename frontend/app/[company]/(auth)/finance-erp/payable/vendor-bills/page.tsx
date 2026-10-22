@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { Receipt } from "lucide-react";
 import { toast } from "sonner";
@@ -25,6 +26,7 @@ export default function VendorBillFormPage() {
   const isEdit = !!id;
 
   const [existing, setExisting] = useState<VendorBill | null>(null);
+  useWorkspaceRecordLabel(isEdit ? existing?.billNumber || undefined : undefined);
   const [vendorId, setVendorId] = useState("");
   const [billDate, setBillDate] = useState(todayIso());
   const [dueDate, setDueDate] = useState(addDaysIso(todayIso(), 30));

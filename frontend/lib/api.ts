@@ -60,8 +60,10 @@ async function apiRequest(endpoint: string, options?: RequestInit) {
   if (!response.ok) {
     let errorMessage = `API request failed: ${response.statusText}`;
     let trialExpired = false;
+    let jsonBody = false;
     try {
       const errorData = await response.json();
+      jsonBody = true;
       errorMessage = errorData.error || errorData.message || errorMessage;
       if (errorData.details) {
         errorMessage += ` - ${errorData.details}`;
@@ -73,6 +75,14 @@ async function apiRequest(endpoint: string, options?: RequestInit) {
     const error = new Error(errorMessage);
     (error as any).status = response.status;
     (error as any).trialExpired = trialExpired;
+    // Backend unreachable behind a same-origin proxy (lib/dev-api-proxy.ts under `next dev`, which
+    // answers 503 BACKEND_UNAVAILABLE / 502; a reverse proxy in production: 502/503/504, or a bare
+    // non-JSON 500 when the backend refuses the connection). The NestJS API's own errors are
+    // always JSON, so these are flagged like a direct fetch failure — callers already treat
+    // isNetworkError as "server not reachable" rather than an unexpected error.
+    if ([502, 503, 504].includes(response.status) || (response.status === 500 && !jsonBody)) {
+      (error as any).isNetworkError = true;
+    }
     throw error;
   }
 
@@ -152,7 +162,24 @@ export const companiesApi = {
   // Get company by slug
   getCompanyBySlug: (slug: string) => apiRequest(`/companies/slug/${slug}`),
 
-  // Create company
+  // Platform-level company management (backend CompaniesController): allowed only for users of
+  // the platform-owner company holding companies:read / companies:create — enforced server-side.
+  // getAccess says which of these the Companies screen may offer the signed-in user.
+  getAccess: (): Promise<{ isPlatformOwner: boolean; canCreate: boolean; canViewAll: boolean; canInviteAdmin: boolean; trialDefaultDays: number | null }> =>
+    apiRequest('/companies/access', { headers: getAuthHeaders() }),
+  listAllCompanies: () => apiRequest('/companies', { headers: getAuthHeaders() }),
+  getAnyCompany: (id: string) => apiRequest(`/companies/${encodeURIComponent(id)}`, { headers: getAuthHeaders() }),
+
+  // Create First Admin (platform owner + companies:invite-admin, enforced server-side): status;
+  // create the first administrator with the Users dialog's temporary password (no email); and,
+  // separately and optionally, email them a set-password link (needs SMTP — the response says
+  // whether it was actually sent).
+  getFirstAdmin: (id: string) => apiRequest(`/companies/${encodeURIComponent(id)}/first-admin`, { headers: getAuthHeaders() }),
+  createFirstAdmin: (id: string, body: { name: string; email: string; password: string; phone?: string; department?: string }) =>
+    apiRequest(`/companies/${encodeURIComponent(id)}/first-admin`, { method: 'POST', body: JSON.stringify(body) }),
+  sendFirstAdminSetupLink: (id: string) => apiRequest(`/companies/${encodeURIComponent(id)}/first-admin/setup-link`, { method: 'POST', body: '{}' }),
+
+  // Register a company: { name, slug, email?, phone?, address?, industry?, website? }.
   createCompany: (company: any) => apiRequest('/companies', {
     method: 'POST',
     body: JSON.stringify(company),

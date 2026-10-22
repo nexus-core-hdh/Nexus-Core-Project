@@ -16,7 +16,7 @@
 // own cards (the state right after Produce, or reopening from that line's own context menu);
 // omitted, this is a normal browsable list with server-side filters/pagination
 // (legacyErpApi.serialCards.listAll — never the whole table loaded client-side).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -27,19 +27,58 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import { ReportGrid, type ReportColumn } from "../fabric-yarn-requirements/_components/report-grid";
 import { useRowSelection } from "@/hooks/use-row-selection";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
-import { SerialCardEditDialog, type SerialCardRow } from "@/components/legacy-erp/serial-card-edit-dialog";
+import { SerialCardEditDialog, serialCardToUpdateItem, type SerialCardRow } from "@/components/legacy-erp/serial-card-edit-dialog";
+import { printSerialCardLabels } from "@/components/legacy-erp/serial-card-labels";
+import { serialNoFromQr, serialNoFromQrText } from "@/lib/legacy-erp/qr";
+import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
+import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-serial-cards-dialog";
 import type { RowAction } from "@/components/legacy-erp/row-actions";
+import type { ColumnFilterState } from "@/hooks/use-column-filters";
 import { legacyErpApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
-import { Layers, RefreshCw, Search, RotateCcw, Eye, Pencil, Trash2, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import {
+  Layers, RefreshCw, Search, RotateCcw, Eye, Pencil, Trash2, ChevronLeft, ChevronRight, Plus,
+  Download, Equal, Copy, Printer, X, ScanLine,
+} from "lucide-react";
 
 import { DatePicker } from "@/components/ui/date-picker";
 const PAGE_SIZE = 100;
+const PATH = "/legacy-erp/serial-cards";
+
+// Fields "Copy Column" can fill across the selection — exactly the ones the Update form edits.
+type CopyField = { key: keyof SerialCardRow; label: string; display?: (r: SerialCardRow) => unknown };
+const COPY_FIELDS: CopyField[] = [
+  { key: "Explanation", label: "Explanation" },
+  { key: "PartyNo", label: "Party No" },
+  { key: "ProducerSerialCode", label: "Manufacturer Serial" },
+  { key: "QualityTypeId", label: "Quality Type", display: (r) => r.qualityTypeName },
+  { key: "ResourceId", label: "Resource", display: (r) => r.resourceCode },
+  { key: "EmployeeId", label: "Employee", display: (r) => r.employeeName },
+  { key: "ManufacturingDate", label: "Product Date", display: (r) => (r.ManufacturingDate ? new Date(r.ManufacturingDate).toLocaleDateString() : null) },
+  { key: "Quantity", label: "Quantity" },
+  { key: "PieceCount", label: "Piece Count" },
+  { key: "Width", label: "Width" },
+  { key: "Weight", label: "Grams" },
+  { key: "WeightM2", label: "M2" },
+  { key: "RawWidth", label: "Raw Width" },
+  { key: "RawWeight", label: "Raw Grams" },
+  { key: "RawLength", label: "Raw Length" },
+  { key: "ProductLength", label: "Product Length" },
+  { key: "Pus", label: "Pus" },
+  { key: "Fine", label: "Fine" },
+];
+const copyDisplay = (f: CopyField, r: SerialCardRow) => {
+  const v = f.display ? f.display(r) : r[f.key];
+  return v == null || v === "" ? "(empty)" : String(v);
+};
 
 const emptyFilters = {
   serialNo: "", inventoryQuery: "", receiptNo: "", workOrderNo: "", variantQuery: "",
@@ -62,8 +101,24 @@ export default function SerialCardsPage() {
   const [loading, setLoading] = useState(false);
 
   const [editTarget, setEditTarget] = useState<{ card: SerialCardRow; mode: "view" | "update" } | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<SerialCardRow | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<SerialCardRow[] | null>(null);
   const [produceOpen, setProduceOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyField, setCopyField] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [scanCode, setScanCode] = useState("");
+  const [scanning, setScanning] = useState(false);
+  // A label QR holds many lines of text; a keyboard-wedge scanner types each line + Enter. The
+  // first line ("SERIAL CARD: …") opens the card; the rest of that burst is ignored.
+  const qrTextBurstAt = useRef(0);
+  // Party No column filter — applied to the server query (every page), not just the loaded rows.
+  // A ref so load() (also called from Find / paging / reloads) always sends the current selection.
+  const partyNosRef = useRef<string[]>([]);
+  const [partyNoOptions, setPartyNoOptions] = useState<string[]>([]);
+
+  const tabCtx = useWorkspaceTabContext();
+  const closeTab = useWorkspaceStore((s) => s.closeTab);
 
   const { selectedIds, selectRow, handleRowContextMenu, toggleRow, selectAll, clearSelection, allSelected, someSelected } =
     useRowSelection(rows, { getId: (r) => r.RecId });
@@ -81,11 +136,13 @@ export default function SerialCardsPage() {
         dateFrom: f.dateFrom || undefined,
         dateTo: f.dateTo || undefined,
         status: f.status !== "all" ? f.status : undefined,
+        partyNo: partyNosRef.current.length ? partyNosRef.current : undefined,
         skip: nextSkip, take: PAGE_SIZE,
       });
       const list = Array.isArray(r?.rows) ? r.rows : [];
       setRows(list.map((row: any) => ({ ...row, id: row.RecId })));
       setTotal(r?.total ?? 0);
+      setPartyNoOptions(Array.isArray(r?.partyNoOptions) ? r.partyNoOptions : []);
       setSkip(r?.skip ?? 0);
     } catch (e: any) {
       toast.error(e.message || "Failed to load Serial Cards");
@@ -105,22 +162,109 @@ export default function SerialCardsPage() {
   const find = () => { setAppliedFilters(filters); void load(filters, 0); };
   const clear = () => { setFilters(emptyFilters); setAppliedFilters(emptyFilters); void load(emptyFilters, 0); clearSelection(); };
 
+  // Selected cards in grid (list) order — only cards on the loaded page can be acted on.
+  const selectedRows = useMemo(() => rows.filter((r) => selectedIds.has(r.RecId)), [rows, selectedIds]);
+  const single = selectedRows.length === 1 ? selectedRows[0] : null;
+
+  // Delete — the existing per-card remove(), once per selected card; failures are reported, not hidden.
   const confirmDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTargets?.length) return;
+    setBusy(true);
+    const failed: string[] = [];
+    let deleted = 0;
+    for (const card of deleteTargets) {
+      try {
+        await legacyErpApi.serialCards.remove(card.RecId);
+        deleted++;
+      } catch (e: any) {
+        failed.push(`${card.SerialCode}: ${e.message || "failed"}`);
+      }
+    }
+    setBusy(false);
+    setDeleteTargets(null);
+    if (deleted) toast.success(deleteTargets.length === 1 ? `Serial Card ${deleteTargets[0].SerialCode} deleted.` : `${deleted} serial card${deleted === 1 ? "" : "s"} deleted.`);
+    if (failed.length) toast.error(`Could not delete ${failed.length}: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}`);
+    clearSelection();
+    await load(appliedFilters, skip);
+  };
+
+  const confirmAssign = async () => {
+    setBusy(true);
     try {
-      await legacyErpApi.serialCards.remove(deleteTarget.RecId);
-      toast.success(`Serial Card ${deleteTarget.SerialCode} deleted.`);
-      setDeleteTarget(null);
+      const updated: any = await legacyErpApi.serialCards.assignQuantity(selectedRows.map((r) => r.RecId));
+      const count = Array.isArray(updated) ? updated.length : selectedRows.length;
+      toast.success(`Quantity assigned to ${count} serial card${count === 1 ? "" : "s"}.`);
+      setAssignOpen(false);
       await load(appliedFilters, skip);
     } catch (e: any) {
-      toast.error(e.message || "Failed to delete serial card");
+      toast.error(e.message || "Failed to assign quantity");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Copy Column — the chosen field's value from the first selected card onto the others, through
+  // the existing Update (full rows, so no other field changes; the receipt-line quantity cap applies).
+  const copySource = selectedRows[0] ?? null;
+  const copyDef = COPY_FIELDS.find((f) => f.key === copyField) ?? null;
+  const confirmCopy = async () => {
+    if (!copySource || !copyDef) return;
+    setBusy(true);
+    try {
+      const value = copySource[copyDef.key];
+      const items = selectedRows.slice(1).map((r) => serialCardToUpdateItem({ ...r, [copyDef.key]: value }));
+      await legacyErpApi.serialCards.updateFlat(items);
+      toast.success(`${copyDef.label} copied to ${items.length} serial card${items.length === 1 ? "" : "s"}.`);
+      setCopyOpen(false);
+      await load(appliedFilters, skip);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to copy column");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // QR labels — payloads come from the server (card + linked production data + Yarn Recipe).
+  const printLabels = async () => {
+    const ids = selectedRows.map((r) => r.RecId);
+    try {
+      const opened = await printSerialCardLabels(() => legacyErpApi.serialCards.labels(ids) as Promise<any>);
+      if (!opened) toast.error("The label window was blocked — allow pop-ups for this site and try again.");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to generate labels");
+    }
+  };
+
+  const closeScreen = () => closeTab(tabCtx?.tabKey ?? PATH);
+
+  // Scan: a label QR (its text, or an earlier label's link / JSON) or a typed Serial No — a
+  // scanner types it and sends Enter.
+  const scan = async () => {
+    const isQrText = serialNoFromQrText(scanCode.trim()) != null;
+    if (!isQrText && Date.now() - qrTextBurstAt.current < 1500) {
+      qrTextBurstAt.current = Date.now();
+      setScanCode("");
+      return;
+    }
+    if (isQrText) qrTextBurstAt.current = Date.now();
+    const code = serialNoFromQr(scanCode) ?? scanCode.trim();
+    if (!code || scanning) return;
+    setScanning(true);
+    try {
+      const found: any = await legacyErpApi.serialCards.byCode(code);
+      setEditTarget({ card: { ...found, id: found.RecId }, mode: "view" });
+      setScanCode("");
+    } catch (e: any) {
+      toast.error(e.message || `No serial card with Serial No ${code}`);
+    } finally {
+      setScanning(false);
     }
   };
 
   const getRowActions = (row: SerialCardRow): RowAction[] => [
     { key: "view", label: "View / Detail", icon: Eye, onSelect: () => setEditTarget({ card: row, mode: "view" }) },
     { key: "update", label: "Update", icon: Pencil, onSelect: () => setEditTarget({ card: row, mode: "update" }) },
-    { key: "delete", label: "Delete", icon: Trash2, destructive: true, separatorBefore: true, onSelect: () => setDeleteTarget(row) },
+    { key: "delete", label: "Delete", icon: Trash2, destructive: true, separatorBefore: true, onSelect: () => setDeleteTargets([row]) },
   ];
 
   const columns: ReportColumn<SerialCardRow>[] = useMemo(() => [
@@ -131,8 +275,13 @@ export default function SerialCardsPage() {
     { key: "color", label: "Color", defaultWidth: 130, render: (r) => r.colorCode || r.colorName || "—" },
     { key: "unit", label: "Unit", defaultWidth: 70, render: (r) => r.unitCode || "—" },
     { key: "orderNo", label: "Order No", defaultWidth: 110, render: (r) => r.workOrderNo || "—", filterable: true, filterValue: (r) => r.workOrderNo },
+    { key: "styleNo", label: "Style No", defaultWidth: 110, render: (r) => r.styleNumber || "—", filterable: true, filterValue: (r) => r.styleNumber },
     { key: "receiptNo", label: "Receipt No", defaultWidth: 100, render: (r) => r.receiptNo || "—" },
-    { key: "partyNo", label: "Party No", defaultWidth: 90, render: (r) => r.PartyNo || "—" },
+    {
+      key: "partyNo", label: "Party No", defaultWidth: 90, render: (r) => r.PartyNo || "—",
+      // Trimmed, blank -> null: blank Party Nos are never an option (same as every column filter).
+      filterable: true, filterValue: (r) => r.PartyNo?.trim() || null, filterOptions: partyNoOptions,
+    },
     { key: "qualityType", label: "Quality Type", defaultWidth: 110, render: (r) => r.qualityTypeName || "—" },
     { key: "resource", label: "Resource", defaultWidth: 100, render: (r) => r.resourceCode || "—" },
     { key: "employee", label: "Employee", defaultWidth: 130, render: (r) => r.employeeName || "—" },
@@ -159,11 +308,33 @@ export default function SerialCardsPage() {
       ),
       filterable: true, filterValue: (r) => (r.hasTransaction ? "Has Transaction" : "Has No Transactions"),
     },
-  ], []);
+  ], [partyNoOptions]);
+
+  // The grid reports its column filters; the Party No one is mirrored into the query (from the
+  // first page). Other column filters stay client-side, as before.
+  const onColumnFiltersChange = (f: Record<string, ColumnFilterState>) => {
+    const next = [...(f.partyNo?.values ?? [])].sort();
+    if (next.join("\u0000") === partyNosRef.current.join("\u0000")) return;
+    partyNosRef.current = next;
+    void load(appliedFilters, 0);
+  };
 
   const pageFrom = total === 0 ? 0 : skip + 1;
   const pageTo = Math.min(skip + PAGE_SIZE, total);
   const selectedCount = selectedIds.size;
+  const n = selectedRows.length;
+  // Bottom action bar; `reason` is why an action is disabled for the current selection (null = enabled).
+  const actions: { key: string; label: string; icon: typeof Eye; onClick: () => void; reason: string | null; destructive?: boolean }[] = [
+    { key: "load", label: "Load", icon: Download, onClick: find, reason: loading ? "Loading…" : null },
+    { key: "clear", label: "Clear", icon: RotateCcw, onClick: clear, reason: loading ? "Loading…" : null },
+    { key: "assign", label: "Assign to Qty", icon: Equal, onClick: () => setAssignOpen(true), reason: n ? null : "Select the serial cards to share the receipt line's quantity" },
+    { key: "update", label: "Update", icon: Pencil, onClick: () => single && setEditTarget({ card: single, mode: "update" }), reason: single ? null : "Select exactly one serial card" },
+    { key: "delete", label: "Delete", icon: Trash2, onClick: () => setDeleteTargets(selectedRows), reason: n ? null : "Select the serial cards to delete", destructive: true },
+    { key: "copy", label: "Copy Column", icon: Copy, onClick: () => { setCopyField(""); setCopyOpen(true); }, reason: n >= 2 ? null : "Select two or more serial cards — the first one's value is copied to the rest" },
+    { key: "label", label: "Label", icon: Printer, onClick: printLabels, reason: n ? null : "Select the serial cards to print QR labels for" },
+    { key: "detail", label: "Detail", icon: Eye, onClick: () => single && setEditTarget({ card: single, mode: "view" }), reason: single ? null : "Select exactly one serial card" },
+  ];
+  const deleteWithTxn = deleteTargets?.filter((r) => r.hasTransaction).length ?? 0;
 
   return (
     <div className="space-y-4 p-4">
@@ -174,6 +345,18 @@ export default function SerialCardsPage() {
         badges={!loading && <Badge variant="secondary" className="h-5 text-[11px] font-normal">{total} record{total === 1 ? "" : "s"}</Badge>}
         actions={
           <>
+            <div className="relative">
+              <ScanLine className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-8 w-56 pl-7 text-sm"
+                placeholder={scanning ? "Looking up…" : "Scan QR / Serial No"}
+                aria-label="Scan a Serial Card QR or enter Serial No"
+                value={scanCode}
+                disabled={scanning}
+                onChange={(e) => setScanCode(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void scan(); } }}
+              />
+            </div>
             {receiptItemId != null && receiptId != null && (
               <Button size="sm" variant="outline" onClick={() => setProduceOpen(true)}>
                 <Plus className="h-3.5 w-3.5 mr-2" />Generate Serial Card
@@ -254,9 +437,29 @@ export default function SerialCardsPage() {
           onToggleAll={() => (allSelected ? clearSelection() : selectAll())}
           allSelected={allSelected}
           someSelected={someSelected}
+          onColumnFiltersChange={onColumnFiltersChange}
           fixedColumns={["serialNo", "inventoryCode"]}
           maxHeight="60vh"
         />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/30 p-2">
+        {actions.map((a) => (
+          <span key={a.key} title={a.reason ?? undefined}>
+            <Button
+              size="sm" variant="outline"
+              className={`h-8 ${a.destructive ? "text-destructive hover:text-destructive" : ""}`}
+              disabled={!!a.reason || busy}
+              onClick={a.onClick}
+            >
+              <a.icon className="h-3.5 w-3.5 mr-1.5" />{a.label}
+            </Button>
+          </span>
+        ))}
+        <span className="ml-auto text-xs text-muted-foreground">{n > 0 ? `${n} selected` : "No cards selected"}</span>
+        <Button size="sm" variant="outline" className="h-8" onClick={closeScreen}>
+          <X className="h-3.5 w-3.5 mr-1.5" />Close
+        </Button>
       </div>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -289,20 +492,84 @@ export default function SerialCardsPage() {
         />
       )}
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+      <AlertDialog open={!!deleteTargets} onOpenChange={(o) => !o && !busy && setDeleteTargets(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Serial Card</AlertDialogTitle>
-            <AlertDialogDescription>
-              Delete {deleteTarget?.SerialCode}? This does not affect Stock On Hand or the source receipt.
+            <AlertDialogTitle>Delete Serial Card{(deleteTargets?.length ?? 0) > 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  {deleteTargets?.length === 1
+                    ? <>Delete {deleteTargets[0].SerialCode}?</>
+                    : <>Delete {deleteTargets?.length} serial cards ({deleteTargets?.slice(0, 5).map((r) => r.SerialCode).join(", ")}{(deleteTargets?.length ?? 0) > 5 ? ", …" : ""})?</>}
+                  {" "}This does not affect Stock On Hand or the source receipt.
+                </p>
+                {deleteWithTxn > 0 && (
+                  <p className="text-amber-700 dark:text-amber-400">
+                    {deleteWithTxn === deleteTargets?.length ? (deleteWithTxn === 1 ? "This card has" : "All of these cards have") : `${deleteWithTxn} of these cards have`} transactions after the receipt.
+                  </p>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={confirmDelete}>Delete</AlertDialogAction>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" disabled={busy} onClick={(e) => { e.preventDefault(); void confirmDelete(); }}>
+              {busy ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={assignOpen} onOpenChange={(o) => !busy && setAssignOpen(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Assign to Qty</AlertDialogTitle>
+            <AlertDialogDescription>
+              Split each receipt line&apos;s unassigned quantity (line quantity minus the other cards on that line)
+              equally across the {n} selected serial card{n === 1 ? "" : "s"} of that line. Only Quantity changes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={busy} onClick={(e) => { e.preventDefault(); void confirmAssign(); }}>
+              {busy ? "Assigning..." : "Assign"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={copyOpen} onOpenChange={(o) => !busy && setCopyOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Copy Column</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Copies a field from <span className="font-mono text-foreground">{copySource?.SerialCode}</span> (the first selected card)
+              to the other {Math.max(0, n - 1)} selected card{n - 1 === 1 ? "" : "s"}.
+            </p>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Column</label>
+              <Select value={copyField} onValueChange={setCopyField}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select a column" /></SelectTrigger>
+                <SelectContent>
+                  {COPY_FIELDS.map((f) => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            {copyDef && copySource && (
+              <p>Value: <span className="font-medium">{copyDisplay(copyDef, copySource)}</span></p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => setCopyOpen(false)}>Cancel</Button>
+            <Button size="sm" disabled={busy || !copyDef || n < 2} onClick={confirmCopy}>
+              <Copy className="h-3.5 w-3.5 mr-1.5" />{busy ? "Copying..." : "Copy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

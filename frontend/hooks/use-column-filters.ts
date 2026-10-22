@@ -25,6 +25,10 @@ export interface FilterableColumnDef<T> {
   // many/continuous distinct values).
   filterType?: ColumnFilterType;
   filterValue?: (row: T) => string | number | null | undefined;
+  // Optional extra "select" options beyond the loaded rows' values — for a grid that loads one
+  // page of a server-filtered set and also applies this column's filter to its query, so values
+  // on other pages are selectable too. Omitted, options come from the loaded rows (as always).
+  filterOptions?: string[];
 }
 
 export interface ColumnFilterState {
@@ -54,7 +58,7 @@ export function useColumnFilters<T, C extends FilterableColumnDef<T>>(rows: T[],
     const out: Record<string, string[]> = {};
     for (const c of filterableColumns) {
       if ((c.filterType ?? "select") !== "select") continue;
-      const values = new Set<string>();
+      const values = new Set<string>(c.filterOptions?.filter((v) => v != null && v !== "") ?? []);
       for (const row of rows) {
         const v = c.filterValue!(row);
         if (v != null && v !== "") values.add(String(v));

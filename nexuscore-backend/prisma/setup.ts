@@ -32,6 +32,7 @@ const STEPS = [
   'scripts/seed-fabric-yarn-requirements-menu-item',
   'scripts/seed-order-manufacturing-menu-item',
   'scripts/seed-serial-cards-menu-item',
+  'scripts/seed-cutting-card-menu-item',
   'scripts/seed-plm-report-builder-menu-item',
   'scripts/seed-plm-standard-reports',
   'scripts/seed-legacy-standard-reports',

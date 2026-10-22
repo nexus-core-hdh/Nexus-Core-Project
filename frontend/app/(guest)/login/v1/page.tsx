@@ -7,6 +7,7 @@ import { Loader2, Eye, EyeOff } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { nexuscoreAuth } from "@/lib/nexuscore-api";
+import { nextPathFromLocation } from "@/lib/safe-next";
 import { setCompanySlugCookie } from "@/lib/company-path";
 
 import { Button } from "@/components/ui/button";
@@ -293,7 +294,7 @@ export default function LoginPage() {
       toast.success("Login successful!");
       
       // Redirect to default dashboard
-      router.push("/default");
+      router.push(nextPathFromLocation() ?? "/default");
     } catch (error: any) {
       console.error('Login error:', error);
       
@@ -353,7 +354,7 @@ export default function LoginPage() {
       setConfirmPassword("");
       
       // Redirect to dashboard
-      router.push("/default");
+      router.push(nextPathFromLocation() ?? "/default");
     } catch (error: any) {
       toast.error("Failed to change password", {
         description: error.message || "An error occurred",
@@ -386,7 +387,7 @@ export default function LoginPage() {
     }
 
     toast.success("Login successful!");
-    router.push("/default");
+    router.push(nextPathFromLocation() ?? "/default");
   };
 
   return (
@@ -424,7 +425,9 @@ export default function LoginPage() {
             <p className="text-muted-foreground mt-2 text-sm">Please sign in to your account</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+          {/* method="post": if the page's JavaScript hasn't loaded, a native submit must never put
+              the email and password in the URL (address bar, history, server logs). */}
+          <form method="post" onSubmit={handleSubmit} className="mt-8 space-y-6">
             <div className="space-y-4">
               <div>
                 <Label htmlFor="email" className="sr-only">

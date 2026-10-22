@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ export default function ProductCardDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [card, setCard] = useState<any>(null);
+  useWorkspaceRecordLabel(card?.productNumber || undefined);
   const [loading, setLoading] = useState(true);
   const [measurementDefs, setMeasurementDefs] = useState<any[]>([]);
   const [swatchCards, setSwatchCards] = useState<any[]>([]);
@@ -111,12 +113,12 @@ export default function ProductCardDetailPage() {
             <div className="rounded-md border overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                     <TableHead>Measurement</TableHead>
                     {sizes.map((s: any) => <TableHead key={s}>{s}</TableHead>)}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                   {measByDef && Object.entries(measByDef).map(([def, vals]: any) => (
                     <TableRow key={def}>
                       <TableCell className="font-medium">{def}</TableCell>
@@ -147,8 +149,8 @@ export default function ProductCardDetailPage() {
         <TabsContent value="samples" className="pt-4">
           <div className="rounded-md border">
             <Table>
-              <TableHeader><TableRow><TableHead>Sample #</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-              <TableBody>
+              <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Sample #</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+              <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                 {!card.sampleCards?.length ? <TableRow><TableCell colSpan={3} className="text-center py-6 text-muted-foreground">No samples</TableCell></TableRow>
                   : card.sampleCards.map((s: any) => (
                     <TableRow key={s.id}>

@@ -49,6 +49,22 @@ function pickBomLine(l: any) {
   return out;
 }
 
+/**
+ * BOM row identity across the replace-all saves below: a line naming an id the card already has
+ * keeps that id (first occurrence only); every other line gets a new one. That id is the row key
+ * grid-level User Defined Fields attach to (entities/custom-field-grids.ts, "BomLine"), so it must
+ * survive an ordinary Save — ids are checked against the card's own rows, never trusted as sent.
+ */
+function keepRowIds(sent: any[], picked: any[], existingIds: Set<string>) {
+  const used = new Set<string>();
+  return picked.map((line, i) => {
+    const id = sent[i]?.id;
+    if (typeof id !== 'string' || !existingIds.has(id) || used.has(id)) return line;
+    used.add(id);
+    return { ...line, id };
+  });
+}
+
 const WASH_CARE_FIELDS = [
   'washing', 'bleaching', 'tumbleDrying', 'naturalDrying', 'ironing', 'chemicalCleaning', 'wetCleaning',
 ];
@@ -98,16 +114,19 @@ export class StyleExtrasService {
     // (Ornament/Process, or a Fabric/Trim line with no card selected) pass through untouched —
     // resolveLineUnitId/assertValidItemUnit are both no-ops when inventoryId is null.
     // Every line is validated BEFORE the existing lines are replaced, and the replace is one
-    // transaction — a rejected save leaves the card's BOM exactly as it was.
+    // transaction — a rejected save leaves the card's BOM exactly as it was. Row ids the card
+    // already has are kept through the replace (keepRowIds).
     const picked = await Promise.all((lines || []).map(async (l) => {
       const line = pickBomLine(l);
       line.unitId = await resolveLineUnitId(this.masterLookupSvc, line.fabricInventoryId, line.unitId);
       await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
       return line;
     }));
+    const existingIds = new Set((await this.prisma.styleBomLine.findMany({ where: { styleCardId }, select: { id: true } })).map((r) => r.id));
+    const kept = keepRowIds(lines || [], picked, existingIds);
     await this.prisma.$transaction([
       this.prisma.styleBomLine.deleteMany({ where: { styleCardId } }),
-      this.prisma.styleBomLine.createMany({ data: picked.map((line, i) => ({ ...line, sortOrder: i, styleCardId })) }),
+      this.prisma.styleBomLine.createMany({ data: kept.map((line, i) => ({ ...line, sortOrder: i, styleCardId })) }),
     ]);
     return this.getBomLines(styleCardId);
   }
@@ -131,9 +150,11 @@ export class StyleExtrasService {
       await assertValidItemUnit(this.prisma, line.fabricInventoryId, line.unitId);
       return line;
     }));
+    const existingIds = new Set((await this.prisma.sampleBomLine.findMany({ where: { sampleCardId }, select: { id: true } })).map((r) => r.id));
+    const kept = keepRowIds(lines || [], picked, existingIds);
     await this.prisma.$transaction([
       this.prisma.sampleBomLine.deleteMany({ where: { sampleCardId } }),
-      this.prisma.sampleBomLine.createMany({ data: picked.map((line, i) => ({ ...line, sortOrder: i, sampleCardId })) }),
+      this.prisma.sampleBomLine.createMany({ data: kept.map((line, i) => ({ ...line, sortOrder: i, sampleCardId })) }),
     ]);
     return this.getSampleBomLines(sampleCardId);
   }

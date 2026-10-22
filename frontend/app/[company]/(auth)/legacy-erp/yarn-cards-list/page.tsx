@@ -30,6 +30,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useStockValueColumns } from "@/components/legacy-erp/stock-value";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 
 import { resolveTabKey } from "@/lib/workspace/registry";
@@ -105,6 +106,8 @@ export default function YarnCardListPage() {
 
   // Unified column model for WorklistTable — see purchase-orders-list/page.tsx for the reference
   // pattern this mirrors. Only the Standard columns are ever `sortable: true`.
+  // Stock In Hand / Stock Value (server-computed per page — see components/legacy-erp/stock-value.tsx).
+  const stockColumns = useStockValueColumns();
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
       return activeColumns.map((c) => ({
@@ -126,6 +129,7 @@ export default function YarnCardListPage() {
         key: "specialCode", label: "Special Code", sortable: true,
         render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span>,
       },
+      ...stockColumns,
       {
         key: "status", label: "Status",
         render: (row: any) => (
@@ -139,7 +143,7 @@ export default function YarnCardListPage() {
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeColumns]);
+  }, [activeColumns, stockColumns]);
 
   const getRowActions = (row: any): RowAction[] => [
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },

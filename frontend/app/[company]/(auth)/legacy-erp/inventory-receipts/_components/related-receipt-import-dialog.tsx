@@ -12,7 +12,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-modal";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
-import type { WorklistField } from "@/lib/legacy-erp/worklist-types";
+import { worklistCellValue, type WorklistField } from "@/lib/legacy-erp/worklist-types";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
 import { toast } from "sonner";
 import { PackagePlus, Search, ChevronRight, ChevronDown } from "lucide-react";
@@ -100,7 +100,7 @@ const COL = {
   unit: "w-20",
   price: "w-28",
 };
-const th = "h-9 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80";
+const th = "h-9 text-[11px] font-semibold uppercase tracking-wide text-white";
 
 interface Props {
   open: boolean;
@@ -289,7 +289,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
             <div className="overflow-x-auto rounded-lg border border-border">
               <Table className="min-w-[1180px]">
                 <TableHeader>
-                  <TableRow className="bg-background hover:bg-muted/60">
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                     <TableHead className={cn(th, COL.checkbox)} />
                     <TableHead className={cn(th, COL.expand)} />
                     <TableHead className={cn(th, COL.receiptNo)}>Receipt No</TableHead>
@@ -307,7 +307,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                   {visibleReceipts.map((r) => {
                     const state = receiptSelectionState(r);
                     const isCollapsed = collapsed.has(r.id);
@@ -344,7 +344,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
                           <TableCell className="py-2" />
                           {resolvableExtraFields.map((f) => (
                             <TableCell key={`${f.source}:${f.key}`} className="py-2 text-[13px] text-muted-foreground">
-                              {f.source === "purchase-receipt" ? formatCell((r as any)[camelKey(f.key)]) : null}
+                              {f.source === "purchase-receipt" ? formatCell(worklistCellValue(r as any, camelKey(f.key))) : null}
                             </TableCell>
                           ))}
                         </TableRow>
@@ -377,7 +377,7 @@ export function RelatedReceiptImportDialog({ open, onOpenChange, currentAccountI
                             <TableCell className="py-2 text-right text-[13px] font-mono">{fmtPrice(l.unitPrice)}</TableCell>
                             {resolvableExtraFields.map((f) => (
                               <TableCell key={`${f.source}:${f.key}`} className="py-2 text-[13px] text-muted-foreground">
-                                {f.source === "purchase-receipt-item" ? formatCell((l as any)[camelKey(f.key)]) : null}
+                                {f.source === "purchase-receipt-item" ? formatCell(worklistCellValue(l as any, camelKey(f.key))) : null}
                               </TableCell>
                             ))}
                           </TableRow>

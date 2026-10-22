@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { settingsApi } from "@/lib/api";
+import { tabKeyForHref } from "@/lib/workspace/registry";
 
 export interface WorkspaceTab {
   key: string;
@@ -23,6 +24,11 @@ export interface WorkspaceTab {
    *  undefined on a create route falls through to the existing "New {Screen}"
    *  resolution. */
   recordLabel?: string;
+  /** The key/href this tab's screen instance was mounted with, kept when the tab is re-keyed in
+   *  place (replaceTab — a create form saving as a real record) so WorkspaceContentStack doesn't
+   *  remount a screen mid-save. Cleared whenever the tab is re-pointed (openTab/updateTabHref),
+   *  which is a deliberate remount. Never persisted: a reload mounts fresh from `href`. */
+  mount?: { key: string; href: string };
 }
 
 interface OpenTabInput {
@@ -53,6 +59,7 @@ interface WorkspaceState extends WorkspacePersisted {
   saveHandlers: Record<string, SaveHandler | undefined>;
   openTab: (tab: OpenTabInput) => void;
   updateTabHref: (key: string, href: string) => void;
+  replaceTab: (oldKey: string, tab: OpenTabInput) => void;
   closeTab: (key: string) => void;
   closeTabs: (keys: string[]) => void;
   activateTab: (key: string) => void;
@@ -72,6 +79,42 @@ interface WorkspaceState extends WorkspacePersisted {
 const PERSIST_DEBOUNCE_MS = 600;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingValue: StorageValue<WorkspacePersisted> | null = null;
+
+// The saved workspace is only ever written back after it has been LOADED. Zustand persists on every
+// state change, including right after a failed load — and a failed load leaves only the tab the
+// page itself just opened and an empty My Menu in memory, so writing that would overwrite the
+// user's saved tabs and My Menu. Until a load succeeds, writes are held (held changes are written
+// once the load succeeds, merged with the saved state); a temporary failure (API restarting or
+// unreachable: network error / 5xx) is retried in the background with backoff.
+const STORE_NAME = "nexuscore-workspace-tabs";
+let savedStateLoaded = false;
+let heldWrite = false;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+let reloadAttempt = 0;
+/** Background reload delays after a temporary failure (exported for tests); the last one repeats. */
+export const WORKSPACE_RELOAD_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+const MAX_RELOAD_ATTEMPTS = 12; // ~5 minutes; a page reload starts over
+
+const isTemporaryFailure = (error: any) =>
+  !!error?.isNetworkError || (typeof error?.status === "number" && error.status >= 500);
+
+function scheduleReload() {
+  if (reloadTimer || reloadAttempt >= MAX_RELOAD_ATTEMPTS) return;
+  const delay = WORKSPACE_RELOAD_DELAYS_MS[Math.min(reloadAttempt, WORKSPACE_RELOAD_DELAYS_MS.length - 1)];
+  reloadAttempt++;
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null;
+    void useWorkspaceStore.persist.rehydrate();
+  }, delay);
+  (reloadTimer as any)?.unref?.(); // never keeps a Node process (tests) alive
+}
+
+/** Writes the current (already merged) state — used for changes held while the load was pending. */
+function writeCurrentState() {
+  const { partialize, version } = useWorkspaceStore.persist.getOptions();
+  const state = (partialize ? partialize(useWorkspaceStore.getState()) : useWorkspaceStore.getState()) as WorkspacePersisted;
+  backendStorage.setItem(STORE_NAME, { state, version: version ?? 0 });
+}
 
 function flushPendingWrite() {
   const value = pendingValue;
@@ -106,14 +149,27 @@ const backendStorage: PersistStorage<WorkspacePersisted> = {
         activeKey: tablePreferences.workspace?.activeKey ?? null,
         myMenu: tablePreferences.myMenu ?? [],
       };
+      savedStateLoaded = true;
+      reloadAttempt = 0;
       return { state, version: 0 };
-    } catch (error) {
-      console.error("Failed to load workspace settings:", error);
+    } catch (error: any) {
+      if (isTemporaryFailure(error)) {
+        console.warn(`Workspace tabs not loaded yet (${error?.message || "API unavailable"}) — retrying; saved tabs are kept.`);
+        scheduleReload();
+      } else {
+        console.error("Failed to load workspace settings:", error);
+      }
       return null;
     }
   },
   setItem: (_name, value) => {
     pendingValue = value;
+    if (!savedStateLoaded) {
+      // Held — see savedStateLoaded above. Never write before the saved workspace is known.
+      heldWrite = true;
+      pendingValue = null;
+      return;
+    }
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(flushPendingWrite, PERSIST_DEBOUNCE_MS);
   },
@@ -122,10 +178,20 @@ const backendStorage: PersistStorage<WorkspacePersisted> = {
   },
 };
 
-// Single global store for the Workspace Tab Bar — every "screen" opened from the
-// sidebar/search becomes an entry here. One tab per registered module (see
-// lib/workspace/registry.tsx), reused across records: opening a different record
-// from a list updates the existing tab's href instead of creating a new one.
+// A fresh screen instance for a tab (re)pointed at `href`. Normally none is needed (the stack keys
+// the instance by the tab's own key), unless another tab re-keyed by replaceTab still holds that key
+// as its instance key — then this one gets a distinct instance key so the two never collide.
+let instanceCounter = 0;
+function freshMount(key: string, href: string, others: WorkspaceTab[]): WorkspaceTab["mount"] {
+  return others.some((t) => (t.mount?.key ?? t.key) === key) ? { key: `${key}#${++instanceCounter}`, href } : undefined;
+}
+
+// Single global store for the Workspace Tab Bar — every screen or record opened from the
+// sidebar/search/a list/a related-record link becomes an entry here, keyed by
+// tabKeyForHref (lib/workspace/registry.tsx): one tab per list screen, one per opened
+// record (`form?id=6`, or a dynamic `[id]` route's own pathname), so opening another
+// record of the same entity adds a tab instead of re-pointing the current one.
+// A tab's key is always the canonical key of its href — every action below keeps it so.
 // Persisted to the database (not sessionStorage) so tabs and My Menu restore after
 // logout/login and aren't lost when the browser tab closes.
 export const useWorkspaceStore = create<WorkspaceState>()(
@@ -144,28 +210,60 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             // already had (e.g. one set by useWorkspaceTabTitle) rather than
             // wiping it back to "resolve automatically".
             tabs: get().tabs.map((t) =>
-              t.key === tab.key ? { ...t, href: tab.href, title: tab.title ?? t.title } : t
+              t.key === tab.key
+                ? {
+                    ...t,
+                    href: tab.href,
+                    title: tab.title ?? t.title,
+                    mount: t.href === tab.href ? t.mount : freshMount(t.key, tab.href, get().tabs.filter((o) => o !== t)),
+                  }
+                : t
             ),
             activeKey: tab.key,
           });
           return;
         }
         set({
-          tabs: [...get().tabs, { ...tab, dirty: false }],
+          tabs: [...get().tabs, { ...tab, dirty: false, mount: freshMount(tab.key, tab.href, get().tabs) }],
           activeKey: tab.key,
         });
       },
 
-      // Patches one tab's own href IN PLACE — unlike openTab, never touches activeKey. For a
+      // Patches one tab's own href IN PLACE — unlike openTab, never activates a tab. For a
       // background/inactive tab that self-corrects its own stale state (e.g. a "New Work Order"
       // tab dropping a styleCardId that no longer resolves), this must not steal focus or touch
-      // the live browser URL, which openTab's "reopen" branch does as a side effect.
+      // the live browser URL, which openTab's "reopen" branch does as a side effect. When the new
+      // href names a different record the tab is re-keyed to match (staying active if it was);
+      // if that record already has its own tab, this one folds into it.
       updateTabHref: (key, href) =>
         set((state) => {
           const current = state.tabs.find((t) => t.key === key);
           if (!current || current.href === href) return state;
-          return { tabs: state.tabs.map((t) => (t.key === key ? { ...t, href } : t)) };
+          const nextKey = tabKeyForHref(href) ?? key;
+          const activeKey = state.activeKey === key ? nextKey : state.activeKey;
+          if (nextKey !== key && state.tabs.some((t) => t.key === nextKey)) {
+            return { tabs: state.tabs.filter((t) => t.key !== key), activeKey };
+          }
+          const mount = freshMount(nextKey, href, state.tabs.filter((t) => t !== current));
+          const repointed = nextKey === key
+            ? { ...current, href, mount }
+            : { ...current, key: nextKey, href, mount, title: undefined, recordLabel: undefined };
+          return { tabs: state.tabs.map((t) => (t.key === key ? repointed : t)), activeKey };
         }),
+
+      // Re-keys one tab in place (same position) WITHOUT remounting its screen — for a tab whose
+      // record identity is established under it: a create form saving as a real record (by URL, or
+      // reported via useWorkspaceRecordId). Stays active if it was. Drops any other tab already
+      // holding the new key, so a record never ends up with two tabs.
+      replaceTab: (oldKey, tab) =>
+        set((state) => ({
+          tabs: state.tabs
+            .filter((t) => t.key === oldKey || t.key !== tab.key)
+            .map((t) => (t.key === oldKey
+              ? { ...t, key: tab.key, href: tab.href, title: tab.title ?? t.title, mount: t.mount ?? { key: t.key, href: t.href } }
+              : t)),
+          activeKey: state.activeKey === oldKey ? tab.key : state.activeKey,
+        })),
 
       closeTab: (key) => {
         const { tabs, activeKey } = get();
@@ -252,9 +350,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }),
     }),
     {
-      name: "nexuscore-workspace-tabs",
+      name: STORE_NAME,
       storage: backendStorage,
-      partialize: (state) => ({ tabs: state.tabs, activeKey: state.activeKey, myMenu: state.myMenu }),
+      partialize: (state) => ({
+        tabs: state.tabs.map(({ mount: _mount, ...tab }) => tab),
+        activeKey: state.activeKey,
+        myMenu: state.myMenu,
+      }),
+      // Tabs saved before records got their own tabs were keyed by bare path (`form` showing
+      // `form?id=6`), and tabs saved before company slugs used `/dashboard/...` paths — both are
+      // re-keyed to their canonical (slug-free) record key, dropping duplicates.
       // Saved tabs load asynchronously, after the page for the current URL has already opened (and
       // activated) its own tab. The default merge would replace that live tab list with the saved
       // one, restoring a stale active tab that no longer matches the URL. Instead: saved tabs keep
@@ -262,13 +367,31 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // live state), and the tab already active for the current URL stays active.
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<WorkspacePersisted>;
-        const savedTabs = (saved.tabs ?? []).map((t) => current.tabs.find((c) => c.key === t.key) ?? { ...t, dirty: false });
+        const appHref = (href: string) => (href === "/dashboard" || href.startsWith("/dashboard/") ? href.slice("/dashboard".length) || "/default" : href);
+        const renamed = new Map<string, string>();
+        const savedTabs: WorkspaceTab[] = [];
+        for (const tab of saved.tabs ?? []) {
+          const href = appHref(tab.href);
+          const key = tabKeyForHref(href) ?? appHref(tab.key);
+          renamed.set(tab.key, key);
+          if (savedTabs.some((t) => t.key === key)) continue;
+          savedTabs.push(current.tabs.find((c) => c.key === key) ?? { ...tab, key, href, dirty: false });
+        }
         const opened = current.tabs.filter((c) => !savedTabs.some((t) => t.key === c.key));
         const tabs = [...savedTabs, ...opened];
-        const wanted = current.activeKey ?? saved.activeKey ?? null;
+        const savedActive = saved.activeKey ? renamed.get(saved.activeKey) ?? saved.activeKey : null;
+        const wanted = current.activeKey ?? savedActive;
         const activeKey = tabs.some((t) => t.key === wanted) ? wanted : tabs[tabs.length - 1]?.key ?? null;
         return { ...current, tabs, activeKey, myMenu: saved.myMenu ?? current.myMenu };
       },
     }
   )
 );
+
+// After a successful load (first or a background retry), write changes made while it was pending —
+// the state is already merged with the saved tabs/My Menu by then, so nothing saved is lost.
+useWorkspaceStore.persist.onFinishHydration(() => {
+  if (!savedStateLoaded || !heldWrite) return;
+  heldWrite = false;
+  writeCurrentState();
+});

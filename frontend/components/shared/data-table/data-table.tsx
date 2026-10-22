@@ -20,6 +20,10 @@
 // column already sets this) is treated as pinned — rendered outside the customizable set,
 // leading columns before the first customizable one stay first, trailing ones stay last —
 // exactly like every legacy-erp grid's own Delete/action column.
+//
+// Opt-in exception: a column with `meta: { manageColumns: "required" }` (e.g. an Actions column that
+// is the only way to open a record) joins the customizable set as a REQUIRED column — listed in
+// Manage Columns, reorderable and resizable, but its checkbox is locked so it can never be hidden.
 
 import * as React from "react";
 import {
@@ -113,14 +117,16 @@ export function DataTable<TData, TValue>({
   // Leading/trailing pinned columns (enableHiding === false, e.g. "select"/"actions") stay
   // outside the customizable set entirely, in their original relative position — same rule as
   // every legacy-erp grid's own action column.
-  const firstCustomizable = columns.findIndex((c) => c.enableHiding !== false);
-  const lastCustomizableRev = [...columns].reverse().findIndex((c) => c.enableHiding !== false);
+  const idOf = (c: ColumnDef<TData, TValue>) => String((c as any).id ?? (c as any).accessorKey ?? "");
+  const isRequired = (c: ColumnDef<TData, TValue>) => (c as any).meta?.manageColumns === "required";
+  const isCustomizable = (c: ColumnDef<TData, TValue>) => c.enableHiding !== false || isRequired(c);
+  const firstCustomizable = columns.findIndex(isCustomizable);
+  const lastCustomizableRev = [...columns].reverse().findIndex(isCustomizable);
   const lastCustomizable = lastCustomizableRev === -1 ? -1 : columns.length - 1 - lastCustomizableRev;
   const leadingFixed = firstCustomizable <= 0 ? [] : columns.slice(0, firstCustomizable);
   const trailingFixed = lastCustomizable === -1 || lastCustomizable === columns.length - 1 ? [] : columns.slice(lastCustomizable + 1);
   const customizable = firstCustomizable === -1 ? [] : columns.slice(firstCustomizable, lastCustomizable + 1);
 
-  const idOf = (c: ColumnDef<TData, TValue>) => String((c as any).id ?? (c as any).accessorKey ?? "");
   const gridColumnDefs: GridColumnDef<string>[] = React.useMemo(
     () => customizable.map((c) => ({
       key: idOf(c),
@@ -130,7 +136,8 @@ export function DataTable<TData, TValue>({
     })),
     [customizable]
   );
-  const gridColumns = useGridColumns<string>({ storageKey, columns: gridColumnDefs });
+  const requiredIds = customizable.filter(isRequired).map(idOf);
+  const gridColumns = useGridColumns<string>({ storageKey, columns: gridColumnDefs, requiredColumns: requiredIds });
 
   const gridRootRef = React.useRef<HTMLDivElement>(null);
   const leadingIds = leadingFixed.map(idOf);
@@ -278,6 +285,7 @@ export function DataTable<TData, TValue>({
         state={gridColumns.manageColumns}
         fixedColumns={[]}
         columns={gridColumnDefs}
+        requiredColumns={requiredIds}
         description="Show, hide and reorder columns."
       />
     </div>

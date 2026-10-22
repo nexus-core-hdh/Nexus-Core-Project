@@ -86,12 +86,14 @@ export class WorkOrderController {
     return this.svc.upsertBom(id, lineType, lines, Number(userId) || 1, userId, companyId);
   }
 
-  @Post(':id/bom/transfer-from-style-card') transferBomFromStyleCard(
+  // Transfer from Style Card — read only: returns the Style Card BOM mapped into this Work Order's
+  // BOM line shape; nothing is written until the Work Order is saved (see the service method).
+  @Get(':id/bom/style-card-transfer') previewBomTransferFromStyleCard(
     @Param('id', ParseIntPipe) id: number,
-    @Body('styleCardId') styleCardId: string,
-    @CurrentUser('id') userId: string,
+    @Query('styleCardId') styleCardId: string,
+    @Query('lineType') lineType?: BomLineType,
   ) {
-    return this.svc.transferBomFromStyleCard(id, styleCardId, Number(userId) || 1);
+    return this.svc.previewBomTransferFromStyleCard(id, styleCardId, lineType);
   }
 
   // Explanation/Activities/Expenses tabs — generic satellite CRUD, config added in

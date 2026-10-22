@@ -121,7 +121,10 @@ export const useScreenIndexStore = create<ScreenIndexState>((set, get) => ({
     }
   },
 
-  invalidate: () => set({ hasLoaded: false }),
+  // Also drops the raw menu snapshot: load() rebuilds from loadRaw(), which is a no-op while
+  // rawLoaded is set — without this, refresh() re-filtered the same stale menu and a screen added
+  // to the menu after the first load never became searchable until a full page reload.
+  invalidate: () => set({ hasLoaded: false, rawLoaded: false }),
 
   rawEntries: [],
   rawGroups: [],

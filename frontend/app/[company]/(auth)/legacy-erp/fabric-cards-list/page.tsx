@@ -23,6 +23,7 @@ import { WorklistDesignModal } from "@/components/legacy-erp/worklist-design-mod
 import { WorklistBar } from "@/components/legacy-erp/worklist-bar";
 import { useWorklist } from "@/hooks/legacy-erp/use-worklist";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
+import { useStockValueColumns } from "@/components/legacy-erp/stock-value";
 import { useRowSelection } from "@/hooks/use-row-selection";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import { useServerPaging } from "@/hooks/legacy-erp/use-server-paging";
@@ -106,6 +107,8 @@ export default function FabricCardListPage() {
   // page.tsx's own comment on this same pattern.
   const { selectedIds, selectRow, handleRowContextMenu } = useRowSelection(sortedRows);
 
+  // Stock In Hand / Stock Value (server-computed per page — see components/legacy-erp/stock-value.tsx).
+  const stockColumns = useStockValueColumns();
   const columns: WorklistTableColumn<any>[] = useMemo(() => {
     if (activeColumns) {
       return activeColumns.map((c) => ({
@@ -125,6 +128,7 @@ export default function FabricCardListPage() {
       },
       { key: "inventoryName", label: "Name", sortable: true, render: (row: any) => <span className="font-medium">{row.inventoryName}</span>, filterable: true, filterValue: (row) => row.inventoryName },
       { key: "specialCode", label: "Special Code", sortable: true, render: (row: any) => row.specialCode || <span className="text-muted-foreground">—</span>, filterable: true, filterValue: (row) => row.specialCode },
+      ...stockColumns,
       {
         key: "status", label: "Status",
         render: (row: any) => (
@@ -139,7 +143,7 @@ export default function FabricCardListPage() {
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeColumns]);
+  }, [activeColumns, stockColumns]);
 
   const getRowActions = (row: any): RowAction[] => [
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },

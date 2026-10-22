@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { toast } from "sonner";
 import { Building2 } from "lucide-react";
@@ -40,6 +41,7 @@ export default function AssetRegisterFormPage() {
   const [categories, setCategories] = useState<AssetCategory[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [assetIdLabel, setAssetIdLabel] = useState<string | null>(null);
+  useWorkspaceRecordLabel(isEdit ? assetIdLabel || undefined : undefined);
   const [saving, setSaving] = useState(false);
   const [existing, setExisting] = useState<FixedAsset | null>(null);
 

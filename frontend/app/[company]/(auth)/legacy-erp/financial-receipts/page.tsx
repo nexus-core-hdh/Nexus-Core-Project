@@ -12,6 +12,7 @@ import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Landmark, Lock, BadgeCheck } from "lucide-react";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
@@ -65,6 +66,7 @@ export default function FinancialReceiptPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [receiptId, setReceiptId] = useState<number | null>(null);
+  useWorkspaceRecordId(receiptId);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -75,6 +77,9 @@ export default function FinancialReceiptPage() {
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
   const { clearDraft } = useDraftForm({ storageKey: "financialReceiptDraft", enabled: receiptId == null, form, setForm });
   const lineGridRef = useRef<FinancialReceiptLineGridHandle>(null);
+  // Grid-level User Defined Fields of the line grid (logical grid "FiReceiptLine") — stored by this
+  // screen's Save. (The header's own Customized Fields tab keeps its own Save.)
+  const [gridUdfDirty, setGridUdfDirty] = useState(false);
 
   useEffect(() => {
     if (!receiptId) {
@@ -147,6 +152,7 @@ export default function FinancialReceiptPage() {
   };
 
   const save = async () => {
+    if (receiptId && lineGridRef.current && !lineGridRef.current.validateUdf()) { setActiveTab("Detail"); return; }
     setSaving(true);
     try {
       const dto: Record<string, any> = {
@@ -169,6 +175,8 @@ export default function FinancialReceiptPage() {
         });
         setForm(f);
         lastSavedRef.current = f;
+        // Lines of an existing receipt already have their ids; their grid UDF values go with this Save.
+        await lineGridRef.current?.saveUdf(receiptId);
         toast.success("Updated");
       } else {
         const r: any = await client.create(dto);
@@ -192,7 +200,7 @@ export default function FinancialReceiptPage() {
     }
   };
 
-  const isDirty = !readOnly && JSON.stringify(form) !== JSON.stringify(lastSavedRef.current);
+  const isDirty = !readOnly && (JSON.stringify(form) !== JSON.stringify(lastSavedRef.current) || gridUdfDirty);
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Financial Receipt [<this>]" on the Workspace tab.
@@ -319,9 +327,9 @@ export default function FinancialReceiptPage() {
 
               {!receiptId && (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-slate-700 dark:bg-slate-800 text-white">
-                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-white/60" />
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-white">Detail Lines</h3>
+                  <div className="flex items-center gap-2">
+                    <span className="h-3.5 w-1 shrink-0 rounded-full bg-primary/60" />
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-foreground/70">Detail Lines</h3>
                   </div>
                   <FinancialReceiptLineGrid ref={lineGridRef} fiReceiptId={receiptId} readOnly={readOnly} api={client} />
                 </div>
@@ -336,8 +344,9 @@ export default function FinancialReceiptPage() {
               ))
             ) : (
               <>
-                <TabsContent value="Detail">
-                  <FinancialReceiptLineGrid ref={lineGridRef} fiReceiptId={receiptId} readOnly={readOnly} api={client} />
+                {/* Kept mounted while another tab is open: the line grid holds unsaved grid UDF edits. */}
+                <TabsContent value="Detail" forceMount className="data-[state=inactive]:hidden">
+                  <FinancialReceiptLineGrid ref={lineGridRef} fiReceiptId={receiptId} readOnly={readOnly} api={client} onUdfDirtyChange={setGridUdfDirty} />
                 </TabsContent>
 
                 <TabsContent value="Attachments">

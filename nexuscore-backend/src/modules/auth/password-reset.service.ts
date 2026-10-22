@@ -70,6 +70,28 @@ export class PasswordResetService {
     if (!sent) this.logger.warn(`Password reset requested for user ${user.id} but the email could not be sent.`);
   }
 
+  /**
+   * First-admin invitations (CompanyFirstAdminService): a single-use set-password token for
+   * `userId`, valid for `ttlMs`, replacing any outstanding token of that user. Same storage and
+   * redemption as a reset (hashed token, `reset()` below, the /reset-password page); the raw token
+   * only exists in the returned link, which the caller emails and never logs or returns.
+   */
+  async issueSetupLink(userId: string, ttlMs: number): Promise<{ link: string; expiresAt: Date }> {
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.deleteMany({ where: { userId } }),
+      this.prisma.passwordResetToken.create({ data: { userId, token: hashToken(token), expiresAt } }),
+    ]);
+    const base = (process.env.APP_PUBLIC_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    return { link: `${base}/reset-password?token=${encodeURIComponent(token)}&setup=1`, expiresAt };
+  }
+
+  /** Makes every outstanding token of `userId` unusable (e.g. its invitation email failed to send). */
+  async invalidateTokens(userId: string): Promise<void> {
+    await this.prisma.passwordResetToken.updateMany({ where: { userId, used: false }, data: { used: true } });
+  }
+
   async reset(token: string, newPassword: string): Promise<{ message: string }> {
     if (!token || typeof token !== 'string') throw new BadRequestException('Invalid or expired reset link');
     if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {

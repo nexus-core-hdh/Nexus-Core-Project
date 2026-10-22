@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { Save, FilePlus2, Search, RefreshCw, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ import {
   emptyItemForm, toItemForm,
 } from "@/components/legacy-erp/unit-item-detail-grid";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 
 // ---------------------------------------------------------------------------
@@ -72,7 +74,9 @@ export default function UnitSetDetailPage() {
   const [codeInput, setCodeInput] = useState("");
   const [searching, setSearching] = useState(false);
   const [unitSetId, setUnitSetId] = useState<number | null>(null);
+  useWorkspaceRecordId(unitSetId);
   const [form, setForm] = useState<UnitSetForm>(emptySetForm);
+  useWorkspaceRecordLabel(unitSetId ? form.setCode || undefined : undefined);
   const [mode, setMode] = useState<"view" | "edit" | "create">(initialMode);
   const [saving, setSaving] = useState(false);
   const readOnly = mode === "view";

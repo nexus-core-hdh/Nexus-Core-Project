@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { ReceiptText, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -37,6 +38,7 @@ export default function SalesTaxInvoiceFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [doc, setDoc] = useState<Omit<SalesTaxInvoice, "id" | "invoiceNumber"> & { id?: string; invoiceNumber?: string }>(newSalesTaxInvoiceDraft());
+  useWorkspaceRecordLabel(isEdit ? doc.invoiceNumber || undefined : undefined);
 
   useEffect(() => {
     if (!id) return;
@@ -91,8 +93,8 @@ export default function SalesTaxInvoiceFormPage() {
 
       <div className="overflow-hidden rounded-lg border">
         <Table>
-          <TableHeader><TableRow><TableHead>Item Code</TableHead><TableHead>Item Name</TableHead><TableHead className="text-right">Taxable Amount</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
-          <TableBody>
+          <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Item Code</TableHead><TableHead>Item Name</TableHead><TableHead className="text-right">Taxable Amount</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {doc.items.map((it, i) => (
               <TableRow key={it.id}>
                 <TableCell className="p-1.5"><EditableGridInput value={it.itemCode} onChange={(v) => set("items", doc.items.map((x, xi) => xi === i ? { ...x, itemCode: v } : x))} className="h-8" /></TableCell>

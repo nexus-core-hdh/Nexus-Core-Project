@@ -11,8 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
 import { legacyErpApi, type SerialCardFieldValues } from "@/lib/nexuscore-api";
+import { printSerialCardLabels } from "@/components/legacy-erp/serial-card-labels";
 import { toast } from "sonner";
-import { Layers, RefreshCw, Save, List as ListIcon } from "lucide-react";
+import { Layers, RefreshCw, Save, List as ListIcon, Printer } from "lucide-react";
 
 import { DatePicker } from "@/components/ui/date-picker";
 // Generate Serial Cards — the full ERP-density entry screen matching the legacy reference
@@ -25,8 +26,9 @@ import { DatePicker } from "@/components/ui/date-picker";
 // (/legacy-erp/serial-cards) is unchanged and reachable here via the real "List" button.
 //
 // Bottom action bar — only what's genuinely implemented is a real button; every other reference
-// action (Assign to Qty, Label, Batch Labeling, Form, Transfer) is rendered disabled with an
-// honest "not yet implemented" tooltip rather than a fake no-op.
+// action (Assign to Qty, Batch Labeling, Form, Transfer) is rendered disabled with an
+// honest "not yet implemented" tooltip rather than a fake no-op. Label prints one QR label
+// (the card's full information in the QR) per generated roll, via the Serial Cards screen's printer.
 
 interface Context {
   receiptItemId: number;
@@ -143,7 +145,14 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
   const [defaults, setDefaults] = useState(emptyDefaults);
   const [producing, setProducing] = useState(false);
 
+  // The editable grid holds ONLY the cards produced while this dialog is open (`sessionIds`, from
+  // each Produce response) — opening it is a fresh generation form. Cards produced earlier for the
+  // line are shown only on request ("Show Earlier Cards"), read-only, in their own section; they
+  // are edited on the Serial Cards screen (List), so nothing here can re-save them by accident.
+  const [sessionIds, setSessionIds] = useState<number[]>([]);
   const [rows, setRows] = useState<RollRow[]>([]);
+  const [showEarlier, setShowEarlier] = useState(false);
+  const [earlierRows, setEarlierRows] = useState<RollRow[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [edits, setEdits] = useState<Record<number, Partial<RollRow>>>({});
   const [updating, setUpdating] = useState(false);
@@ -161,13 +170,24 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
     }
   };
 
-  const loadRows = async () => {
+  // Re-reads the line's cards (with their display joins) and splits them into this session's
+  // editable rows and — only when asked for — the earlier, read-only ones. Unsaved edits on
+  // session rows are kept unless `resetEdits` (after a successful Update).
+  const loadRows = async (ids: number[] = sessionIds, earlier: boolean = showEarlier, resetEdits = false) => {
     if (!receiptId || !itemId) return;
+    if (!ids.length && !earlier) {
+      setRows([]);
+      setEarlierRows([]);
+      return;
+    }
     setLoadingRows(true);
     try {
       const list: any = await legacyErpApi.serialCards.list(receiptId, itemId);
-      setRows(Array.isArray(list) ? list : []);
-      setEdits({});
+      const all: RollRow[] = Array.isArray(list) ? list : [];
+      const mine = new Set(ids);
+      setRows(all.filter((r) => mine.has(Number(r.RecId))));
+      setEarlierRows(earlier ? all.filter((r) => !mine.has(Number(r.RecId))) : []);
+      if (resetEdits) setEdits({});
     } catch (e: any) {
       toast.error(e.message || "Failed to load Serial Cards");
     } finally {
@@ -175,15 +195,26 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
     }
   };
 
+  // Every open starts a fresh generation session — no earlier cards are loaded into the grid.
   useEffect(() => {
     if (!open) return;
     setSerialNo("");
     setSerialCount("");
     setDefaults(emptyDefaults);
+    setSessionIds([]);
+    setRows([]);
+    setShowEarlier(false);
+    setEarlierRows([]);
+    setEdits({});
     void loadContext();
-    void loadRows();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, receiptId, itemId]);
+
+  const toggleEarlier = () => {
+    const next = !showEarlier;
+    setShowEarlier(next);
+    void loadRows(sessionIds, next);
+  };
 
   const setDefault = (patch: Partial<typeof defaults>) => setDefaults((prev) => ({ ...prev, ...patch }));
 
@@ -196,7 +227,7 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
     }
     setProducing(true);
     try {
-      await legacyErpApi.serialCards.produce(receiptId, itemId, {
+      const created: any = await legacyErpApi.serialCards.produce(receiptId, itemId, {
         count, serialNo: serialNo.trim() || null,
         explanation: defaults.explanation || null, partyNo: defaults.partyNo || null,
         qualityTypeId: defaults.qualityTypeId, resourceId: defaults.resourceId, employeeId: defaults.employeeId,
@@ -214,7 +245,11 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
       toast.success(`${count} serial card${count === 1 ? "" : "s"} generated.`);
       setSerialCount("");
       setSerialNo("");
-      await Promise.all([loadContext(), loadRows()]);
+      // This batch joins the session's editable rows; earlier cards stay out of the grid.
+      const newIds = (Array.isArray(created) ? created : []).map((c: any) => Number(c.RecId)).filter(Number.isFinite);
+      const nextIds = [...sessionIds, ...newIds.filter((id: number) => !sessionIds.includes(id))];
+      setSessionIds(nextIds);
+      await Promise.all([loadContext(), loadRows(nextIds, showEarlier)]);
       onProduced?.(itemId);
     } catch (e: any) {
       toast.error(e.message || "Failed to generate serial cards");
@@ -268,6 +303,8 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
           currentAccountId: (v("currentAccountId" as any) as any) ?? null,
           producerSerialCode: (v("producerSerialCode" as any) as any) ?? null,
           manufacturingDate: (v("manufacturingDate" as any) as any) ?? null,
+          // Not editable in this grid, but update() writes every field — sent so it isn't blanked.
+          expirationDate: (v("expirationDate" as any) as any) ?? null,
           shelfLife: num(v("shelfLife" as any)),
           quantity: num(v("quantity" as any)),
           quantityMT: num(v("quantityMT" as any)),
@@ -287,7 +324,7 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
       });
       await legacyErpApi.serialCards.update(receiptId, itemId, items);
       toast.success("Serial cards updated.");
-      await Promise.all([loadContext(), loadRows()]);
+      await Promise.all([loadContext(), loadRows(sessionIds, showEarlier, true)]);
     } catch (e: any) {
       toast.error(e.message || "Failed to update serial cards");
     } finally {
@@ -422,46 +459,61 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
             ) : null}
           </div>
 
-          {/* Generated roll grid — real, persisted IM_SerialCard rows, editable in place. */}
+          {/* Generated in this session — real, persisted IM_SerialCard rows produced while this
+              dialog is open, editable in place (Update saves the edited ones). */}
           <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-              Generated Rolls — Total Quantity: {totalQuantity.toLocaleString()}
+              Generated in this session — Total Quantity: {totalQuantity.toLocaleString()}
+              {dirtyIds.length > 0 && <span className="ml-2 normal-case font-normal text-amber-700 dark:text-amber-400">{dirtyIds.length} unsaved edit{dirtyIds.length === 1 ? "" : "s"} — click Update to save</span>}
             </p>
             <div className="flex items-center gap-2">
               {rows.length > 0 && <Badge variant="secondary" className="h-5 text-[11px] font-normal">{rows.length}</Badge>}
-              <Button variant="outline" size="sm" className="h-6 w-6 p-0" onClick={loadRows} title="Refresh" disabled={loadingRows}>
+              <Button
+                variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={toggleEarlier} disabled={loadingRows}
+                title="Show the cards produced for this receipt line before this session (read-only here — edit them in Serial Cards via List)"
+              >
+                {showEarlier ? "Hide Earlier Cards" : `Show Earlier Cards${(context?.existingSerialCount ?? 0) - rows.length > 0 ? ` (${(context?.existingSerialCount ?? 0) - rows.length})` : ""}`}
+              </Button>
+              <Button variant="outline" size="sm" className="h-6 w-6 p-0" onClick={() => loadRows()} title="Refresh" disabled={loadingRows}>
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            {loadingRows ? (
+            {loadingRows && !rows.length ? (
               <div className="space-y-1.5 p-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
             ) : rows.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-1 py-8 text-center">
-                <p className="text-[13px] font-medium">No serial cards generated yet.</p>
-                <p className="text-[11px] text-muted-foreground">Enter a Serials Count above and click Produce.</p>
+                <p className="text-[13px] font-medium">No serial cards generated in this session.</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Enter a Serials Count above and click Produce — you can produce as many batches as needed.
+                  {(context?.existingSerialCount ?? 0) > 0 && ` ${context?.existingSerialCount} card${context?.existingSerialCount === 1 ? " was" : "s were"} generated earlier (Show Earlier Cards or List).`}
+                </p>
               </div>
             ) : (
               <Table className="min-w-[1900px]">
                 <TableHeader>
-                  <TableRow className="bg-background hover:bg-muted/60">
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                     {[
                       "Serial No", "Explanation", "Party No", "Quality Type", "Resource", "Employee", "Man. C/A", "Manufacturer Serial",
                       "Product Date", "Quantity", "Miktar II", "3.Miktar", "Width", "GSM", "Raw Width", "Raw Weight", "Raw Length", "Product Length",
                       "M2", "Mtul", "Pus", "Fine", "Piece Count",
                     ].map((h) => (
-                      <TableHead key={h} className="h-7 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">{h}</TableHead>
+                      <TableHead key={h} className="h-7 whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
                   {rows.map((row) => {
                     const dirty = !!edits[row.RecId];
                     return (
                       <TableRow key={row.RecId} className={dirty ? "bg-selected/40" : undefined}>
-                        <TableCell className="whitespace-nowrap py-1 text-xs font-mono">{row.SerialCode}</TableCell>
+                        <TableCell className="whitespace-nowrap py-1 text-xs">
+                          <span className="font-mono">{row.SerialCode}</span>
+                          <Badge variant="outline" className="ml-1.5 h-4 border-emerald-600/40 px-1 text-[9px] font-medium uppercase text-emerald-700 dark:text-emerald-400">New</Badge>
+                          {dirty && <span className="ml-1 text-[10px] text-amber-700 dark:text-amber-400" title="Edited — not saved until Update">● edited</span>}
+                        </TableCell>
                         <TableCell className="py-1"><Input className={textInputCls} value={String((rowValue(row, "explanation" as any) as any) ?? (row as any).Explanation ?? "")} onChange={(e) => setRowValue(row.RecId, { explanation: e.target.value } as any)} /></TableCell>
                         <TableCell className="py-1"><Input className={textInputCls} value={String((rowValue(row, "partyNo" as any) as any) ?? (row as any).PartyNo ?? "")} onChange={(e) => setRowValue(row.RecId, { partyNo: e.target.value } as any)} /></TableCell>
                         <TableCell className="py-1">
@@ -519,6 +571,46 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
               </Table>
             )}
           </div>
+
+          {/* Earlier cards — only on request, read-only, visually separate from this session's rows. */}
+          {showEarlier && (
+            <div className="border-t border-border bg-muted/30">
+              <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                Generated earlier — {earlierRows.length} card{earlierRows.length === 1 ? "" : "s"}
+                <span className="ml-1.5 font-normal normal-case">(read-only here — open List to view, edit or print them)</span>
+              </p>
+              {earlierRows.length === 0 ? (
+                <p className="px-3 pb-3 text-[11px] text-muted-foreground">{loadingRows ? "Loading…" : "No cards were generated for this line before this session."}</p>
+              ) : (
+                <div className="overflow-x-auto px-3 pb-3">
+                  <table className="w-full text-xs text-muted-foreground">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        {["Serial No", "Party No", "Quality Type", "Man. C/A", "Product Date", "Quantity", "Width", "GSM", "Piece Count"].map((h) => (
+                          <th key={h} className="whitespace-nowrap py-1 pr-4 font-medium">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {earlierRows.map((r: any) => (
+                        <tr key={r.RecId} className="border-b border-border/50 last:border-0">
+                          <td className="py-1 pr-4 font-mono">{r.SerialCode}</td>
+                          <td className="py-1 pr-4">{r.PartyNo || "—"}</td>
+                          <td className="py-1 pr-4">{r.qualityTypeName || "—"}</td>
+                          <td className="py-1 pr-4">{r.currentAccountCode || "—"}</td>
+                          <td className="py-1 pr-4">{fmtDate(r.ManufacturingDate) || "—"}</td>
+                          <td className="py-1 pr-4 tabular-nums">{r.Quantity != null ? Number(r.Quantity).toLocaleString() : "—"}</td>
+                          <td className="py-1 pr-4 tabular-nums">{r.Width != null ? Number(r.Width).toLocaleString() : "—"}</td>
+                          <td className="py-1 pr-4 tabular-nums">{r.Weight != null ? Number(r.Weight).toLocaleString() : "—"}</td>
+                          <td className="py-1 pr-4 tabular-nums">{r.PieceCount != null ? Number(r.PieceCount).toLocaleString() : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Fixed bottom ERP action bar — same category set as the reference screen; only Produce/
@@ -529,7 +621,23 @@ export function GenerateSerialCardsDialog({ open, onOpenChange, receiptId, itemI
           <Button size="sm" variant="outline" onClick={update} disabled={updating || !dirtyIds.length}>
             <Save className="h-3.5 w-3.5 mr-1.5" />{updating ? "Updating..." : "Update"}
           </Button>
-          <Button size="sm" variant="outline" {...disabledActionProps}>Label</Button>
+          <Button
+            size="sm" variant="outline" disabled={!rows.length || dirtyIds.length > 0}
+            title={dirtyIds.length ? "Update the edited rows first, so the labels show the saved values" : "Print a QR label for every roll generated in this session (earlier cards: List)"}
+            onClick={async () => {
+              try {
+                // QR payloads are built by the server from the saved cards and their linked data.
+                const ids = rows.map((r) => r.RecId);
+                if (!(await printSerialCardLabels(() => legacyErpApi.serialCards.labels(ids) as Promise<any>))) {
+                  toast.error("The label window was blocked — allow pop-ups for this site and try again.");
+                }
+              } catch (e: any) {
+                toast.error(e.message || "Failed to generate labels");
+              }
+            }}
+          >
+            <Printer className="h-3.5 w-3.5 mr-1.5" />Label
+          </Button>
           <Button size="sm" variant="outline" {...disabledActionProps}>Batch Labeling</Button>
           <Button size="sm" variant="outline" {...disabledActionProps}>Form</Button>
           <Button size="sm" variant="outline" onClick={openList} disabled={!receiptId || !itemId} title="Open the dedicated, permanent Serial Cards screen for this receipt line">

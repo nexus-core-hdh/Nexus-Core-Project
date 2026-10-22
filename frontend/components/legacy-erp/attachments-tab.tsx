@@ -199,11 +199,11 @@ export function AttachmentsTab({ itemId, readOnly = false, api }: Props) {
         </div>
         <Table>
           <TableHeader>
-            <TableRow className="border-b bg-background hover:bg-muted/60">
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Name</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">File Type</TableHead>
-              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Upload Date</TableHead>
-              <TableHead className="h-10 w-32 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Actions</TableHead>
+            <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">File Name</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">File Type</TableHead>
+              <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Upload Date</TableHead>
+              <TableHead className="h-10 w-32 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -222,7 +222,7 @@ export function AttachmentsTab({ itemId, readOnly = false, api }: Props) {
             ) : (
               <>
                 {staged.map((s) => (
-                  <TableRow key={s.localId} className="group">
+                  <TableRow key={s.localId} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                     <TableCell className="py-3">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -239,7 +239,7 @@ export function AttachmentsTab({ itemId, readOnly = false, api }: Props) {
                   </TableRow>
                 ))}
                 {documents.map((d) => (
-                  <TableRow key={d.id} className="group">
+                  <TableRow key={d.id} className="group [&>td]:border-r [&>td:last-child]:border-r-0">
                     <TableCell className="py-3">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />

@@ -77,7 +77,7 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
         <div className="rounded-md border">
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                 <TableHead>Order No</TableHead>
                 <TableHead>Order Date</TableHead>
                 <TableHead>Delivery Date</TableHead>
@@ -89,7 +89,7 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
                 <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {!orders.length ? (
                 <TableRow><TableCell colSpan={9} className="text-center py-6 text-muted-foreground">No orders yet</TableCell></TableRow>
               ) : orders.map((o) => (
@@ -120,7 +120,7 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
       <div className="rounded-md border">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
               <TableHead>Work Order No</TableHead>
               <TableHead>Work Order Date</TableHead>
               <TableHead>Delivery Date</TableHead>
@@ -130,7 +130,7 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
               <TableHead className="w-10"></TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {!orders.length ? (
               <TableRow><TableCell colSpan={7} className="text-center py-6 text-muted-foreground">No orders yet</TableCell></TableRow>
             ) : orders.map((o) => (

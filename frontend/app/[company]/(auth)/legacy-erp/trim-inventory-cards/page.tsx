@@ -9,10 +9,12 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { StockValueSummary } from "@/components/legacy-erp/stock-value";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
 import { Search, Save, FilePlus2, Ribbon, Lock } from "lucide-react";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
+import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
 import { useWorkspaceDirty } from "@/hooks/use-workspace-dirty";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { FormSection } from "@/components/forms/form-section";
@@ -97,6 +99,7 @@ export default function TrimInventoryCardPage() {
 
   const [codeInput, setCodeInput] = useState("");
   const [itemId, setItemId] = useState<number | null>(null);
+  useWorkspaceRecordId(itemId);
   const [form, setForm] = useState<Record<string, any>>(emptyForm);
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -218,7 +221,7 @@ export default function TrimInventoryCardPage() {
   useWorkspaceDirty(isDirty, async () => { await save(); });
   // Same identifier the breadcrumb trail below already shows as the current record segment —
   // resolveWorkspaceTabTitle composes it into "Trim Card [<this>]" on the Workspace tab.
-  useWorkspaceRecordLabel(itemId ? form.inventoryCode || undefined : undefined);
+  useWorkspaceRecordLabel(itemId ? [form.inventoryCode, form.inventoryName].filter(Boolean).join(" — ") || undefined : undefined);
 
   const lookupField = (key: LookupKey, label: string, formKey: string, span: "normal" | "wide" = "normal") => (
     <LookupField
@@ -280,6 +283,10 @@ export default function TrimInventoryCardPage() {
           </>
         }
       />
+
+      {/* Stock In Hand × existing receipt price — see components/legacy-erp/stock-value.tsx */}
+
+      <StockValueSummary id={itemId} load={(id) => legacyErpApi.trimInventoryCards.get(id)} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-0">
         <div className="rounded-xl border bg-card shadow-sm">

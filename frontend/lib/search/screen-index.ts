@@ -14,7 +14,23 @@ export interface ScreenEntry {
   moduleTitle: string;
   isNew?: boolean;
   isDataBadge?: string;
+  /** Extra search terms (synonyms) the palette also matches — see SCREEN_SEARCH_KEYWORDS. */
+  keywords?: string[];
 }
+
+/**
+ * Search synonyms for screens whose menu title alone doesn't carry every term users search by.
+ * Keyed by the screen's menu href (the menu itself — MenuItem / GET /menu-items — stays the only
+ * registry of screens; this only adds alternative words to an existing entry, never an entry).
+ */
+export const SCREEN_SEARCH_KEYWORDS: Record<string, string[]> = {
+  // Legacy name of the same documents (IM_PackagingList / IM_Packaging).
+  "/legacy-erp/packing-lists-list": ["packing", "packing list", "packaging"],
+  // Cutting Entry (./entry) opens from this screen for one Work Order + Production Color.
+  "/legacy-erp/cutting-card": ["cutting", "cutting entry", "cut"],
+};
+
+export const searchKeywordsFor = (href: string): string[] => SCREEN_SEARCH_KEYWORDS[href] ?? [];
 
 /**
  * Flattens the menu tree (the exact same NavGroup[] shape the sidebar renders,
@@ -39,6 +55,7 @@ export function flattenMenuTree(groups: NavGroup[]): ScreenEntry[] {
           moduleTitle,
           isNew: item.isNew,
           isDataBadge: item.isDataBadge,
+          keywords: searchKeywordsFor(item.href),
         });
       }
       if (item.items?.length) {

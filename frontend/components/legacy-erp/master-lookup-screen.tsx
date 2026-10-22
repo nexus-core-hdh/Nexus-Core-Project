@@ -297,11 +297,11 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
         <div className="max-h-[60vh] overflow-y-auto">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow className="border-b bg-background hover:bg-muted/60">
+              <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                 <SortableHead sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Code</SortableHead>
                 <SortableHead sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort}>Name</SortableHead>
-                <TableHead className="h-10 w-28 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
-                <TableHead className="h-10 w-36 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Action</TableHead>
+                <TableHead className="h-10 w-28 text-[11px] font-semibold uppercase tracking-wide text-white">Status</TableHead>
+                <TableHead className="h-10 w-36 text-right text-[11px] font-semibold uppercase tracking-wide text-white">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -312,7 +312,7 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
               ) : (
                 <>
                   {editingId === "new" && (
-                    <TableRow className="bg-primary/5">
+                    <TableRow className="bg-primary/5 [&>td]:border-r [&>td:last-child]:border-r-0">
                       <TableCell className="py-2">
                         <Input ref={codeInputRef} value={editForm.code} onChange={(e) => setEditForm((p) => ({ ...p, code: e.target.value }))} className="h-8" placeholder="Code" />
                       </TableCell>
@@ -355,7 +355,7 @@ export function MasterLookupScreen({ masterKey, title, mode, requestId, returnTa
                           onKeyDown={(e) => handleRowKeyDown(e, row, index)}
                           onDoubleClick={() => returnAndClose(row)}
                           className={cn(
-                            "group outline-none even:bg-muted/10",
+                            "group outline-none even:bg-muted/25 [&>td]:border-r [&>td:last-child]:border-r-0",
                             isSelected && "bg-primary/10",
                             mode === "lookup" && "cursor-pointer"
                           )}

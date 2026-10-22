@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname } from "next/navigation";
 
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
+import { findRecordRoute } from "@/lib/workspace/registry";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
 
 /**
@@ -43,13 +45,22 @@ export function useWorkspaceTabTitle(title: string | undefined) {
  */
 export function useWorkspaceRecordLabel(recordLabel: string | undefined) {
   const ctx = useWorkspaceTabContext();
+  const pathname = usePathname();
   const setTabRecordLabel = useWorkspaceStore((s) => s.setTabRecordLabel);
-  const tabKey = ctx?.tabKey;
+  // A record page (dynamic `[id]` route) isn't hosted by the stack — its tab key is its own
+  // pathname (see hooks/use-record-tab-sync.ts).
+  const recordTabKey = !ctx && pathname && findRecordRoute(pathname) ? pathname : undefined;
+  const tabKey = ctx?.tabKey ?? recordTabKey;
+  // The record tab is opened by an ancestor's effect (which runs after this one) — re-apply once it exists.
+  const tabOpen = useWorkspaceStore((s) => !!tabKey && s.tabs.some((t) => t.key === tabKey));
 
   useEffect(() => {
     if (!tabKey) return;
-    setTabRecordLabel(tabKey, recordLabel);
+    if (recordLabel !== undefined || !recordTabKey) setTabRecordLabel(tabKey, recordLabel);
+    // A record tab's key IS its record, so its label stays valid after the page unmounts (the
+    // tab lives on in the bar) — only a hosted tab, which can be re-pointed, clears it.
+    if (recordTabKey) return;
     return () => setTabRecordLabel(tabKey, undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabKey, recordLabel, setTabRecordLabel]);
+  }, [tabKey, tabOpen, recordLabel, setTabRecordLabel]);
 }

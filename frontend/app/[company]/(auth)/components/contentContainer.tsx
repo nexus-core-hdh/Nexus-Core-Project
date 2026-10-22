@@ -4,6 +4,7 @@ import * as React from "react";
 import { usePathname } from "@/lib/app-navigation";
 import { isWorkspaceRoute } from "@/lib/workspace/registry";
 import { WorkspaceContentStack } from "@/components/layout/workspace/workspace-content-stack";
+import { useRecordTabSync } from "@/hooks/use-record-tab-sync";
 
 const FULL_WIDTH_PATHS = new Set<string>(["/crm/deals/dashboards/create"]);
 
@@ -14,6 +15,8 @@ export function ContentContainer({ children }: { children: React.ReactNode }) {
   // WorkspaceContentStack (see lib/workspace/registry.tsx) instead of the real
   // Next.js page tree, so a screen never ends up mounted twice at once.
   const workspaceRoute = pathname ? isWorkspaceRoute(pathname) : false;
+  // Record pages (dynamic `[id]` routes) render as `children` below but still get their own tab.
+  useRecordTabSync();
 
   // `min-w-0`: this is a flex item of the column wrapper in layout.tsx — without
   // it, wide content rendered inside (a screen's table, the Workspace stack)

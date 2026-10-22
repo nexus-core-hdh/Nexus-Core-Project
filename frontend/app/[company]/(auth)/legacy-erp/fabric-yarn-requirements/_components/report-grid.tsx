@@ -6,14 +6,14 @@
 // purchase-order-line-grid.tsx), just with no per-cell editing/add-row since all three grids
 // here are reports over already-persisted data, not something this screen itself edits inline.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGridColumns, type GridColumnDef } from "@/hooks/use-grid-columns";
-import { useColumnFilters, type ColumnFilterType } from "@/hooks/use-column-filters";
+import { useColumnFilters, type ColumnFilterType, type ColumnFilterState } from "@/hooks/use-column-filters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { ColumnFilterPopover } from "@/components/legacy-erp/column-filter-popover";
@@ -34,12 +34,15 @@ export interface ReportColumn<T> {
   filterable?: boolean;
   filterType?: ColumnFilterType;
   filterValue?: (row: T) => string | number | null | undefined;
+  // Extra select options beyond the loaded rows' values (see use-column-filters.ts).
+  filterOptions?: string[];
 }
 
 export function ReportGrid<T extends { id: string | number }>({
   storageKey, columns, rows, loading, emptyLabel,
   getRowActions, selectedId, onRowClick, onRowDoubleClick, selectedIds, onRowContextMenu, fixedColumns, maxHeight,
   selectable, onToggleRow, onToggleAll, allSelected, someSelected, selectColumnWidth = 36,
+  onColumnFiltersChange,
 }: {
   storageKey: string;
   columns: ReportColumn<T>[];
@@ -111,6 +114,10 @@ export function ReportGrid<T extends { id: string | number }>({
   allSelected?: boolean;
   someSelected?: boolean;
   selectColumnWidth?: number;
+  // Opt-in: told whenever the column filters change, so a caller that pages its data on the server
+  // can also apply a column's filter to its query (the grid still filters the loaded rows itself).
+  // Omitted, filtering stays purely client-side, exactly as before.
+  onColumnFiltersChange?: (filters: Record<string, ColumnFilterState>) => void;
 }) {
   const gridColumnDefs = useMemo<GridColumnDef<string>[]>(
     () => columns.map((c) => ({ key: c.key, label: c.label, defaultWidth: c.defaultWidth, minWidth: c.minWidth ?? 80 })),
@@ -124,8 +131,11 @@ export function ReportGrid<T extends { id: string | number }>({
   // Column filters (funnel-icon dropdowns) — shared state/matching logic, see
   // hooks/use-column-filters.ts's own top comment. Client-side only, derived from and applied to
   // the CURRENTLY LOADED `rows` (never a re-fetch).
-  const { visibleRows, selectOptionsByColumn, filtersActive, getColumnFilter, setColumnFilter, clearAllFilters } =
+  const { columnFilters, visibleRows, selectOptionsByColumn, filtersActive, getColumnFilter, setColumnFilter, clearAllFilters } =
     useColumnFilters(rows, columns);
+  const onFiltersChangeRef = useRef(onColumnFiltersChange);
+  onFiltersChangeRef.current = onColumnFiltersChange;
+  useEffect(() => { onFiltersChangeRef.current?.(columnFilters); }, [columnFilters]);
 
   return (
     <div className="space-y-1.5">
@@ -162,7 +172,7 @@ export function ReportGrid<T extends { id: string | number }>({
             {displayColumnDefs.map((col) => <col key={col.key} style={{ width: gridColumns.colWidths[col.key] }} />)}
           </colgroup>
           <TableHeader>
-            <TableRow className="[&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th]:text-[11px] [&>th]:h-8 [&>th]:whitespace-nowrap">
               {selectable && (
                 <TableHead className="p-0 text-center" style={{ width: selectColumnWidth }}>
                   <div className="flex h-8 w-full items-center justify-center">
@@ -205,7 +215,7 @@ export function ReportGrid<T extends { id: string | number }>({
                       )}
                     </span>
                     <div
-                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                       onMouseDown={gridColumns.startResize(col.key)}
                       onDoubleClick={() => gridColumns.resetWidth(col.key)}
                       title="Drag to resize · double-click to reset width"

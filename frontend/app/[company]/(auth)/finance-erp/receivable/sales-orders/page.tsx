@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { ClipboardCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +39,7 @@ export default function SalesOrderFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [doc, setDoc] = useState<Omit<SalesOrder, "id" | "soNumber"> & { id?: string; soNumber?: string }>(newSalesOrderDraft());
+  useWorkspaceRecordLabel(isEdit ? doc.soNumber || undefined : undefined);
 
   useEffect(() => {
     if (!id) return;

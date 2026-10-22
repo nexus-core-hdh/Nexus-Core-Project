@@ -63,6 +63,8 @@ const RESERVED_SEGMENTS = new Set([
   "onboarding-flow",
   "register",
   "reset-password",
+  // Serial Card scan page (/s/<Serial No>, app/s/[serial]) — the link earlier label QR codes encode.
+  "s",
   "shared",
   "_next",
 ]);

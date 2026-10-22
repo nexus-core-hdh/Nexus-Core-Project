@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { ArrowUpFromLine } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +36,7 @@ export default function IssuanceFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [issuanceNumber, setIssuanceNumber] = useState<string | null>(null);
+  useWorkspaceRecordLabel(isEdit ? issuanceNumber || undefined : undefined);
   const [status, setStatus] = useState<IssuanceStatus>("Draft");
 
   const [issuanceDate, setIssuanceDate] = useState(todayIso());
@@ -112,7 +114,7 @@ export default function IssuanceFormPage() {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold bg-slate-700 dark:bg-slate-800 text-white">Items</div>
+        <div className="mb-2 text-sm font-semibold">Items</div>
         <LineItemsTable columns={columns} rows={items} onAddRow={() => setItems((p) => [...p, newIssuanceLine()])} onRemoveRow={(i) => setItems((p) => p.filter((_, idx) => idx !== i))} />
       </div>
 

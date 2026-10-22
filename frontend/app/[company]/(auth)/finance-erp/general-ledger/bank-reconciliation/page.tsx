@@ -89,8 +89,8 @@ export default function BankReconciliationPage() {
         <div className="rounded-lg border">
           <div className="border-b bg-muted/30 px-4 py-2 text-sm font-semibold">Statement Transactions ({statementRows.length})</div>
           <Table>
-            <TableHeader><TableRow><TableHead className="w-8"></TableHead><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
-            <TableBody>
+            <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead className="w-8"></TableHead><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {statementRows.map((r) => (
                 <TableRow key={r.id} className="cursor-pointer" onClick={() => setSelectedStatement(r.id)}>
                   <TableCell><Checkbox checked={selectedStatement === r.id} onCheckedChange={() => setSelectedStatement(r.id)} /></TableCell>
@@ -107,8 +107,8 @@ export default function BankReconciliationPage() {
         <div className="rounded-lg border">
           <div className="border-b bg-muted/30 px-4 py-2 text-sm font-semibold">Book Transactions ({bookRows.length})</div>
           <Table>
-            <TableHeader><TableRow><TableHead className="w-8"></TableHead><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
-            <TableBody>
+            <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead className="w-8"></TableHead><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {bookRows.map((r) => (
                 <TableRow key={r.id} className="cursor-pointer" onClick={() => setSelectedBook(r.id)}>
                   <TableCell><Checkbox checked={selectedBook === r.id} onCheckedChange={() => setSelectedBook(r.id)} /></TableCell>
@@ -126,8 +126,8 @@ export default function BankReconciliationPage() {
       <div className="rounded-lg border">
         <div className="border-b bg-muted/30 px-4 py-2 text-sm font-semibold">Matched Transactions ({matched.length})</div>
         <Table>
-          <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="w-10"></TableHead></TableRow></TableHeader>
-          <TableBody>
+          <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="w-10"></TableHead></TableRow></TableHeader>
+          <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
             {matched.length === 0 ? (
               <TableRow><TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">No transactions matched yet — select one from each side and click Match Selected.</TableCell></TableRow>
             ) : matched.map((pair, i) => (

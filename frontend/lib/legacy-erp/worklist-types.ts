@@ -7,7 +7,7 @@
 export type WorklistSource =
   | "purchase-receipt" | "purchase-receipt-item" | "yarn-card" | "fabric-card" | "current-account" | "warehouse" | "financial-receipt"
   | "trim-card" | "trim-inventory-card" | "purchase-order" | "contract" | "size-set" | "unit-set" | "inventory-card"
-  | "work-order";
+  | "work-order" | "packing-list";
 
 export interface WorklistField {
   source: WorklistSource;
@@ -37,3 +37,17 @@ export function mapTableKeyToWorklistSource(tableKey: string): WorklistSource | 
 }
 
 export const fieldKey = (f: Pick<WorklistField, "source" | "key">) => `${f.source}:${f.key}`;
+
+/**
+ * What a worklist cell shows for screens that project worklists from their own list() rows (Work
+ * Orders, Packing Lists): an "<x>Id" column whose row also carries "<x>Name" (e.g. currentAccountId
+ * → currentAccountName) shows the name. The raw id stays on the row for operations. Screens resolved
+ * server-side get the same treatment in worklist-rows.service.ts.
+ */
+export function worklistCellValue(row: Record<string, unknown>, rowKey: string): unknown {
+  if (rowKey.endsWith("Id")) {
+    const name = row[`${rowKey.slice(0, -2)}Name`];
+    if (name !== null && name !== undefined && name !== "") return name;
+  }
+  return row[rowKey];
+}

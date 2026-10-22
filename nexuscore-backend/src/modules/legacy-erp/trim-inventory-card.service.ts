@@ -3,6 +3,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { withStockValuation } from './inventory-card.service';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { DeleteDependencyService } from './delete-dependency.service';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
@@ -85,12 +86,13 @@ export class TrimInventoryCardService {
     const searchFilter = search
       ? Prisma.sql`AND ("InventoryCode" ILIKE ${`%${search}%`} OR "InventoryName" ILIKE ${`%${search}%`})`
       : Prisma.sql``;
-    return runLegacyList(this.prisma, {
+    // Stock In Hand / Stock Value for the rows of this page — one valuation query (inventory-card.service.ts).
+    return withStockValuation(this.prisma, await runLegacyList(this.prisma, {
       select: HEADER_SELECT,
       from: Prisma.sql`FROM "IM_Item" WHERE "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE} ${searchFilter}`,
       sortable: { inventoryCode: Prisma.sql`"InventoryCode"`, inventoryName: Prisma.sql`"InventoryName"`, specialCode: Prisma.sql`"SpecialCode"` },
       defaultSortBy: 'inventoryCode', defaultSortDir: 'asc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
-    }, paging, sanitizeRawRow);
+    }, paging, sanitizeRawRow));
   }
 
   async get(id: number) {
@@ -99,6 +101,16 @@ export class TrimInventoryCardService {
     `);
     if (!rows.length) throw new NotFoundException('Trim card not found');
     return sanitizeRawRow(rows[0]);
+  }
+
+  // Card screen reads: the card plus its Stock In Hand / Stock Value. get()/getByCode() stay plain —
+  // they also feed updates and audit snapshots, which must not carry computed stock fields.
+  async getWithStock(id: number) {
+    return withStockValuation(this.prisma, await this.get(id));
+  }
+
+  async getByCodeWithStock(code: string) {
+    return withStockValuation(this.prisma, await this.getByCode(code));
   }
 
   async getByCode(code: string) {

@@ -6,8 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { legacyErpApi, type SerialCardUpdateItem } from "@/lib/nexuscore-api";
+import { serialCardToUpdateItem } from "@/lib/legacy-erp/serial-card-update";
+import { SerialCardDetailView } from "./serial-card-detail-view";
+import { printSerialCardLabels } from "./serial-card-labels";
 import { toast } from "sonner";
-import { Save, Tag } from "lucide-react";
+import { Printer, Save, Tag } from "lucide-react";
 
 import { DatePicker } from "@/components/ui/date-picker";
 // Generate Serial Cards — the per-record View/Update surface for one already-persisted
@@ -54,9 +57,41 @@ export interface SerialCardRow {
   Pus: number | null;
   Fine: number | null;
   PieceCount: number | null;
+  CurrentAccountId?: number | null;
+  ExpirationDate?: string | null;
+  ShelfLife?: number | null;
+  QuantityMT?: number | null;
+  Quantity3?: number | null;
+  WeightMt?: number | null;
+  receiptItemId?: number | null;
   warehouseQuantity?: number;
   hasTransaction?: boolean;
+  currentAccountCode?: string | null;
+  currentAccountName?: string | null;
+  // Production identity, read live from the linked Work Order / Style Card / Fabric Card.
+  workOrderId?: number | null;
+  styleNumber?: string | null;
+  styleName?: string | null;
+  colorCardId?: string | null;
+  fabricComposition?: string | null;
+  fabricGsm?: string | null;
+  fabricWidth?: number | null;
+  fabricWeight?: number | null;
+  /** Only on the detail / scan / labels responses. */
+  yarnRecipe?: SerialCardYarnRecipe;
+  /** The ERP link earlier labels encoded (<ERP>/s/<Serial No>). Current labels encode the card's
+   *  data as text instead (lib/legacy-erp/serial-card-qr-text.ts). */
+  qrPayload?: string | null;
 }
+
+export interface SerialCardYarnRecipe {
+  status: "ok" | "no-work-order" | "not-in-bom" | "ambiguous" | "not-defined";
+  message: string | null;
+  source: "color" | "common" | null;
+  lines: { yarnInventoryId: number | null; yarnCode: string | null; yarnName: string | null; percentage: number; process: string | null; variant1: string | null; variant2: string | null; explanation: string | null; wastePct: number; dyeWastagePct: number }[];
+}
+
+export { serialCardToUpdateItem };
 
 interface Props {
   open: boolean;
@@ -66,26 +101,28 @@ interface Props {
   onSaved?: () => void;
 }
 
-const num = (v: any) => (v === "" || v == null ? null : Number(v));
 const fmtDate = (v: string | null) => (v ? v.slice(0, 10) : "");
-
-function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-medium" title={value != null ? String(value) : undefined}>
-        {value != null && value !== "" ? value : <span className="text-muted-foreground">—</span>}
-      </p>
-    </div>
-  );
-}
 
 export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }: Props) {
   const [form, setForm] = useState<Partial<SerialCardRow>>({});
   const [saving, setSaving] = useState(false);
+  // Production details + Yarn Recipe, fetched fresh for the open card (the barcode lookup key is its Serial No).
+  const [detail, setDetail] = useState<SerialCardRow | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open && card) setForm(card);
+  }, [open, card]);
+
+  useEffect(() => {
+    if (!open || !card) return;
+    let cancelled = false;
+    setDetail(null);
+    setDetailError(null);
+    legacyErpApi.serialCards.detail(card.RecId)
+      .then((d: any) => { if (!cancelled) setDetail(d); })
+      .catch((e: any) => { if (!cancelled) setDetailError(e.message || "Could not load production details"); });
+    return () => { cancelled = true; };
   }, [open, card]);
 
   const set = (patch: Partial<SerialCardRow>) => setForm((prev) => ({ ...prev, ...patch }));
@@ -94,27 +131,9 @@ export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }
     if (!card) return;
     setSaving(true);
     try {
-      const item: SerialCardUpdateItem = {
-        id: card.RecId,
-        explanation: form.Explanation ?? null,
-        partyNo: form.PartyNo ?? null,
-        qualityTypeId: form.QualityTypeId ?? null,
-        resourceId: form.ResourceId ?? null,
-        employeeId: form.EmployeeId ?? null,
-        producerSerialCode: form.ProducerSerialCode ?? null,
-        manufacturingDate: form.ManufacturingDate ?? null,
-        quantity: num(form.Quantity),
-        width: num(form.Width),
-        weight: num(form.Weight),
-        rawWidth: num(form.RawWidth),
-        rawWeight: num(form.RawWeight),
-        rawLength: num(form.RawLength),
-        productLength: num(form.ProductLength),
-        weightM2: num(form.WeightM2),
-        pus: num(form.Pus),
-        fine: num(form.Fine),
-        pieceCount: num(form.PieceCount),
-      };
+      // Fields this form doesn't show (Man. C/A, expiry, shelf life, Quantity II/3, Mtul) carry
+      // over from the card instead of being sent as NULL.
+      const item: SerialCardUpdateItem = serialCardToUpdateItem({ ...card, ...form, RecId: card.RecId });
       await legacyErpApi.serialCards.updateFlat([item]);
       toast.success("Serial card updated.");
       onOpenChange(false);
@@ -128,6 +147,15 @@ export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }
 
   if (!card) return null;
   const readOnly = mode === "view";
+  // Reprint uses the same server endpoint as every label, so the payload is the saved card's.
+  const printLabel = async () => {
+    try {
+      const opened = await printSerialCardLabels(() => legacyErpApi.serialCards.labels([card.RecId]) as Promise<any>);
+      if (!opened) toast.error("The label window was blocked — allow pop-ups for this site and try again.");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to generate the label");
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -140,16 +168,14 @@ export function SerialCardEditDialog({ open, onOpenChange, mode, card, onSaved }
         </DialogHeader>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 lg:grid-cols-3">
-            <Field label="Inventory Code" value={card.inventoryCode} />
-            <Field label="Inventory Name" value={card.inventoryName} />
-            <Field label="Variant" value={card.variantCode || card.variantName} />
-            <Field label="Color" value={card.colorCode || card.colorName} />
-            <Field label="Unit" value={card.unitCode} />
-            <Field label="Order No" value={card.workOrderNo} />
-            <Field label="Receipt No" value={card.receiptNo} />
-            <Field label="Warehouse Quantity" value={card.warehouseQuantity != null ? card.warehouseQuantity.toLocaleString() : null} />
-          </div>
+          <SerialCardDetailView
+            card={card} detail={detail} detailError={detailError}
+            actions={
+              <Button size="sm" variant="outline" className="h-7" onClick={printLabel} disabled={!detail}>
+                <Printer className="h-3.5 w-3.5 mr-1.5" />Print Label
+              </Button>
+            }
+          />
 
           <div className="grid grid-cols-2 gap-3 border-t border-border pt-3 lg:grid-cols-3">
             <div className="space-y-1">

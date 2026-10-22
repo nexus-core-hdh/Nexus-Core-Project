@@ -22,6 +22,9 @@ async function request<T = any>(path: string, init?: RequestInit): Promise<T> {
     const err = await res.json().catch(() => ({ message: 'Request failed' }));
     const error = new Error(err.message || 'Request failed');
     (error as any).status = res.status;
+    // API not reachable through the proxy (e.g. 503 BACKEND_UNAVAILABLE while it restarts) — same
+    // flag lib/api.ts sets, so callers can tell "try again" apart from a real API error.
+    if ([502, 503, 504].includes(res.status)) (error as any).isNetworkError = true;
     throw error;
   }
 
@@ -135,6 +138,14 @@ export const entitiesApi = {
   getCustomFieldValues: (entity: string, entityId: string) => api.get(entities('/custom-field-values', { entity, entityId })),
   upsertCustomFieldValues: (entity: string, entityId: string, values: any[]) =>
     api.put(entities('/custom-field-values'), { entity, entityId, values }),
+  // What the UDF runtime renders: screen entities and logical grids (with their usages).
+  getCustomFieldTargets: () => api.get(entities('/custom-field-targets')),
+  // Grid-level values (custom-field-grids.ts): every live row of one document in one call; rows =
+  // [{ rowId, values: [{ customFieldId, value }] }]. Parent reach, row ownership, the owning
+  // module's update permission and validation are all enforced server-side.
+  getGridCustomFieldValues: (grid: string, parentId: string) => api.get(entities('/custom-field-values/grid', { grid, parentId })),
+  upsertGridCustomFieldValues: (grid: string, parentId: string, rows: any[]) =>
+    api.put(entities('/custom-field-values/grid'), { grid, parentId, rows }),
 };
 
 // PLM helpers
@@ -426,6 +437,10 @@ export interface SerialCardUpdateItem extends SerialCardFieldValues {
   id: number;
 }
 
+/** `origin=<this browser's ERP address>` for the Serial Card QR link base (see serialCards.detail). */
+const qrOriginParam = () =>
+  `origin=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin : "")}`;
+
 // Legacy ERP (migrated SQL Server schema, raw-SQL backed)
 export const legacyErpApi = {
   warehouses: {
@@ -475,6 +490,22 @@ export const legacyErpApi = {
     createItem: (id: number, d: any) => api.post(`/legacy-erp/trim-cards/${id}/items`, d),
     updateItem: (id: number, itemId: number, d: any) => api.put(`/legacy-erp/trim-cards/${id}/items/${itemId}`, d),
     removeItem: (id: number, itemId: number) => api.delete(`/legacy-erp/trim-cards/${id}/items/${itemId}`),
+  },
+  // Packing List — IM_PackagingList header + box-range lines, per-size quantities keyed by the
+  // Work Order's own "Color‖Size" variant (packing-list.service.ts).
+  packingLists: {
+    list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/packing-lists${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
+    get: (id: number) => api.get(`/legacy-erp/packing-lists/${id}`),
+    previewNextCode: () => api.get(`/legacy-erp/packing-lists/next-code`),
+    workOrderContext: (workOrderId: number) => api.get(`/legacy-erp/packing-lists/work-order-context/${workOrderId}`),
+    create: (d: any) => api.post('/legacy-erp/packing-lists', d),
+    update: (id: number, d: any) => api.put(`/legacy-erp/packing-lists/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/packing-lists/${id}`),
+    getLines: (id: number) => api.get(`/legacy-erp/packing-lists/${id}/lines`),
+    saveLines: (id: number, lines: any[]) => api.put(`/legacy-erp/packing-lists/${id}/lines`, { lines }),
+    summary: (id: number) => api.get(`/legacy-erp/packing-lists/${id}/summary`),
+    approve: (id: number) => api.post(`/legacy-erp/packing-lists/${id}/approve`, {}),
+    unapprove: (id: number) => api.post(`/legacy-erp/packing-lists/${id}/unapprove`, {}),
   },
   unitSets: {
     list: (search?: string, paging?: PageRequest) => api.get(withPaging(`/legacy-erp/unit-sets${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
@@ -598,14 +629,28 @@ export const legacyErpApi = {
       receiptItemId?: number; inventoryId?: number; workOrderId?: number; search?: string;
       serialNo?: string; inventoryQuery?: string; receiptNo?: string; workOrderNo?: string;
       variantQuery?: string; dateFrom?: string; dateTo?: string; status?: "has" | "none";
+      /** Party No column filter — sent as repeated ?partyNo= (values may contain commas). */
+      partyNo?: string[];
       skip?: number; take?: number;
     }) => {
       const qs = new URLSearchParams();
-      if (params) for (const [k, v] of Object.entries(params)) if (v != null && v !== "") qs.set(k, String(v));
+      if (params) for (const [k, v] of Object.entries(params)) {
+        if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
+        else if (v != null && v !== "") qs.set(k, String(v));
+      }
       const s = qs.toString();
       return api.get(`/legacy-erp/serial-cards${s ? `?${s}` : ""}`);
     },
     updateFlat: (items: SerialCardUpdateItem[]) => api.patch(`/legacy-erp/serial-cards`, items),
+    // One card with its production details + Yarn Recipe; byCode = lookup by Serial No (scan).
+    // `origin` (this browser's ERP address) is the QR link base until the server's
+    // QR_PUBLIC_BASE_URL is set.
+    detail: (id: number) => api.get(`/legacy-erp/serial-cards/${id}/detail?${qrOriginParam()}`),
+    // Label printing — the cards in this order, each with its Yarn Recipe (the QR holds the data as text).
+    labels: (ids: number[]) => api.get(`/legacy-erp/serial-cards/labels?ids=${ids.join(",")}`),
+    byCode: (code: string) => api.get(`/legacy-erp/serial-cards/by-code/${encodeURIComponent(code.trim())}?${qrOriginParam()}`),
+    // "Assign to Qty" — splits each receipt line's unassigned quantity equally across the given cards.
+    assignQuantity: (ids: number[]) => api.patch(`/legacy-erp/serial-cards/assign-quantity`, { ids }),
     remove: (id: number) => api.delete(`/legacy-erp/serial-cards/${id}`),
   },
   workOrders: {
@@ -634,7 +679,10 @@ export const legacyErpApi = {
     removeTabRow: (id: number, tab: string, lineId: number) => api.delete(`/legacy-erp/work-orders/${id}/${tab}/${lineId}`),
     listBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process") => api.get(`/legacy-erp/work-orders/${id}/bom/${lineType}`),
     upsertBom: (id: number, lineType: "fabric" | "trim" | "ornament" | "process", lines: any[]) => api.put(`/legacy-erp/work-orders/${id}/bom/${lineType}`, lines),
-    transferBomFromStyleCard: (id: number, styleCardId: string) => api.post(`/legacy-erp/work-orders/${id}/bom/transfer-from-style-card`, { styleCardId }),
+    // Read only — the Style Card BOM mapped into this Work Order's BOM line shape, per lineType.
+    // Nothing is written; the lines are persisted by the Work Order's Save (BomTab → upsertBom).
+    previewBomTransferFromStyleCard: (id: number, styleCardId: string, lineType?: "fabric" | "trim" | "ornament" | "process") =>
+      api.get(`/legacy-erp/work-orders/${id}/bom/style-card-transfer?styleCardId=${encodeURIComponent(styleCardId)}${lineType ? `&lineType=${lineType}` : ""}`),
     // Cutting Card / Cutting Entry — one per (Work Order, Production Color, Fabric); see
     // cutting-card.service.ts. get() is also the get-or-create call (idempotent, safe to call on
     // every screen open — it never creates a duplicate card for the same Work Order + Color + Fabric).
@@ -666,6 +714,12 @@ export const legacyErpApi = {
         api.post(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}/size?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`, { sizeCode, quantity }),
       deleteEntry: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string) =>
         api.delete(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`),
+      // Complete-Order Cutting — every Production Color of the Work Order for one Fabric, with one
+      // size-wise summary added up across the colors. Entries are added/edited/deleted through the
+      // per-color addEntry/updateEntry/setEntrySize/deleteEntry above with the entry's own color.
+      listOrderFabrics: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/order/fabrics`),
+      getOrder: (workOrderId: number, materialKey: string) =>
+        api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/order?materialKey=${encodeURIComponent(materialKey)}`),
     },
     // Fabric/Yarn Requirements — reuses the Work Order's own BOM (fabric) and Fabric Card Yarn
     // Recipe (yarn) as its data source; see fabric-yarn-requirements.service.ts.
@@ -688,10 +742,12 @@ export const legacyErpApi = {
       getMappingWarnings: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/mapping-warnings?type=${type}`),
       // inventoryId/colorCardId optional — when passed (clicking a specific item on the
       // Requirements/Total Requirements grid), scopes receipts down to exactly that material.
-      getTransactions: (workOrderId: number, filter?: { inventoryId?: number | null; colorCardId?: string | null }) => {
+      // exactColor (Fabric Planning) — a row without a Material Color lists only receipts without one.
+      getTransactions: (workOrderId: number, filter?: { inventoryId?: number | null; colorCardId?: string | null; exactColor?: boolean }) => {
         const qs = new URLSearchParams();
         if (filter?.inventoryId != null) qs.set("inventoryId", String(filter.inventoryId));
         if (filter?.colorCardId) qs.set("colorCardId", filter.colorCardId);
+        if (filter?.exactColor) qs.set("exactColor", "1");
         const q = qs.toString();
         return api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/transactions${q ? `?${q}` : ""}`);
       },

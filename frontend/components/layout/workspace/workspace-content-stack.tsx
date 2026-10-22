@@ -5,7 +5,8 @@ import { usePathname, useSearchParams } from "@/lib/app-navigation";
 
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
-import { findWorkspaceModule, isWorkspaceRoute, resolveTabKey } from "@/lib/workspace/registry";
+import { findWorkspaceModule, isWorkspaceRoute } from "@/lib/workspace/registry";
+import { syncModuleRouteTab } from "@/lib/workspace/navigate";
 import { WorkspaceTabContext } from "./workspace-tab-context";
 
 /**
@@ -26,22 +27,13 @@ export function WorkspaceContentStack() {
   const searchParams = useSearchParams();
   const tabs = useWorkspaceStore((s) => s.tabs);
   const activeKey = useWorkspaceStore((s) => s.activeKey);
-  const openTab = useWorkspaceStore((s) => s.openTab);
 
-  // Landing directly on a workspace route (deep link, bookmark, browser refresh)
-  // with no matching tab already open — auto-open/activate it, same as clicking
+  // Landing directly on a workspace route (deep link, bookmark, browser refresh, a list row,
+  // Back/Forward) with no matching tab already open — auto-open/activate it, same as clicking
   // it from the sidebar would.
   useEffect(() => {
-    const mod = findWorkspaceModule(pathname);
-    if (!mod) return;
-    const query = searchParams.toString();
-    const href = query ? `${pathname}?${query}` : pathname;
-    const key = resolveTabKey(mod.path, href);
-    const alreadyOpen = useWorkspaceStore.getState().tabs.some((t) => t.key === key);
-    if (alreadyOpen && useWorkspaceStore.getState().activeKey === key) return;
-    openTab({ key, href });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname, searchParams, openTab]);
+    syncModuleRouteTab(pathname, searchParams.toString());
+  }, [pathname, searchParams]);
 
   if (!isWorkspaceRoute(pathname) || tabs.length === 0) return null;
 
@@ -50,12 +42,14 @@ export function WorkspaceContentStack() {
       {tabs.map((tab) => {
         const mod = findWorkspaceModule(tab.key);
         if (!mod) return null;
-        const [, query] = tab.href.split("?");
+        // A tab re-keyed in place (replaceTab) keeps the instance it was mounted as — see WorkspaceTab.mount.
+        const mount = tab.mount ?? { key: tab.key, href: tab.href };
+        const [, query] = mount.href.split("?");
         const Component = mod.Component;
         return (
-          <div key={tab.key} className={cn("absolute inset-0", tab.key === activeKey ? "block" : "hidden")}>
+          <div key={mount.key} className={cn("absolute inset-0", tab.key === activeKey ? "block" : "hidden")}>
             <WorkspaceTabContext.Provider
-              key={`${tab.key}:${tab.href}`}
+              key={`${mount.key}:${mount.href}`}
               value={{ tabKey: tab.key, params: new URLSearchParams(query ?? "") }}
             >
               <Component />

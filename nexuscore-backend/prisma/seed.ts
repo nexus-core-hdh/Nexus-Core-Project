@@ -119,6 +119,11 @@ async function main() {
     // WhatsApp
     { module: 'whatsapp', action: 'send', description: 'Send WhatsApp messages' },
     { module: 'whatsapp', action: 'configure', description: 'Configure WhatsApp' },
+    // Companies (platform level) — effective only for users of the platform-owner company above
+    // (CompanyProvisioningService checks Company.isPlatformOwner on every request).
+    { module: 'companies', action: 'read', description: 'View all companies (platform owner only)' },
+    { module: 'companies', action: 'create', description: 'Register new companies (platform owner only)' },
+    { module: 'companies', action: 'invite-admin', description: 'Create the first administrator of a new company (platform owner only)' },
     // General Settings -> Screen Parameters
     { module: 'general-settings', action: 'manage-screen-parameters', description: 'Manage Screen Parameters configuration' },
   ];

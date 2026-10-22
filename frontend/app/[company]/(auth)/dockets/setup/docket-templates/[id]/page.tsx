@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useParams, useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,7 @@ export default function DocketTemplateDetailPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [template, setTemplate] = useState<any>(null);
+  useWorkspaceRecordLabel(template?.name || undefined);
   const [loading, setLoading] = useState(true);
   const [docTypes, setDocTypes] = useState<any[]>([]);
   const [addItemOpen, setAddItemOpen] = useState(false);

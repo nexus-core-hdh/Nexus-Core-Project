@@ -57,8 +57,8 @@ export default function AdvancesFromCustomersPage() {
         : (
         <div className="overflow-hidden rounded-lg border">
           <Table>
-            <TableHeader><TableRow><TableHead>Advance #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="text-right">Adjusted</TableHead><TableHead className="text-right">Remaining</TableHead><TableHead>Status</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
-            <TableBody>
+            <TableHeader><TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0"><TableHead>Advance #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead className="text-right">Amount</TableHead><TableHead className="text-right">Adjusted</TableHead><TableHead className="text-right">Remaining</TableHead><TableHead>Status</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {rows.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell className="font-mono text-xs">{a.advanceNumber}</TableCell>

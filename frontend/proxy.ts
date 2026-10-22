@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNextPath } from "@/lib/safe-next";
 
 import {
   APP_HOME_PATH,
@@ -19,10 +20,11 @@ function redirectTo(request: NextRequest, pathname: string) {
   return NextResponse.redirect(url);
 }
 
-function toLogin(request: NextRequest) {
+/** To the login page; `next` (a same-origin path) is where login returns to afterwards. */
+function toLogin(request: NextRequest, next?: string) {
   const url = request.nextUrl.clone();
   url.pathname = LOGIN_PATH;
-  url.search = "";
+  url.search = next ? `?next=${encodeURIComponent(next)}` : "";
   return NextResponse.redirect(url);
 }
 
@@ -40,6 +42,14 @@ export function proxy(request: NextRequest) {
   const token = request.cookies.get("auth_token")?.value;
   const slug = request.cookies.get(COMPANY_SLUG_COOKIE)?.value || null;
 
+  // Serial Card scan page — `/s/<Serial No>`, the link earlier label QR codes encode (current labels
+  // carry the card data offline). A root route, never a company slug (reserved in lib/company-path.ts).
+  // Signed out -> login, then straight back to the card (?next=); the page itself checks the session too.
+  if (pathname.startsWith("/s/")) {
+    if (!token) return toLogin(request, pathname);
+    return NextResponse.next();
+  }
+
   const legacy = legacyDashboardPath(pathname);
   if (legacy) return redirectTo(request, isAppPath(legacy) ? withCompanySlug(legacy, slug) : legacy);
 
@@ -48,9 +58,14 @@ export function proxy(request: NextRequest) {
     return toLogin(request);
   }
 
-  // Signed-in users skip the guest pages (onboarding stays reachable to finish company setup).
+  // Signed-in users skip the guest pages (onboarding stays reachable to finish company setup) — to the
+  // same-origin return path when the login link carries one (?next=, e.g. a scanned /s/<Serial No>).
   if (GUEST_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    if (token && slug) return redirectTo(request, withCompanySlug(APP_HOME_PATH, slug));
+    if (token && slug) {
+      const next = safeNextPath(request.nextUrl.searchParams.get("next"));
+      if (next) return NextResponse.redirect(new URL(isAppPath(next) ? withCompanySlug(next, slug) : next, request.url));
+      return redirectTo(request, withCompanySlug(APP_HOME_PATH, slug));
+    }
     return NextResponse.next();
   }
   if (pathname === ONBOARDING_PATH || pathname.startsWith(ONBOARDING_PATH + "/")) return NextResponse.next();

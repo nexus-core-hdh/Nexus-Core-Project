@@ -9,6 +9,7 @@
 // screen re-reads the DB.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -59,6 +60,7 @@ export default function OrderManufacturingEntryPage() {
   const [workOrderId, setWorkOrderId] = useState<number | null>(idParam ? Number(idParam) : null);
   const [processId, setProcessId] = useState<number | null>(processParam ? Number(processParam) : null);
   const [ctx, setCtx] = useState<Context | null>(null);
+  useWorkspaceRecordLabel(ctx?.workOrder.workOrderNo || undefined);
   const [selectedColor, setSelectedColor] = useState<string | null>(searchParams.get("color"));
   const [loading, setLoading] = useState(false);
   const [priceOpen, setPriceOpen] = useState(false);
@@ -120,7 +122,7 @@ export default function OrderManufacturingEntryPage() {
   const canChild = !!workOrderId && !!ctx?.process && !!selectedColor;
   const childHint = !workOrderId ? "Select an Order No first." : !ctx?.process ? "Select a Process first." : !selectedColor ? "Select a row first." : undefined;
 
-  const th = "sticky top-0 z-10 border border-border/70 bg-muted px-1.5 h-8 text-[10.5px] font-semibold text-muted-foreground whitespace-nowrap text-left align-bottom";
+  const th = "sticky top-0 z-10 border border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 h-8 text-[10.5px] font-semibold text-white whitespace-nowrap text-left align-bottom";
   const tdNum = "border border-border/50 px-1.5 h-[22px] text-right font-mono text-[11px] whitespace-nowrap";
   const fieldLabel = "w-14 shrink-0 text-right text-[11.5px] text-muted-foreground";
   const roBox = "flex h-6 items-center truncate rounded-sm border border-input bg-muted/30 px-2 text-[11.5px]";
@@ -186,7 +188,7 @@ export default function OrderManufacturingEntryPage() {
         ) : (
           <table className="min-w-max border-collapse">
             <thead>
-              <tr>
+              <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                 <th className={cn(th, "left-0 z-20 w-3 min-w-3 px-0")} />
                 {ctx.materialColumns.map((m, i) => (
                   <th key={m.key} className={cn(th, "min-w-[112px] max-w-[132px] whitespace-normal leading-tight", i === 0 && "sticky left-3 z-20")} title={`${m.lineType} — ${m.label}`}>{m.label}</th>
@@ -201,7 +203,7 @@ export default function OrderManufacturingEntryPage() {
                 <th className={cn(th, "min-w-[84px] text-right")}>Balance</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {ctx.rows.map((r) => {
                 const sel = r.color === selectedColor;
                 const blank = (v: number) => (v ? fmt(v) : "");

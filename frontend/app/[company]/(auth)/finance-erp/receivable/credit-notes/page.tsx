@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { FileX2 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ export default function CreditNoteFormPage() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [doc, setDoc] = useState<Omit<CreditNote, "id" | "creditNoteNumber"> & { id?: string; creditNoteNumber?: string }>(newCreditNoteDraft());
+  useWorkspaceRecordLabel(isEdit ? doc.creditNoteNumber || undefined : undefined);
   const invoices = listSalesInvoicesSync();
 
   useEffect(() => {

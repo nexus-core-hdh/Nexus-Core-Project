@@ -182,7 +182,7 @@ export default function YarnRecipesPage() {
         ) : (
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
                 <TableHead className="w-12">#</TableHead>
                 <TableHead>Fabric Code</TableHead>
                 <TableHead>Fabric Name</TableHead>
@@ -194,7 +194,7 @@ export default function YarnRecipesPage() {
                 <TableHead className="w-28 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
               {filteredSummaries.map((s, idx) => (
                 <TableRow key={s.colorCardId ?? "common"}>
                   <TableCell className="text-muted-foreground">{idx + 1}</TableCell>

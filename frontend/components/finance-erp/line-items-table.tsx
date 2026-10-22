@@ -34,7 +34,7 @@ export function LineItemsTable<T>({
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow className="bg-background hover:bg-muted/60">
+            <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
               <TableHead className="w-10 text-center text-[11px]">#</TableHead>
               {columns.map((c) => (
                 <TableHead key={c.key} style={c.width ? { width: c.width } : undefined} className={cn("text-[11px]", c.align === "right" && "text-right", c.align === "center" && "text-center")}>
@@ -53,7 +53,7 @@ export function LineItemsTable<T>({
               </TableRow>
             ) : (
               rows.map((row, i) => (
-                <TableRow key={i}>
+                <TableRow key={i} className="[&>td]:border-r [&>td:last-child]:border-r-0">
                   <TableCell className="text-center text-xs text-muted-foreground">{i + 1}</TableCell>
                   {columns.map((c) => (
                     <TableCell key={c.key} className={cn("p-1.5", c.align === "right" && "text-right", c.align === "center" && "text-center")}>

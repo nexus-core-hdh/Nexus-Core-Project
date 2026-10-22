@@ -192,7 +192,7 @@ export function ItemAllocationDialog({ open, onOpenChange, context, onChanged }:
   const itemLabel = context ? [context.inventoryCode, context.inventoryName].filter(Boolean).join(" — ") : "";
   const colorLabel = context ? (context.colorCode || context.colorName) : null;
   const num = (n: number) => round(n, "quantity").toLocaleString();
-  const th = "h-9 whitespace-normal align-bottom px-2 text-[10.5px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground/80";
+  const th = "h-9 whitespace-normal align-bottom px-2 text-[10.5px] font-semibold uppercase leading-tight tracking-wide text-white";
 
   return (
     <>
@@ -239,7 +239,7 @@ export function ItemAllocationDialog({ open, onOpenChange, context, onChanged }:
             ) : (
               <Table className="w-full">
                 <TableHeader>
-                  <TableRow className="bg-background hover:bg-muted/60">
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
                     <TableHead className={th}>Receipt No</TableHead>
                     <TableHead className={th}>Document No</TableHead>
                     <TableHead className={th}>Receipt Date</TableHead>
@@ -253,7 +253,7 @@ export function ItemAllocationDialog({ open, onOpenChange, context, onChanged }:
                     <TableHead className={`${th} text-right`} title="Allocated from this receipt line to the currently opened Work Order only">Allocated to This W/O</TableHead>
                     <TableHead className={`${th} text-right`} title="Received − Returned − Total Allocated">Available To Allocate</TableHead>
                     <TableHead className={`${th} w-28 text-right`}>Allocation Qty</TableHead>
-                    <TableHead className={`${th} sticky right-0 z-10 w-32 bg-muted`} />
+                    <TableHead className={`${th} sticky right-0 z-10 w-32 bg-slate-700 dark:bg-slate-800`} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>

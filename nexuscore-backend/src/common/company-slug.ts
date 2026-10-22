@@ -14,7 +14,7 @@ export const RESERVED_COMPANY_SLUGS = new Set([
   'logistics', 'module-map', 'my-menu', 'pages', 'payment', 'plm', 'project-list', 'project-management',
   'sales', 'website-analytics', 'widgets',
   'api', 'brand', 'dashboard', 'error', 'forgot-password', 'images', 'login', 'onboarding',
-  'onboarding-flow', 'register', 'reset-password', 'shared', '_next',
+  'onboarding-flow', 'register', 'reset-password', 's', 'shared', '_next',
 ]);
 
 /** Lowercase, hyphenated slug for a company name: "Nexus Core" -> "nexus-core". */

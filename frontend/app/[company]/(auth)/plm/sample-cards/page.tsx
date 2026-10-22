@@ -726,7 +726,7 @@ export default function SampleCardDetailPage() {
     Cost: <CostTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} />,
     Attachments: <AttachmentsTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} />,
     "Picture Gallery": <PictureGalleryTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} />,
-    "Customized Fields": <CustomizedFieldsTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} />,
+    "Customized Fields": <CustomizedFieldsTab sampleCardId={recordId} card={card} onReloadCard={reloadCard} readOnly={readOnly} />,
   } : {};
 
   if (loading) {

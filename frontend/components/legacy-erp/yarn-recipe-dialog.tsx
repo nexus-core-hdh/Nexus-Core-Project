@@ -389,7 +389,7 @@ export function YarnRecipeDialog({ open, onOpenChange, fabricInventoryId, fabric
             ) : (
               <Table className="table-fixed" style={{ minWidth: 1340 }}>
                 <TableHeader className="sticky top-0 z-10 bg-background">
-                  <TableRow className="[&>th]:border-r [&>th]:text-xs [&>th]:font-semibold [&>th]:h-10 [&>th]:whitespace-nowrap">
+                  <TableRow className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th]:text-xs [&>th]:font-semibold [&>th]:h-10 [&>th]:whitespace-nowrap">
                     <TableHead style={{ width: 44 }} className="text-center">#</TableHead>
                     <TableHead style={{ width: 100 }}>Inventory Code</TableHead>
                     <TableHead style={{ width: 200 }}>Inventory Name</TableHead>

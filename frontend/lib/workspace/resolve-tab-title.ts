@@ -106,25 +106,30 @@ export function resolveWorkspaceTabTitle(
   tab: { key: string; href: string; title?: string; recordLabel?: string },
   entryByHref: Map<string, ScreenEntry>
 ): ResolvedTabTitle {
+  // A record tab's key is `path?id=<record>` (see resolveTabKey) — the screen is its path part.
+  const [path, recordIdentity] = tab.key.split("?");
   if (tab.title) {
-    return { title: tab.title, icon: entryByHref.get(tab.key)?.icon };
+    return { title: tab.title, icon: entryByHref.get(path)?.icon };
   }
 
-  const exact = entryByHref.get(tab.key);
-  if (exact) {
+  const exact = entryByHref.get(path);
+  if (exact && !recordIdentity) {
     return { title: exact.title, icon: exact.icon };
   }
 
-  const owner = findOwningEntry(tab.key, entryByHref);
+  const owner = findOwningEntry(path, entryByHref);
   if (owner) {
     const base = singularize(owner.title);
     if (tab.recordLabel) {
       return { title: `${base} [${tab.recordLabel}]`, icon: owner.icon };
     }
-    const mode = resolveMode(tab.href);
+    // A record route's create form (`/style-cards/new`) carries its mode in the path, not `?mode=`.
+    const mode = resolveMode(tab.href) ?? /\/(new|create)$/i.exec(tab.key)?.[1] ?? null;
     const prefix = mode ? MODE_PREFIXES[mode.toLowerCase()] : undefined;
     return { title: prefix ? `${prefix}${base}` : base, icon: owner.icon };
   }
 
-  return { title: humanizeFallback(tab.key) };
+  // No menu presence at all — still show the record the screen reported, same "[...]" composition.
+  const fallback = humanizeFallback(path);
+  return { title: tab.recordLabel ? `${fallback} [${tab.recordLabel}]` : fallback };
 }

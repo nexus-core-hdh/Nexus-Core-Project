@@ -76,7 +76,7 @@ export interface WorklistTableProps<T = any> {
   // ── Project-wide grid selection standard — same prop names/semantics as ReportGrid
   // (report-grid.tsx), so a screen migrating between the two grid families never has to relearn
   // the API. All optional/additive: a caller passing none of these renders byte-for-byte as
-  // before (no onClick/onContextMenu attached, default "group cursor-pointer hover:bg-muted/40"
+  // before (no onClick/onContextMenu attached, default "group cursor-pointer hover:bg-muted/60"
   // row class unchanged). See hooks/use-row-selection.ts for the shared plain/ctrl/shift-click +
   // right-click preserve/collapse implementation every caller of these props is expected to use.
   /** Rows whose id is in this Set render the shared `bg-selected` highlight. */
@@ -97,7 +97,10 @@ export interface WorklistTableProps<T = any> {
 }
 
 const HEADER_H = "h-10";
-const CELL_BORDER = "border-b border-border";
+// Grid lines as the Costing grid draws them: column separators (border-r, none after the last
+// column — the container supplies the outer edge) and row separators, in the standard border colour.
+const CELL_BORDER = "border-r border-b border-border last:border-r-0";
+const BODY_CELL_BORDER = "border-r border-border last:border-r-0";
 
 export function WorklistTable<T = any>({
   columns,
@@ -184,7 +187,7 @@ export function WorklistTable<T = any>({
           {renderRowActions && <col style={{ width: actionsColumnWidth }} />}
         </colgroup>
         <TableHeader>
-          <TableRow className="border-b bg-background hover:bg-muted/60">
+          <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
             {selectable && (
               <TableHead className={cn("p-0 text-center", CELL_BORDER)} style={{ width: selectColumnWidth }}>
                 <div className={cn(HEADER_H, "flex items-center justify-center")}>
@@ -202,7 +205,7 @@ export function WorklistTable<T = any>({
                 <TableHead
                   key={c.key}
                   className={cn(
-                    "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80",
+                    "relative p-0 text-[11px] font-semibold uppercase tracking-wide text-white",
                     CELL_BORDER
                   )}
                 >
@@ -213,13 +216,13 @@ export function WorklistTable<T = any>({
                     className={cn(
                       HEADER_H, "flex w-full min-w-0 items-center gap-1 truncate px-2",
                       c.align === "right" ? "justify-end" : c.align === "center" ? "justify-center" : "justify-start",
-                      sortable(c) && "cursor-pointer select-none hover:text-foreground",
+                      sortable(c) && "cursor-pointer select-none hover:text-white",
                     )}
                   >
                     <span className="truncate">{c.label}</span>
                     {sortable(c) && (
                       active ? (
-                        sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-foreground" /> : <ArrowDown className="h-3 w-3 text-foreground" />
+                        sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-white" /> : <ArrowDown className="h-3 w-3 text-white" />
                       ) : (
                         <ChevronsUpDown className="h-3 w-3 opacity-40" />
                       )
@@ -235,7 +238,7 @@ export function WorklistTable<T = any>({
                     )}
                   </span>
                   <div
-                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary"
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-white/40"
                     onMouseDown={gridColumns.startResize(c.key)}
                     onDoubleClick={() => gridColumns.autoFitColumn(c.key, gridRootRef.current)}
                     title="Drag to resize · double-click to auto-fit"
@@ -252,7 +255,7 @@ export function WorklistTable<T = any>({
             Array.from({ length: skeletonRowCount }).map((_, i) => (
               <TableRow key={i}>
                 {Array.from({ length: colCount }).map((_, j) => (
-                  <TableCell key={j} className="py-3"><Skeleton className="h-4 w-full" /></TableCell>
+                  <TableCell key={j} className={cn("py-3", BODY_CELL_BORDER)}><Skeleton className="h-4 w-full" /></TableCell>
                 ))}
               </TableRow>
             ))
@@ -278,7 +281,7 @@ export function WorklistTable<T = any>({
                     // Same dedicated selection tokens ReportGrid uses (globals.css) — never a
                     // low-opacity --primary blend. Unselected/interactive rows keep the existing
                     // hover-only cue, byte-for-byte the same as before this prop existed.
-                    isSelected ? "bg-selected hover:bg-selected-hover" : "hover:bg-muted/40",
+                    isSelected ? "bg-selected hover:bg-selected-hover" : "hover:bg-muted/60",
                   )}
                   onDoubleClick={onDoubleClickOverride ?? (onRowDoubleClick ? () => onRowDoubleClick(row) : undefined)}
                   onClick={onRowClick ? (e) => onRowClick(row, e) : undefined}
@@ -286,7 +289,7 @@ export function WorklistTable<T = any>({
                   {...restRowProps}
                 >
                   {selectable && (
-                    <TableCell className="py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                    <TableCell className={cn("py-3 text-center", BODY_CELL_BORDER)} onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => onToggleRow?.(row)}
@@ -298,7 +301,7 @@ export function WorklistTable<T = any>({
                     <TableCell
                       key={c.key}
                       className={cn(
-                        "whitespace-nowrap py-3 text-sm truncate",
+                        "whitespace-nowrap py-3 text-sm truncate", BODY_CELL_BORDER,
                         c.align === "right" && "text-right",
                         c.align === "center" && "text-center"
                       )}
@@ -307,7 +310,7 @@ export function WorklistTable<T = any>({
                     </TableCell>
                   ))}
                   {renderRowActions && (
-                    <TableCell className="py-3 text-right">{renderRowActions(row)}</TableCell>
+                    <TableCell className={cn("py-3 text-right", BODY_CELL_BORDER)}>{renderRowActions(row)}</TableCell>
                   )}
                 </TableRow>
               );

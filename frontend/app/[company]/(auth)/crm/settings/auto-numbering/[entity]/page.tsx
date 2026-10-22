@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "@/lib/app-navigation";
 import {
@@ -212,6 +213,7 @@ export default function AutoNumberingEntityPage() {
   const router = useRouter();
   const entity = params.entity as string;
   const entityLabel = entityLabels[entity] || entity;
+  useWorkspaceRecordLabel(entityLabel || undefined);
 
   const [autoNumberings, setAutoNumberings] = useState<AutoNumberingTable[]>([]);
   const [loading, setLoading] = useState(true);

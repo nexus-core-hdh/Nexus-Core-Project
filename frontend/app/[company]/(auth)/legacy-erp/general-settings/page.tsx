@@ -84,13 +84,13 @@ export default function GeneralSettingsPage() {
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="border-b bg-background hover:bg-muted/60">
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Screen Name</TableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Approval Required</TableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Approval Level</TableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Status</TableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Last Updated By</TableHead>
-                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Last Updated On</TableHead>
+              <TableRow className="border-b bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Screen Name</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Approval Required</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Approval Level</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Status</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Last Updated By</TableHead>
+                <TableHead className="h-10 text-[11px] font-semibold uppercase tracking-wide text-white">Last Updated On</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

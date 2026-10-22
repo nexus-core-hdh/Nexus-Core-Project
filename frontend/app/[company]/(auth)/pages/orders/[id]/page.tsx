@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
+import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import Link from "@/components/app-link";
 import Image from "next/image";
 import {
@@ -86,6 +87,7 @@ interface Order {
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const [order, setOrder] = useState<Order | null>(null);
+  useWorkspaceRecordLabel(order?.orderNumber || undefined);
   const [loading, setLoading] = useState(true);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);

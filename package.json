@@ -11,6 +11,7 @@
     "dev:backend": "npm run start:dev -w nexuscore-backend",
     "dev:frontend": "npm run dev -w frontend",
     "typecheck": "npm run typecheck -w nexuscore-backend && npm run typecheck -w frontend",
+    "test:dev-all": "node --test scripts/dev-all.test.mjs",
     "verify": "npm run verify -w nexuscore-backend && npm run typecheck -w frontend && npm run build -w frontend"
   },
   "dependencies": {
