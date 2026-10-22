@@ -186,7 +186,7 @@ export class SerialCardService {
       JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId"
       JOIN "IM_Item" it ON it."RecId" = ri."InventoryId"
       LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = ri."UnitId"
-      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId"
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "ColorCard" cc ON cc.id = ri."ColorCardId"
       WHERE ri."RecId" = ${inventoryReceiptItemId} AND ri."InventoryReceiptId" = ${inventoryReceiptId} AND ri."IsDeleted" = 0
@@ -260,7 +260,7 @@ export class SerialCardService {
       LEFT JOIN "IM_Item" it ON it."RecId" = sc."InventoryId"
       LEFT JOIN "IM_ItemVariant" iv ON iv."RecId" = sc."InventoryVariantId" AND iv."IsDeleted" = 0
       LEFT JOIN "IM_VariantItem" vi ON vi."RecId" = iv."Variant1Id" AND vi."IsDeleted" = 0
-      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId"
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "FI_Account" ca ON ca."RecId" = sc."CurrentAccountId"
       ${PRODUCTION_JOINS}
@@ -349,12 +349,15 @@ export class SerialCardService {
     if (partyNos.length) filters.push(Prisma.sql`TRIM(sc."PartyNo") IN (${Prisma.join(partyNos)})`);
     const whereClause = Prisma.join(filters, ' AND ');
 
+    // The Work Order item is joined even when soft-deleted: saving a Work Order's Style Info
+    // replaces every MA_WorkOrderItem (WorkOrderService.upsertItems), yet the roll was still produced
+    // against that Work Order. Only a deleted Work Order itself drops the link.
     const fromJoins = Prisma.sql`
       FROM "IM_SerialCard" sc
       LEFT JOIN "IM_Item" it ON it."RecId" = sc."InventoryId"
       LEFT JOIN "IM_ItemVariant" iv ON iv."RecId" = sc."InventoryVariantId" AND iv."IsDeleted" = 0
       LEFT JOIN "IM_VariantItem" vi ON vi."RecId" = iv."Variant1Id" AND vi."IsDeleted" = 0
-      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
+      LEFT JOIN "MA_WorkOrderItem" wi ON wi."RecId" = sc."WorkOrderReceiptItemId"
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "MA_QualityType" qt ON qt."RecId" = sc."QualityTypeId" AND qt."IsDeleted" = 0
       LEFT JOIN "MA_Resource" res ON res."RecId" = sc."ResourceId" AND res."IsDeleted" = 0

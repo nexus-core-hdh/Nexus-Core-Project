@@ -54,6 +54,9 @@ export function usePlanningRowSelection<T extends PlanningRowContext & { id: str
       const data: any = await legacyErpApi.workOrders.requirements.getTransactions(row.workOrderId, {
         inventoryId: row.inventoryId,
         colorCardId: row.colorCardId,
+        // Every Planning screen sums its receipt columns per (Work Order, Item, Material Color) —
+        // list exactly those receipts, so the panel always adds up to the selected row's figures.
+        exactColor: true,
       });
       setTransactionRows(Array.isArray(data) ? data : []);
     } catch (e: any) {

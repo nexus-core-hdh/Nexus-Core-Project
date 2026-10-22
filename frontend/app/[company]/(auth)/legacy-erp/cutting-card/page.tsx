@@ -9,8 +9,14 @@
 // ManufacturingQuantitiesGrid) still deep-links straight into ./entry for its own row's Color,
 // which is a different, already-in-context entry point into the same Entry screen; nothing here
 // changes that.
+//
+// Cutting Mode (lib/legacy-erp/cutting-modes.ts): Colour-wise opens ./entry for the selected
+// Color; Complete Order opens ./order for every Color of the Work Order at once. The grid shows
+// each color's Order / Will Be Cut / Cut rows plus the whole order's totals either way.
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { CUTTING_MODES, cuttingHref, type CuttingMode } from "@/lib/legacy-erp/cutting-modes";
 import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
 import { useRouter } from "@/lib/app-navigation";
 import { Button } from "@/components/ui/button";
@@ -28,8 +34,8 @@ import { cn } from "@/lib/utils";
 
 interface ColorMatrixRow {
   color: string;
-  bySize: Record<string, { orderQty: number; willBeCutQty: number }>;
-  total: { orderQty: number; willBeCutQty: number };
+  bySize: Record<string, { orderQty: number; willBeCutQty: number; cutQty: number }>;
+  total: { orderQty: number; willBeCutQty: number; cutQty: number };
 }
 
 interface ColorMatrix {
@@ -48,6 +54,7 @@ export default function CuttingCardPage() {
   useEffect(() => { ensureLoaded(); }, [ensureLoaded]);
 
   const initialId = searchParams.get("id");
+  const [mode, setMode] = useState<CuttingMode>(searchParams.get("mode") === "order" ? "order" : "color");
 
   const [workOrderId, setWorkOrderId] = useState<number | null>(initialId ? Number(initialId) : null);
   const [workOrder, setWorkOrder] = useState<any>(null);
@@ -122,10 +129,31 @@ export default function CuttingCardPage() {
     return { rows, totals };
   }, [matrix, selectedRow, colorCutBySize]);
 
+  // Whole-order totals per size — only the sum of the per-color rows above, for display.
+  const orderTotals = useMemo(() => {
+    if (!matrix) return null;
+    const bySize: Record<string, { orderQty: number; willBeCutQty: number; cutQty: number }> = {};
+    for (const s of matrix.sizes) {
+      bySize[s] = matrix.colors.reduce(
+        (acc, c) => ({ orderQty: acc.orderQty + (c.bySize[s]?.orderQty || 0), willBeCutQty: acc.willBeCutQty + (c.bySize[s]?.willBeCutQty || 0), cutQty: acc.cutQty + (c.bySize[s]?.cutQty || 0) }),
+        { orderQty: 0, willBeCutQty: 0, cutQty: 0 },
+      );
+    }
+    const total = matrix.colors.reduce(
+      (acc, c) => ({ orderQty: acc.orderQty + c.total.orderQty, willBeCutQty: acc.willBeCutQty + c.total.willBeCutQty, cutQty: acc.cutQty + (c.total.cutQty || 0) }),
+      { orderQty: 0, willBeCutQty: 0, cutQty: 0 },
+    );
+    return { bySize, total };
+  }, [matrix]);
+
   const openCutting = () => {
     if (!workOrderId) return;
+    if (mode === "order") {
+      navigateOrOpenTab(router, cuttingHref("order", workOrderId), { title: `Cutting — ${workOrder?.workOrderNo ?? "Complete Order"}` });
+      return;
+    }
     if (!selectedColor) { toast.error("Select a Production Color first."); return; }
-    navigateOrOpenTab(router, `/legacy-erp/cutting-card/entry?id=${workOrderId}&color=${encodeURIComponent(selectedColor)}`, { title: `Cutting — ${selectedColor}` });
+    navigateOrOpenTab(router, cuttingHref("color", workOrderId, selectedColor), { title: `Cutting — ${selectedColor}` });
   };
 
   const close = () => closeTab(tabCtx?.tabKey ?? "/legacy-erp/cutting-card");
@@ -165,6 +193,15 @@ export default function CuttingCardPage() {
             {customerLabel || <span className="text-muted-foreground">—</span>}
           </p>
         </div>
+        <div className="col-span-12 flex flex-wrap items-center gap-3">
+          <label className="text-xs text-muted-foreground">Cutting Mode</label>
+          <ToggleGroup type="single" variant="outline" size="sm" value={mode} onValueChange={(v) => v && setMode(v as CuttingMode)}>
+            {CUTTING_MODES.map((m) => (
+              <ToggleGroupItem key={m.value} value={m.value} title={m.hint} className="px-3 text-xs">{m.label}</ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <span className="text-[11px] text-muted-foreground">{CUTTING_MODES.find((m) => m.value === mode)?.hint}</span>
+        </div>
       </div>
 
       {!workOrderId ? (
@@ -190,25 +227,23 @@ export default function CuttingCardPage() {
                 </tr></thead>
                 <tbody>
                   {matrix.colors.map((c) => {
-                    const isSelected = c.color === selectedColor;
+                    const isSelected = mode === "color" && c.color === selectedColor;
+                    const select = mode === "color" ? () => setSelectedColor(c.color) : undefined;
+                    const rowCls = (base: string, selected: string) => cn(mode === "color" && "cursor-pointer", isSelected ? selected : `${base} ${mode === "color" ? "hover:bg-accent/50" : ""}`);
                     return (
                       <Fragment key={c.color}>
-                        <tr
-                          key={`${c.color}-order`}
-                          className={cn("cursor-pointer", isSelected ? "bg-primary text-primary-foreground" : "hover:bg-accent/50")}
-                          onClick={() => setSelectedColor(c.color)}
-                        >
-                          <td className={labelTd} rowSpan={2}><span className="flex h-full items-center font-semibold">{c.color}</span></td>
+                        <tr key={`${c.color}-order`} className={rowCls("", "bg-primary text-primary-foreground")} onClick={select}>
+                          <td className={labelTd} rowSpan={3}><span className="flex h-full items-center font-semibold">{c.color}</span></td>
                           {matrix.sizes.map((s) => <td key={s} className={td}><span className="flex h-7 items-center justify-end px-2 font-mono">{round(c.bySize[s]?.orderQty || 0, "quantity").toLocaleString()}</span></td>)}
                           <td className={td}><span className="flex h-7 items-center justify-end px-2 font-mono font-medium">{round(c.total.orderQty, "quantity").toLocaleString()}</span></td>
                         </tr>
-                        <tr
-                          key={`${c.color}-wbc`}
-                          className={cn("cursor-pointer", isSelected ? "bg-primary/70 text-primary-foreground" : "bg-muted/20 hover:bg-accent/50")}
-                          onClick={() => setSelectedColor(c.color)}
-                        >
+                        <tr key={`${c.color}-wbc`} className={rowCls("bg-muted/20", "bg-primary/70 text-primary-foreground")} onClick={select}>
                           {matrix.sizes.map((s) => <td key={s} className={td}><span className="flex h-7 items-center justify-end px-2 font-mono">{round(c.bySize[s]?.willBeCutQty || 0, "quantity").toLocaleString()}</span></td>)}
                           <td className={td}><span className="flex h-7 items-center justify-end px-2 font-mono font-medium">{round(c.total.willBeCutQty, "quantity").toLocaleString()}</span></td>
+                        </tr>
+                        <tr key={`${c.color}-cut`} className={rowCls("bg-rose-50/60 dark:bg-rose-950/20", "bg-primary/50 text-primary-foreground")} onClick={select}>
+                          {matrix.sizes.map((s) => <td key={s} className={td}><span className="flex h-7 items-center justify-end px-2 font-mono">{round(c.bySize[s]?.cutQty || 0, "quantity").toLocaleString()}</span></td>)}
+                          <td className={td}><span className="flex h-7 items-center justify-end px-2 font-mono font-medium">{round(c.total.cutQty || 0, "quantity").toLocaleString()}</span></td>
                         </tr>
                       </Fragment>
                     );
@@ -216,10 +251,36 @@ export default function CuttingCardPage() {
                 </tbody>
               </table>
             </div>
-            <p className="mt-1 text-[10.5px] text-muted-foreground">Each color's dark row is Order Qty, the lighter row directly under it is Will Be Cut Qty. Click either row to select that Production Color.</p>
+            <p className="mt-1 text-[10.5px] text-muted-foreground">
+              Each color shows three rows: Order, Will Be Cut and Cut (all Fabrics).{mode === "color" ? " Click a color to select it." : ""}
+            </p>
           </div>
 
-          {selectedRow && selectedSummary && (
+          {orderTotals && (
+            <div>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">Complete Order Totals</p>
+              <div className="rounded-md border overflow-x-auto">
+                <table className="w-full min-w-[700px] table-fixed border-collapse text-[11.5px]">
+                  <thead><tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white">
+                    <th className={th} style={{ width: 160 }} />
+                    {matrix.sizes.map((s) => <th key={s} className={`${th} text-right`} style={{ width: 80 }}>{s}</th>)}
+                    <th className={`${th} text-right`} style={{ width: 110 }}>Grand Total</th>
+                  </tr></thead>
+                  <tbody>
+                    {([["Order", "orderQty"], ["Will Be Cut", "willBeCutQty"], ["Cut", "cutQty"]] as const).map(([label, key], i) => (
+                      <tr key={key} className={i % 2 ? "bg-muted/20" : undefined}>
+                        <td className={labelTd}><span className="flex h-7 items-center">{label}</span></td>
+                        {matrix.sizes.map((s) => <td key={s} className={td}><span className="flex h-7 items-center justify-end px-2 font-mono">{round(orderTotals.bySize[s][key], "quantity").toLocaleString()}</span></td>)}
+                        <td className={td}><span className="flex h-7 items-center justify-end px-2 font-mono font-medium">{round(orderTotals.total[key], "quantity").toLocaleString()}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {mode === "color" && selectedRow && selectedSummary && (
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
                 {selectedRow.color} — Cutting Summary{loadingCutTotals && <span className="ml-1.5 font-normal normal-case">(loading Cut totals...)</span>}
@@ -266,7 +327,9 @@ export default function CuttingCardPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-        <Button size="sm" onClick={openCutting} disabled={!workOrderId || !matrix?.colors.length}>Cutting</Button>
+        <Button size="sm" onClick={openCutting} disabled={!workOrderId || !matrix?.colors.length || (mode === "color" && !selectedColor)}>
+          {mode === "order" ? "Cutting — Complete Order" : selectedColor ? `Cutting — ${selectedColor}` : "Cutting"}
+        </Button>
         <Button variant="outline" size="sm" onClick={close} className="ml-auto">Close</Button>
       </div>
     </div>

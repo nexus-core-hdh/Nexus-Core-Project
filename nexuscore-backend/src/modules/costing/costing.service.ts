@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { itemUnitNameLateral } from '../legacy-erp/inventory-card.service';
 import { LegacyMasterLookupService } from '../legacy-erp/legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit } from '../legacy-erp/unit-conversion.util';
@@ -90,7 +91,33 @@ export class CostingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly masterLookupSvc: LegacyMasterLookupService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Every way a sheet is created (Costing Sheets screen, Issue from a Style/Sample Card) records
+  // its CREATE audit event — what the dashboard's Recent Activity and the Audit Log read. Sheet and
+  // event are written in one transaction: never a sheet missing from the activity, never an event
+  // for a sheet that failed to save.
+  private async createSheet(data: Prisma.CostingSheetUncheckedCreateInput, companyId: string | undefined, parent?: { type: string; id: string; documentNo: string | null }) {
+    if (!companyId) return this.prisma.costingSheet.create({ data });
+    return this.prisma.$transaction(async (tx) => {
+      const sheet = await tx.costingSheet.create({ data });
+      await this.audit.record({
+        userId: data.createdBy as string,
+        companyId,
+        screenKey: '/plm/costing-sheets',
+        entityType: 'CostingSheet',
+        entityId: sheet.id,
+        action: AUDIT_ACTIONS.CREATE,
+        documentNo: sheet.costingNo,
+        parentEntityType: parent?.type ?? null,
+        parentEntityId: parent?.id ?? null,
+        parentDocumentNo: parent?.documentNo ?? null,
+        after: sheet,
+      }, tx);
+      return sheet;
+    });
+  }
 
   async list(branchId: string, q?: Record<string, string>) {
     const where: any = { branchId };
@@ -115,11 +142,9 @@ export class CostingService {
     return { data, meta: { total, page, pages: Math.ceil(total / limit) || 1 } };
   }
 
-  async create(dto: any, branchId: string, createdBy: string) {
+  async create(dto: any, branchId: string, createdBy: string, companyId?: string) {
     const costingNo = dto.costingNo || `CS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 90000) + 10000)}`;
-    return this.prisma.costingSheet.create({
-      data: { ...pickHeader(dto), costingNo, branchId, createdBy },
-    });
+    return this.createSheet({ ...pickHeader(dto), costingNo, branchId, createdBy }, companyId);
   }
 
   async findOrThrow(id: string) {
@@ -307,21 +332,19 @@ export class CostingService {
     return sheets.map((sheet) => ({ ...sheet, totals: computeTotals(sheet) }));
   }
 
-  async issueForStyleCard(styleCardId: string, dto: any, branchId: string, createdBy: string) {
+  async issueForStyleCard(styleCardId: string, dto: any, branchId: string, createdBy: string, companyId?: string) {
     const style = await this.prisma.styleCard.findUnique({ where: { id: styleCardId } });
     if (!style) throw new NotFoundException('Style card not found');
     const costingNo = dto?.costingNo || `CS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 90000) + 10000)}`;
-    return this.prisma.costingSheet.create({
-      data: {
-        ...pickHeader(dto || {}),
-        costingNo,
-        styleCardId,
-        styleCode: style.styleNumber,
-        styleName: style.title,
-        branchId,
-        createdBy,
-      },
-    });
+    return this.createSheet({
+      ...pickHeader(dto || {}),
+      costingNo,
+      styleCardId,
+      styleCode: style.styleNumber,
+      styleName: style.title,
+      branchId,
+      createdBy,
+    }, companyId, { type: 'StyleCard', id: styleCardId, documentNo: style.styleNumber });
   }
 
   // Exact mirror of listForStyleCard/issueForStyleCard above, own sampleCardId column — the
@@ -340,21 +363,19 @@ export class CostingService {
     return sheets.map((sheet) => ({ ...sheet, totals: computeTotals(sheet) }));
   }
 
-  async issueForSampleCard(sampleCardId: string, dto: any, branchId: string, createdBy: string) {
+  async issueForSampleCard(sampleCardId: string, dto: any, branchId: string, createdBy: string, companyId?: string) {
     const sample = await this.prisma.sampleCard.findUnique({ where: { id: sampleCardId } });
     if (!sample) throw new NotFoundException('Sample card not found');
     const costingNo = dto?.costingNo || `CS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 90000) + 10000)}`;
-    return this.prisma.costingSheet.create({
-      data: {
-        ...pickHeader(dto || {}),
-        costingNo,
-        sampleCardId,
-        styleCode: sample.sampleNumber,
-        styleName: sample.title,
-        branchId,
-        createdBy,
-      },
-    });
+    return this.createSheet({
+      ...pickHeader(dto || {}),
+      costingNo,
+      sampleCardId,
+      styleCode: sample.sampleNumber,
+      styleName: sample.title,
+      branchId,
+      createdBy,
+    }, companyId, { type: 'SampleCard', id: sampleCardId, documentNo: sample.sampleNumber });
   }
 
   async getProfitBreakdown(id: string) {

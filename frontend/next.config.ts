@@ -71,8 +71,9 @@ export default function config(phase: string): NextConfig {
   if (phase !== PHASE_DEVELOPMENT_SERVER) return nextConfig;
   // Dev only: with NEXT_PUBLIC_NEXUSCORE_API_URL=/api/v1, `next dev` proxies the API to the local
   // backend (the reverse proxy's job in production), so only :3000 needs exposing and the app works
-  // from any host. NEXT_DEV_ALLOWED_ORIGINS lists the extra hosts (LAN/public IPs) it is opened on.
-  const backend = (process.env.NEXUSCORE_BACKEND_URL || "http://localhost:4000").replace(/\/$/, "");
+  // from any host — via app/api/v1/[...path]/route.ts (NEXUSCORE_BACKEND_URL, default
+  // http://localhost:4000), which answers 503 while the backend is restarting instead of a bare 500.
+  // NEXT_DEV_ALLOWED_ORIGINS lists the extra hosts (LAN/public IPs) it is opened on.
   return {
     ...nextConfig,
     // This machine's own LAN subnet is always allowed as a wildcard ("192.168.0.*" — Next matches
@@ -85,7 +86,6 @@ export default function config(phase: string): NextConfig {
         .map((a) => a.address.replace(/\.\d+$/, ".*")),
       ...(process.env.NEXT_DEV_ALLOWED_ORIGINS || "").split(",").map((h) => h.trim()).filter(Boolean),
     ])],
-    rewrites: async () => [{ source: "/api/v1/:path*", destination: `${backend}/api/v1/:path*` }],
     experimental: { ...nextConfig.experimental, turbopackMemoryLimit: devTurbopackMemoryLimit() }
   };
 }

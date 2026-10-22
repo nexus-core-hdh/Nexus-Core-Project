@@ -39,6 +39,18 @@ export class CuttingCardController {
     return this.svc.getColorCutTotals(id, color);
   }
 
+  // Complete-Order Cutting — every Production Color of the Work Order at once, per Fabric
+  // (cutting-card.service.ts's own Complete-Order section). Saved quantities stay per color.
+  @Get('order/fabrics') orderFabrics(@Param('id', ParseIntPipe) id: number) {
+    return this.svc.listOrderFabrics(id);
+  }
+
+  @Get('order') order(@Param('id', ParseIntPipe) id: number, @Query('materialKey') materialKey: string | undefined) {
+    if (!materialKey || !materialKey.trim()) throw new BadRequestException('A Fabric must be selected.');
+    return this.svc.getOrderCutting(id, materialKey);
+  }
+
+
   // Cutting Entry — one (Work Order, Color, Fabric) context. materialLabel is accepted here too
   // (not just on the mutating routes) purely so a get-or-create on first open already has a real
   // display label to store, instead of an empty string until the first write.

@@ -37,6 +37,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { companiesApi, branchesApi, usersApi, rolesApi } from "@/lib/api";
 import { useAsyncOptions, type AsyncOptionsStatus } from "@/hooks/use-async-options";
+import { fieldForCreateUserError, hiddenFieldErrors, shouldClearUnofferedRole } from "@/lib/users/create-user-rules";
+import { copyText } from "@/lib/clipboard";
 
 // Form schema for user creation
 const userFormSchema = z.object({
@@ -55,10 +57,27 @@ const userFormSchema = z.object({
 
 type UserFormValues = z.infer<typeof userFormSchema>;
 
+/**
+ * Create First Admin (Companies → View company): this same dialog and its Add New User process,
+ * aimed at a newly registered company that has no users yet. The company, its Main Branch and the
+ * Admin role are fixed (shown read-only, never sent — the platform endpoint resolves them
+ * server-side), the account gets the same generated temporary password, shown once, that must be
+ * changed at first sign-in. Only "Add New User" is offered and no quota or role list of the
+ * signed-in user's own company applies.
+ */
+export interface FirstAdminTarget {
+  companyId: string;
+  companyName: string;
+  branchName: string;
+  roleName: string;
+  create: (body: { name: string; email: string; password: string; phone?: string; department?: string }) => Promise<unknown>;
+}
+
 interface CreateUserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  firstAdmin?: FirstAdminTarget;
 }
 
 type InviteMethod = "link" | "email" | "sms" | "manual";
@@ -83,11 +102,13 @@ export function CreateUserDialog({
   open,
   onOpenChange,
   onSuccess,
+  firstAdmin,
 }: CreateUserDialogProps) {
   const [activeMethod, setActiveMethod] = React.useState<InviteMethod>("manual");
   const [inviteLink, setInviteLink] = React.useState("");
   const [linkCopied, setLinkCopied] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false);
   const [companies, setCompanies] = React.useState<Array<{ id: string; name: string }>>([]);
   const [selectedCompanyId, setSelectedCompanyId] = React.useState<string>("");
   const [userQuota, setUserQuota] = React.useState<{ current: number; max: number | null; plan: string } | null>(null);
@@ -111,7 +132,12 @@ export function CreateUserDialog({
 
   // Default the company to the logged-in user's own company when the dialog opens; reset on close.
   React.useEffect(() => {
-    if (open) {
+    if (open && firstAdmin) {
+      // Fixed target; the role value only satisfies the form schema — it is never sent.
+      form.setValue("companyId", firstAdmin.companyId);
+      form.setValue("role", "first-admin");
+      setSelectedCompanyId(firstAdmin.companyId);
+    } else if (open) {
       try {
         const userStr = typeof window !== "undefined" ? localStorage.getItem("user") : null;
         const companyId = userStr ? JSON.parse(userStr)?.companyId : null;
@@ -127,11 +153,12 @@ export function CreateUserDialog({
       setSelectedCompanyId("");
       setInviteLink("");
     }
-  }, [open, form]);
+  }, [open, form, firstAdmin]);
 
   // Load user quota when dialog opens
   React.useEffect(() => {
-    if (!open) return;
+    // A first admin is created in another company: the signed-in company's quota does not apply.
+    if (!open || firstAdmin) return;
     
     const loadUserQuota = async () => {
       try {
@@ -159,11 +186,11 @@ export function CreateUserDialog({
     };
     
     loadUserQuota();
-  }, [open]);
+  }, [open, firstAdmin]);
 
   // Load companies when dialog opens
   React.useEffect(() => {
-    if (open) {
+    if (open && !firstAdmin) {
       const loadCompanies = async () => {
         try {
           const companiesData = await companiesApi.getCompanies();
@@ -174,19 +201,19 @@ export function CreateUserDialog({
       };
       loadCompanies();
     }
-  }, [open]);
+  }, [open, firstAdmin]);
 
   // Branches of the selected company (ids are strings — compared as such, never parseInt'd).
   // Changing company reloads them; a slower response for the previous company is discarded.
   const branchOptions = useAsyncOptions<{ id: string; name: string }>(
-    open && selectedCompanyId ? () => branchesApi.getBranches(selectedCompanyId) : null,
-    [open, selectedCompanyId],
+    open && selectedCompanyId && !firstAdmin ? () => branchesApi.getBranches(selectedCompanyId) : null,
+    [open, selectedCompanyId, firstAdmin],
   );
 
   // Access-control roles. Roles are ERP-wide (not per company/branch), so they load once per opening.
   const roleOptions = useAsyncOptions<{ id: string; name: string }>(
-    open ? () => rolesApi.getRoles() : null,
-    [open],
+    open && !firstAdmin ? () => rolesApi.getRoles() : null,
+    [open, firstAdmin],
   );
 
   // Changing company: drop the previous company's branch so no stale selection survives.
@@ -196,14 +223,15 @@ export function CreateUserDialog({
     setSelectedCompanyId(companyId);
   };
 
-  // A role that is no longer offered (reload returned a different list) must not stay selected.
+  // A role that is no longer offered (reload returned a different list) must not stay selected —
+  // except in Create First Admin mode, where the role is fixed and no role list is loaded.
   React.useEffect(() => {
     const role = form.getValues("role");
-    if (role && roleOptions.status !== "loading" && !roleOptions.items.some((r) => r.id === role)) form.setValue("role", "");
-  }, [roleOptions.items, roleOptions.status, form]);
+    if (shouldClearUnofferedRole({ firstAdminMode: !!firstAdmin, role, status: roleOptions.status, offeredIds: roleOptions.items.map((r) => r.id) })) form.setValue("role", "");
+  }, [roleOptions.items, roleOptions.status, form, firstAdmin]);
 
-  const loadingRequiredData = activeMethod === "manual" && (roleOptions.isLoading || branchOptions.isLoading);
-  const rolesUnavailable = roleOptions.status === "error" || roleOptions.status === "empty";
+  const loadingRequiredData = !firstAdmin && activeMethod === "manual" && (roleOptions.isLoading || branchOptions.isLoading);
+  const rolesUnavailable = !firstAdmin && (roleOptions.status === "error" || roleOptions.status === "empty");
 
   // Generate invite link
   const generateInviteLink = () => {
@@ -301,9 +329,11 @@ export function CreateUserDialog({
   };
 
   const [createdUserPassword, setCreatedUserPassword] = React.useState<string | null>(null);
+  const passwordInputRef = React.useRef<HTMLInputElement>(null);
   const [showPasswordDialog, setShowPasswordDialog] = React.useState(false);
 
   const handleAddNewUser = async (data: UserFormValues) => {
+    if (firstAdmin) return createFirstAdmin(data);
     // Check quota before creating user
     if (userQuota && userQuota.max !== null) {
       if (userQuota.current >= userQuota.max) {
@@ -378,6 +408,54 @@ export function CreateUserDialog({
     }
   };
 
+  // Create First Admin: the same generated temporary password and the same one-time password
+  // dialog as Add New User; only the request goes to the platform endpoint for the target company.
+  const createFirstAdmin = async (data: UserFormValues) => {
+    if (!firstAdmin || submittingRef.current) return; // one request at a time, even on a double click
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const temporaryPassword = generateTemporaryPassword();
+      await firstAdmin.create({
+        name: data.name.trim(),
+        email: data.email.trim(),
+        password: temporaryPassword,
+        ...(data.phone?.trim() ? { phone: data.phone.trim() } : {}),
+        ...(data.department?.trim() ? { department: data.department.trim() } : {}),
+      });
+      setCreatedUserPassword(temporaryPassword);
+      setShowPasswordDialog(true);
+      toast.success(`${data.name.trim()} is the first administrator of ${firstAdmin.companyName}`);
+    } catch (error: any) {
+      const message = String(error?.message || "An error occurred");
+      // e.g. "Email already registered" also appears under the Email field
+      const field = fieldForCreateUserError(message);
+      if (field) form.setError(field, { type: "server", message });
+      toast.error("Failed to create the first administrator", { description: message });
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  // Validation failed: visible fields show their own messages; anything on a field the user
+  // cannot see in this mode is reported, never dropped silently.
+  const onInvalid = (errors: Record<string, { message?: unknown } | undefined>) => {
+    const visible = ["name", "email", "phone", "department", ...(firstAdmin ? [] : ["companyId", "branchId", "role", "status"])];
+    const hidden = hiddenFieldErrors(errors, visible);
+    if (hidden.length) toast.error("The form could not be submitted", { description: hidden.join("; ") });
+  };
+
+  // Closing the one-time password dialog (Close, Escape or outside click) finishes the creation:
+  // the password is forgotten and the caller refreshes (Users list / company user count + status).
+  const finishAfterPassword = () => {
+    setShowPasswordDialog(false);
+    setCreatedUserPassword(null);
+    form.reset();
+    onSuccess?.();
+    onOpenChange(false);
+  };
+
   const onSubmit = async (data: UserFormValues) => {
     switch (activeMethod) {
       case "link":
@@ -395,7 +473,7 @@ export function CreateUserDialog({
     }
   };
 
-  const menuItems = [
+  const allMenuItems = [
     {
       id: "email" as InviteMethod,
       label: "Invite Via Email",
@@ -421,6 +499,7 @@ export function CreateUserDialog({
       description: "Manually create a new user account",
     },
   ];
+  const menuItems = firstAdmin ? allMenuItems.filter((m) => m.id === "manual") : allMenuItems;
 
   // Common form fields component
   const renderCommonFields = (showPhone = false) => (
@@ -486,6 +565,16 @@ export function CreateUserDialog({
       </div>
 
       {/* Organization Section */}
+      {firstAdmin ? (
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold border-b pb-2">Organization</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ReadOnlyField label="Company" value={firstAdmin.companyName} />
+            <ReadOnlyField label="Branch" value={firstAdmin.branchName} />
+          </div>
+          <p className="text-xs text-muted-foreground">Fixed: the first administrator belongs to this company and its Main Branch only (checked again by the server).</p>
+        </div>
+      ) : (
       <div className="space-y-4">
         <h3 className="text-lg font-semibold border-b pb-2">Organization</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -564,11 +653,13 @@ export function CreateUserDialog({
                         />
         </div>
                       </div>
+      )}
 
       {/* Role & Department Section */}
       <div className="space-y-4">
         <h3 className="text-lg font-semibold border-b pb-2">Role & Department</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {firstAdmin ? <ReadOnlyField label="Role" value={firstAdmin.roleName} /> : (
                         <FormField
                           control={form.control}
                           name="role"
@@ -594,6 +685,7 @@ export function CreateUserDialog({
                             </FormItem>
                           )}
                         />
+                        )}
 
                         <FormField
                           control={form.control}
@@ -618,9 +710,11 @@ export function CreateUserDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-[95vw] max-w-[95vw] h-[95vh] flex flex-col p-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-4 flex-shrink-0">
-            <DialogTitle>Create New User</DialogTitle>
+            <DialogTitle>{firstAdmin ? `Create First Admin — ${firstAdmin.companyName}` : "Create New User"}</DialogTitle>
             <DialogDescription>
-              Choose an invitation method to add a new user to your organization.
+              {firstAdmin
+                ? `Creates the first user of ${firstAdmin.companyName} in its ${firstAdmin.branchName} with the ${firstAdmin.roleName} role, using a temporary password you share with them securely. No email is sent.`
+                : "Choose an invitation method to add a new user to your organization."}
             </DialogDescription>
           </DialogHeader>
 
@@ -750,7 +844,7 @@ export function CreateUserDialog({
               <div className="pr-4">
                 <Form {...form}>
                   <form
-                    onSubmit={form.handleSubmit(onSubmit)}
+                    onSubmit={form.handleSubmit(onSubmit, onInvalid)}
                     className="space-y-6 pb-6"
                     id="create-user-form">
                     {/* Add New User */}
@@ -758,7 +852,8 @@ export function CreateUserDialog({
                       <>
                         {renderCommonFields(true)}
 
-                        {/* Status Section */}
+                        {/* Status Section — a first administrator is always created Active */}
+                        {!firstAdmin && (
                         <div className="space-y-4">
                           <h3 className="text-lg font-semibold border-b pb-2">Account Settings</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -786,6 +881,7 @@ export function CreateUserDialog({
                         />
                           </div>
                         </div>
+                        )}
 
                       </>
                     )}
@@ -939,7 +1035,7 @@ export function CreateUserDialog({
               ) : activeMethod === "manual" && userQuota && userQuota.max !== null && userQuota.current >= userQuota.max ? (
                 "Upgrade Plan to Create User"
               ) : (
-                "Create User"
+                firstAdmin ? "Create First Admin" : "Create User"
               )}
             </Button>
           </DialogFooter>
@@ -947,12 +1043,14 @@ export function CreateUserDialog({
       </Dialog>
 
       {/* Temporary Password Dialog */}
-      <Dialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog}>
+      <Dialog open={showPasswordDialog} onOpenChange={(o) => { if (!o) finishAfterPassword(); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>User Created Successfully</DialogTitle>
             <DialogDescription>
-              A temporary password has been generated for this user. Please share this password securely with the user.
+              {firstAdmin
+                ? `The first administrator of ${firstAdmin.companyName} was created. This temporary password is shown only once — copy it now and give it to them securely (in person or by phone, not in the same message as their email address).`
+                : "A temporary password has been generated for this user. Please share this password securely with the user."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -960,19 +1058,27 @@ export function CreateUserDialog({
               <label className="text-sm font-medium">Temporary Password</label>
               <div className="flex items-center gap-2">
                 <Input
+                  ref={passwordInputRef}
                   type="text"
                   value={createdUserPassword || ""}
                   readOnly
                   className="font-mono"
+                  onFocus={(e) => e.currentTarget.select()}
                 />
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
-                  onClick={() => {
-                    if (createdUserPassword) {
-                      navigator.clipboard.writeText(createdUserPassword);
+                  title="Copy password"
+                  onClick={async () => {
+                    if (!createdUserPassword) return;
+                    // copyText never throws (also on plain-http LAN pages without navigator.clipboard).
+                    if (await copyText(createdUserPassword)) {
                       toast.success("Password copied to clipboard");
+                    } else {
+                      passwordInputRef.current?.focus();
+                      passwordInputRef.current?.select();
+                      toast.error("Copy is not available here — the password is selected; press Ctrl+C to copy it.");
                     }
                   }}
                   className="shrink-0">
@@ -987,19 +1093,22 @@ export function CreateUserDialog({
           <div className="flex justify-end gap-2">
             <Button
               variant="outline"
-              onClick={() => {
-                setShowPasswordDialog(false);
-                setCreatedUserPassword(null);
-                form.reset();
-                onSuccess?.();
-                onOpenChange(false);
-              }}>
+              onClick={finishAfterPassword}>
               Close
             </Button>
           </div>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium leading-none">{label}</label>
+      <Input value={value} readOnly disabled className="w-full" aria-readonly />
+    </div>
   );
 }
 

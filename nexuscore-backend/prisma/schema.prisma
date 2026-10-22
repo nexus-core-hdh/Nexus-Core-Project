@@ -28,6 +28,14 @@ enum SubscriptionStatus {
   Cancelled
   Expired
   Pending
+  // On trial until Company.trialEndDate; still Trial after it (expired = trialEndDate < now).
+  Trial
+}
+
+// Standard: every company before Demo/Trial registration existed. Demo: registered as a demo company.
+enum CompanyAccountType {
+  Standard
+  Demo
 }
 
 enum BillingCycle {
@@ -401,6 +409,7 @@ model Company {
   /// The platform owner (Nexus Core): manages the other companies and their billing; never on a
   /// trial or subscription limit itself. Exactly one company has this set (see prisma/seed.ts).
   isPlatformOwner          Boolean            @default(false)
+  accountType              CompanyAccountType @default(Standard)
   customFieldsSectionTitle String?            @default("Custom Fields")
   metaAppId                String?
   metaAppSecret            String?

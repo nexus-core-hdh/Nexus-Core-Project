@@ -71,8 +71,10 @@ export class FabricYarnRequirementsController {
     @Param('id', ParseIntPipe) id: number,
     @Query('inventoryId') inventoryId?: string,
     @Query('colorCardId') colorCardId?: string,
+    // exactColor=1 (Fabric/Yarn/Trim Planning): no colorCardId means "receipts without a Material Color".
+    @Query('exactColor') exactColor?: string,
   ) {
-    return this.svc.getTransactionDetails(id, inventoryId ? Number(inventoryId) : undefined, colorCardId || undefined);
+    return this.svc.getTransactionDetails(id, inventoryId ? Number(inventoryId) : undefined, colorCardId || undefined, exactColor === '1' || exactColor === 'true');
   }
 
   // Manual Material Color selection directly on this Requirements screen — Fabric/Trim only (the

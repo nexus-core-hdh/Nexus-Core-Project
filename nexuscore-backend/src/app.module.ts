@@ -48,6 +48,7 @@ import { CostingModule } from './modules/costing/costing.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { StyleExtrasModule } from './modules/style-extras/style-extras.module';
 import { MenuItemsModule } from './modules/menu-items/menu-items.module';
+import { HealthModule } from './modules/health/health.module';
 import { StubsModule } from './modules/stubs/stubs.module';
 import { DocketManagementModule } from './modules/docket-management/docket-management.module';
 import { LegacyErpModule } from './modules/legacy-erp/legacy-erp.module';
@@ -114,6 +115,7 @@ import { AuditModule } from './modules/audit/audit.module';
     StyleExtrasModule,
     DocketManagementModule,
     MenuItemsModule,
+    HealthModule,
     StubsModule,
 
     // Migrated SQL Server ERP schema (raw SQL via PrismaService, tables not in schema.prisma)

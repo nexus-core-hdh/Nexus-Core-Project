@@ -22,6 +22,9 @@ async function request<T = any>(path: string, init?: RequestInit): Promise<T> {
     const err = await res.json().catch(() => ({ message: 'Request failed' }));
     const error = new Error(err.message || 'Request failed');
     (error as any).status = res.status;
+    // API not reachable through the proxy (e.g. 503 BACKEND_UNAVAILABLE while it restarts) — same
+    // flag lib/api.ts sets, so callers can tell "try again" apart from a real API error.
+    if ([502, 503, 504].includes(res.status)) (error as any).isNetworkError = true;
     throw error;
   }
 
@@ -708,6 +711,12 @@ export const legacyErpApi = {
         api.post(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}/size?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`, { sizeCode, quantity }),
       deleteEntry: (workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string) =>
         api.delete(`/legacy-erp/work-orders/${workOrderId}/cutting-card/entries/${entryId}?color=${encodeURIComponent(productionColor)}&materialKey=${encodeURIComponent(materialKey)}&materialLabel=${encodeURIComponent(materialLabel)}`),
+      // Complete-Order Cutting — every Production Color of the Work Order for one Fabric, with one
+      // size-wise summary added up across the colors. Entries are added/edited/deleted through the
+      // per-color addEntry/updateEntry/setEntrySize/deleteEntry above with the entry's own color.
+      listOrderFabrics: (workOrderId: number) => api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/order/fabrics`),
+      getOrder: (workOrderId: number, materialKey: string) =>
+        api.get(`/legacy-erp/work-orders/${workOrderId}/cutting-card/order?materialKey=${encodeURIComponent(materialKey)}`),
     },
     // Fabric/Yarn Requirements — reuses the Work Order's own BOM (fabric) and Fabric Card Yarn
     // Recipe (yarn) as its data source; see fabric-yarn-requirements.service.ts.
@@ -730,10 +739,12 @@ export const legacyErpApi = {
       getMappingWarnings: (workOrderId: number, type: "fabric" | "trim" | "yarn") => api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/mapping-warnings?type=${type}`),
       // inventoryId/colorCardId optional — when passed (clicking a specific item on the
       // Requirements/Total Requirements grid), scopes receipts down to exactly that material.
-      getTransactions: (workOrderId: number, filter?: { inventoryId?: number | null; colorCardId?: string | null }) => {
+      // exactColor (Fabric Planning) — a row without a Material Color lists only receipts without one.
+      getTransactions: (workOrderId: number, filter?: { inventoryId?: number | null; colorCardId?: string | null; exactColor?: boolean }) => {
         const qs = new URLSearchParams();
         if (filter?.inventoryId != null) qs.set("inventoryId", String(filter.inventoryId));
         if (filter?.colorCardId) qs.set("colorCardId", filter.colorCardId);
+        if (filter?.exactColor) qs.set("exactColor", "1");
         const q = qs.toString();
         return api.get(`/legacy-erp/work-orders/${workOrderId}/requirements/transactions${q ? `?${q}` : ""}`);
       },

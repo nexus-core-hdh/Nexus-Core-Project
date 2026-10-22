@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { FabricPlanningService } from './fabric-planning.service';
+import { FabricPlanningService, receiptRowKey } from './fabric-planning.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
 import { ItemAllocationService } from './item-allocation.service';
 
@@ -26,11 +26,12 @@ import { ItemAllocationService } from './item-allocation.service';
 //
 // Row identity/grouping matches getYarnRequirements' own — one row per (Work Order, exploded Yarn
 // line), i.e. exactly what the Fabric/Yarn Requirements screen's own Yarn tab would show for that
-// Work Order, merged with the same header fields Fabric Planning uses. Procurement/receiving
-// columns are real data at (Work Order, Yarn Inventory Item) granularity ONLY (same documented
-// limitation as Fabric Planning: neither table carries a Production Color dimension), so those
-// columns are the SAME total across every color-split row of the same Yarn item within one Work
-// Order.
+// Work Order, merged with the same header fields Fabric Planning uses. Receipt-backed columns
+// (Received, Manufacturing Send, Subcontract Send/Receive) are scoped per (Work Order, Yarn Item,
+// Material Color), where a Yarn row's colorCardId is its source Fabric line's Material Color —
+// the colorCardId a receipt made from this row carries — so Transaction Details adds up to the
+// row. Purchase/Allocated stay at (Work Order, Yarn Item): neither table is linked by Material
+// Color, so those two are the SAME total across every color-split row of one Yarn item.
 //
 // Consumption/Applicable Quantity — deliberately NOT surfaced here (unlike Fabric Planning).
 // getYarnRequirements' own row shape has no single "Consumption" figure of its own: a Yarn row's
@@ -97,14 +98,15 @@ export class YarnPlanningService {
     const inventoryIds = Array.from(new Set(flat.map((r) => r.inventoryId).filter((id): id is number => id != null)));
     const [purchaseByKey, receiptsByKey, subcontractByKey, allocatedByKey] = await Promise.all([
       this.fabricPlanningSvc.aggregatePurchase(workOrderIds, inventoryIds),
-      this.fabricPlanningSvc.aggregateReceipts(workOrderIds, inventoryIds),
-      this.fabricPlanningSvc.aggregateSubcontractReceipts(workOrderIds, inventoryIds),
+      this.fabricPlanningSvc.aggregateReceipts(workOrderIds, inventoryIds, { byColor: true }),
+      this.fabricPlanningSvc.aggregateSubcontractReceipts(workOrderIds, inventoryIds, { byColor: true }),
       this.allocationSvc.aggregateAllocations(workOrderIds, inventoryIds),
     ]);
 
     return flat.map((r) => {
       const key = r.inventoryId != null ? `${r.workOrderId}:${r.inventoryId}` : null;
-      const receipts = key ? receiptsByKey.get(key) : undefined;
+      const colorKey = r.inventoryId != null ? receiptRowKey(r.workOrderId, r.inventoryId, r.colorCardId) : null;
+      const receipts = colorKey ? receiptsByKey.get(colorKey) : undefined;
       const purchase = key ? purchaseByKey.get(key) ?? 0 : 0;
       const allocated = key ? allocatedByKey.get(key) ?? 0 : 0;
       const required = Number(r.quantity) || 0;
@@ -112,7 +114,7 @@ export class YarnPlanningService {
       // Same dynamic per-Subcontract-Type breakdown as Fabric Planning — see
       // fabric-planning.service.ts's own aggregateSubcontractReceipts comment.
       const subcontractTransactions = Object.fromEntries(
-        Array.from((key ? subcontractByKey.get(key) : undefined) ?? new Map()).map(([typeId, v]) => [String(typeId), v]),
+        Array.from((colorKey ? subcontractByKey.get(colorKey) : undefined) ?? new Map()).map(([typeId, v]) => [String(typeId), v]),
       );
       return {
         id: `${r.workOrderId}:${r.id}`,

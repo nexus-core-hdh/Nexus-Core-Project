@@ -2,7 +2,17 @@
 
 import * as React from "react";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown, MoreHorizontal, Copy, Check } from "lucide-react";
+import { ArrowUpDown, MoreHorizontal, Copy, Check, Eye, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { companiesApi } from "@/lib/api";
+import {
+  COMPANY_DELETE_UNAVAILABLE,
+  companyDetailRows,
+  sameCompanyOrError,
+  unwrapCompany,
+  type CompanyDetailsSource
+} from "@/lib/companies/company-details";
+import { FirstAdminPanel } from "./first-admin-panel";
 
 import {
   DropdownMenu,
@@ -388,24 +398,101 @@ export const columns: ColumnDef<Company>[] = [
   {
     id: "actions",
     enableHiding: false,
-    cell: ({ row }) => {
-      return (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <span className="sr-only">Open menu</span>
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem>View company</DropdownMenuItem>
-            <DropdownMenuItem>Delete</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      );
-    }
+    cell: ({ row }) => <CompanyActions company={row.original} />
   }
 ];
+
+// How View company loads a row's company: GET /company (your own) by default; the page swaps in
+// GET /companies/:id for platform-owner users who may view every company.
+export const CompanyLoaderContext = React.createContext<(id: string) => Promise<any>>((id) => companiesApi.getCompany(id));
+
+// Whether the signed-in user may run Set Up First Admin (companies:invite-admin on the platform-owner
+// company — GET /companies/access; the backend checks again), and their own company (never a target).
+export const CompaniesAccessContext = React.createContext<{ canInviteAdmin: boolean; ownCompanyId: string }>({ canInviteAdmin: false, ownCompanyId: "" });
+
+// Row actions. View company loads the row's company and shows it only if what came back IS that
+// company. Delete is not offered: there is no deletion policy or API, and a company owns all of
+// its users, branches and records (see COMPANY_DELETE_UNAVAILABLE).
+function CompanyActions({ company }: { company: Company }) {
+  const [open, setOpen] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+  const [details, setDetails] = React.useState<CompanyDetailsSource | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const loadCompany = React.useContext(CompanyLoaderContext);
+  const { canInviteAdmin, ownCompanyId } = React.useContext(CompaniesAccessContext);
+
+  const view = async () => {
+    setOpen(true);
+    setLoading(true);
+    setError(null);
+    setDetails(null);
+    try {
+      const loaded = unwrapCompany(await loadCompany(company.id));
+      const problem = sameCompanyOrError(company.id, loaded);
+      if (problem) setError(problem);
+      else setDetails(loaded);
+    } catch (e: any) {
+      setError(e?.message || "Company details could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // After the first administrator is created: reload the details (user count) in place.
+  const refresh = async () => {
+    try {
+      const loaded = unwrapCompany(await loadCompany(company.id));
+      if (!sameCompanyOrError(company.id, loaded)) setDetails(loaded);
+    } catch { /* keep what is shown */ }
+  };
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon">
+            <span className="sr-only">Open menu</span>
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="max-w-72">
+          <DropdownMenuItem onSelect={view}>
+            <Eye /> View company
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled>
+            <Trash2 /> Delete
+          </DropdownMenuItem>
+          <p className="px-2 pb-1.5 text-[11px] leading-snug text-muted-foreground">{COMPANY_DELETE_UNAVAILABLE}</p>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{details?.name || company.name}</DialogTitle>
+            <DialogDescription>Company details</DialogDescription>
+          </DialogHeader>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading company details...</p>
+          ) : error ? (
+            <p className="text-sm text-destructive">{error}</p>
+          ) : details ? (
+            <>
+              <dl className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2 text-sm">
+                {companyDetailRows(details, formatDateTime).map(([label, value]) => (
+                  <React.Fragment key={label}>
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="break-words">{value}</dd>
+                  </React.Fragment>
+                ))}
+              </dl>
+              {canInviteAdmin && details.id !== ownCompanyId && <FirstAdminPanel companyId={details.id} companyName={details.name} canInvite onChanged={refresh} />}
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 export default function CompaniesDataTable({ data }: { data: Company[] }) {
   // Column order/visibility/width/resize now come from the shared DataTable component (the

@@ -1456,7 +1456,11 @@ export class FabricYarnRequirementsService {
   // `?id=<receiptId>&mode=view|edit&receiptType=<receiptType>` convention (the same one
   // receipt-menu.ts's own openReceipt/openSubcontractReceipt already navigate to) — never a
   // second lookup by ReceiptNo/DocumentNo/date, none of which are guaranteed unique.
-  async getTransactionDetails(workOrderId: number, inventoryId?: number, colorCardId?: string) {
+  //
+  // `exactColor` (Fabric Planning): a row WITHOUT a Material Color lists only receipt lines without
+  // one, the same (Work Order, Item, Material Color) scope its receipt columns are summed over
+  // (fabric-planning.service.ts). Off by default: no Material Color means every color, as before.
+  async getTransactionDetails(workOrderId: number, inventoryId?: number, colorCardId?: string, exactColor = false) {
     const itemIds = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0
     `);
@@ -1465,6 +1469,7 @@ export class FabricYarnRequirementsService {
     const filters = [Prisma.sql`ri."WorkOrderReceiptItemId" IN (${Prisma.join(ids)})`, Prisma.sql`ri."IsDeleted" = 0`];
     if (inventoryId != null) filters.push(Prisma.sql`ri."InventoryId" = ${inventoryId}`);
     if (colorCardId) filters.push(Prisma.sql`ri."ColorCardId" = ${colorCardId}`);
+    else if (exactColor && inventoryId != null) filters.push(Prisma.sql`ri."ColorCardId" IS NULL`);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         ri."RecId" as id,

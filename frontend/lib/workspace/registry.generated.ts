@@ -135,6 +135,7 @@ export const GENERATED_WORKSPACE_MODULES: WorkspaceModule[] = [
   { path: "/legacy-erp/current-accounts-list", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/current-accounts-list/page"), { ssr: false }) },
   { path: "/legacy-erp/cutting-card", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/cutting-card/page"), { ssr: false }) },
   { path: "/legacy-erp/cutting-card/entry", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/cutting-card/entry/page"), { ssr: false }) },
+  { path: "/legacy-erp/cutting-card/order", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/cutting-card/order/page"), { ssr: false }) },
   { path: "/legacy-erp/fabric-cards", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/fabric-cards/page"), { ssr: false }) },
   { path: "/legacy-erp/fabric-cards-list", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/fabric-cards-list/page"), { ssr: false }) },
   { path: "/legacy-erp/fabric-planning", Component: dynamic(() => import("@/app/[company]/(auth)/legacy-erp/fabric-planning/page"), { ssr: false }) },

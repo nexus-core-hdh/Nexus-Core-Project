@@ -55,6 +55,29 @@ describe("Packing List in the screen search index", () => {
   });
 });
 
+describe("Cutting Card in the screen search index", () => {
+  const CUTTING_HREF = "/legacy-erp/cutting-card";
+  // The Cutting Card menu row (scripts/seed-cutting-card-menu-item.ts) beside the existing production screens.
+  const entries = flattenMenuTree([{ ...legacyGroup(true), items: [...legacyGroup(true).items, { title: "Cutting Card", href: CUTTING_HREF, icon: "Scissors" }] }]);
+
+  for (const term of ["cutting", "Cutting Card", "cutting entry", "cut"]) {
+    it(`"${term}" finds Cutting Card, opening the Cutting Card screen`, () => {
+      assert.deepEqual(matches(entries, term).filter((h) => h.href === CUTTING_HREF).map((h) => [h.title, h.moduleTitle]), [["Cutting Card", "Legacy ERP"]]);
+    });
+  }
+
+  it("is listed once, under its own route — never the Cutting Entry route (that needs a Work Order + Color)", () => {
+    assert.equal(entries.filter((e) => e.href === CUTTING_HREF).length, 1);
+    assert.equal(entries.filter((e) => e.href.startsWith("/legacy-erp/cutting-card/entry")).length, 0);
+  });
+
+  it("the other production screens are unchanged", () => {
+    assert.deepEqual(matches(entries, "work order").map((h) => h.title), ["Work Order"]);
+    assert.deepEqual(matches(entries, "order manufacturing").map((h) => h.title), ["Order Manufacturing Entry"]);
+    assert.deepEqual(matches(entries, "packing").map((h) => h.href), [PACKING_HREF]);
+  });
+});
+
 describe("screen index freshness", () => {
   beforeEach(() => {
     useScreenIndexStore.setState({ entries: [], groups: [], loading: false, hasLoaded: false, rawEntries: [], rawGroups: [], rawLoading: false, rawLoaded: false });

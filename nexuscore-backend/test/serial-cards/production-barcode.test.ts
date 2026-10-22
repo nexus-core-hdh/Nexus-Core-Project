@@ -271,6 +271,27 @@ describe('Production details from the linked records', () => {
     const noStyle: any = (await produce(await receiptLine(bare, 10, { workOrderItemId: wo3.itemId }), { count: 1 }))[0];
     assert.equal((await svc.getDetail(noStyle.RecId) as any).yarnRecipe.status, 'not-in-bom');
   });
+
+  test('the Work Order and its Yarn Recipe survive a re-save of the Work Order\'s Style Info', async () => {
+    const fab = await fabric();
+    await recipe(fab, [{ yarnInventoryId: await yarn('Kept yarn'), pct: 100 }]);
+    const wo = await workOrder((await style([{ fabricInventoryId: fab }])).id);
+    const l = await receiptLine(fab, 10, { workOrderItemId: wo.itemId });
+    const [c]: any[] = await produce(l, { count: 1 });
+    // WorkOrderService.upsertItems: every existing item is soft-deleted and the lines re-inserted.
+    await prisma.$executeRawUnsafe(`UPDATE "MA_WorkOrderItem" SET "IsDeleted" = 1 WHERE "WorkOrderId" = $1`, wo.woId);
+    await prisma.$executeRawUnsafe(`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId","ItemOrderNo","IsDeleted") VALUES ($1,1,0)`, wo.woId);
+    const d: any = await svc.getDetail(c.RecId);
+    assert.equal(Number(d.workOrderId), wo.woId);
+    assert.equal(d.yarnRecipe.status, 'ok');
+    assert.deepEqual(d.yarnRecipe.lines.map((r: any) => r.yarnName), ['Kept yarn']);
+    assert.equal((await svc.getByCode(c.SerialCode) as any).yarnRecipe.status, 'ok');
+    assert.equal((await svc.getLabels([c.RecId]))[0].yarnRecipe.status, 'ok');
+
+    // a deleted Work Order still has no BOM to take a recipe from
+    await prisma.$executeRawUnsafe(`UPDATE "MA_WorkOrder" SET "IsDeleted" = 1 WHERE "RecId" = $1`, wo.woId);
+    assert.equal((await svc.getDetail(c.RecId) as any).yarnRecipe.status, 'no-work-order');
+  });
 });
 
 describe('QR link and the scan page\'s data', () => {

@@ -660,7 +660,9 @@ describe("record-name hooks are wired safely in every screen", () => {
     "finance-erp/receivable/sales-invoices", "finance-erp/receivable/sales-tax-invoice", "finance-erp/receivable/credit-notes",
     "finance-erp/receivable/customer-receipts", "finance-erp/inventory/receipt", "finance-erp/inventory/issuance",
     "finance-erp/inventory/demand", "finance-erp/general-ledger/journal-entries", "finance-erp/fixed-assets/register",
-    "legacy-erp/sizes", "legacy-erp/unit-sets", "legacy-erp/cutting-card", "legacy-erp/cutting-card/entry",
+    "legacy-erp/sizes", "legacy-erp/unit-sets", "legacy-erp/cutting-card",
+    // Cutting Entry (Colour-wise and Complete Order) is one shared screen component.
+    "components/legacy-erp/cutting-entry-screen.tsx",
     "legacy-erp/order-manufacturing-entry", "legacy-erp/order-manufacturing-entry/entry", "legacy-erp/item-statement",
     "legacy-erp/current-accounts", "legacy-erp/fabric-cards", "legacy-erp/yarn-cards", "legacy-erp/trim-inventory-cards",
     "plm/costing-sheets/[id]", "plm/orders/[id]", "plm/product-cards/[id]", "plm/mood-boards/[id]",
@@ -673,8 +675,9 @@ describe("record-name hooks are wired safely in every screen", () => {
 
   it(`each of the ${SCREENS.length} screens calls one title hook unconditionally, before any early return, defaulting to undefined`, () => {
     for (const screen of SCREENS) {
-      const src = readFileSync(new URL(`../app/[company]/(auth)/${screen}/page.tsx`, import.meta.url), "utf8").split(/\r?\n/);
-      const start = src.findIndex((l) => /^export default (async )?function/.test(l));
+      const file = screen.endsWith(".tsx") ? `../${screen}` : `../app/[company]/(auth)/${screen}/page.tsx`;
+      const src = readFileSync(new URL(file, import.meta.url), "utf8").split(/\r?\n/);
+      const start = src.findIndex((l) => /^export (default )?(async )?function/.test(l));
       const hooks = src.map((l, i) => (HOOK.test(l) ? i : -1)).filter((i) => i >= 0);
       assert.equal(hooks.length, 1, `${screen}: exactly one top-level title hook`);
       const firstReturn = src.findIndex((l, i) => i > start && /^  (if \(.*\)\s*(return\b|\{$)|return \()/.test(l));

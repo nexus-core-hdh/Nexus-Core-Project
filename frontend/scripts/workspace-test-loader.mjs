@@ -10,7 +10,8 @@ const FRONTEND_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), ".
 
 const STUBS = {
   // Tests set globalThis.__workspaceSettings to simulate what the backend has persisted.
-  "@/lib/api": `export const settingsApi = { getCurrentSettings: async () => globalThis.__workspaceSettings ?? {}, updateCurrentSettings: async () => ({}) };
+  "@/lib/api": `// __workspaceSettingsError (when set) makes the load fail; every write is recorded in __workspaceSettingsWrites.
+    export const settingsApi = { getCurrentSettings: async () => { if (globalThis.__workspaceSettingsError) throw globalThis.__workspaceSettingsError; return globalThis.__workspaceSettings ?? {}; }, updateCurrentSettings: async (v) => ((globalThis.__workspaceSettingsWrites ??= []).push(v), {}) };
     // screen-search.test.mjs: the live GET /menu-items response and the permission batch check.
     export const menuItemsApi = { getMenuItems: async () => (globalThis.__menuItemsCalls = (globalThis.__menuItemsCalls ?? 0) + 1, globalThis.__menuItems ?? []) };
     export const permissionSettingsApi = { checkResourcePermissionsBatch: async (paths) => ({ permissions: Object.fromEntries(paths.map((p) => [p, true])) }) };`,
@@ -33,6 +34,7 @@ const STUBS = {
     { path: "/legacy-erp/work-orders", Component: () => null },
     { path: "/legacy-erp/work-orders-list", Component: () => null },
     { path: "/legacy-erp/cutting-card/entry", Component: () => null },
+    { path: "/legacy-erp/cutting-card/order", Component: () => null },
     { path: "/finance-erp/payable/purchase-orders", Component: () => null },
     { path: "/finance-erp/payable/purchase-orders-list", Component: () => null },
     { path: "/legacy-erp/packing-lists", Component: () => null },

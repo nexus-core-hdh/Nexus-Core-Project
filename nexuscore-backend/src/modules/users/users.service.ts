@@ -14,6 +14,11 @@ import { CreateUserWithRoleDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { SetUserPasswordDto } from './dto/set-password.dto';
 
+/** How every user password is stored (Users screen create / edit / reset, and a new company's first
+ *  administrator — CompanyFirstAdminService): bcrypt, cost 10. */
+export const PASSWORD_HASH_ROUNDS = 10;
+export const hashPassword = (password: string) => bcrypt.hash(password, PASSWORD_HASH_ROUNDS);
+
 /** 14 characters with an upper, a lower, a digit and a symbol (crypto-random; no look-alikes). */
 function generateTemporaryPassword(): string {
   const sets = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnpqrstuvwxyz', '23456789', '!@#$%*?'];
@@ -140,7 +145,7 @@ export class UsersService {
     const exists = await this.prisma.user.findUnique({ where: { email: data.email } });
     if (exists) throw new ConflictException('Email already registered');
 
-    const hash = await bcrypt.hash(data.password, 10);
+    const hash = await hashPassword(data.password);
     const user = await this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({ data: { ...data, password: hash }, select: { id: true } });
       if (roleId) await tx.userRole.create({ data: { userId: created.id, roleId, assignedBy: actor.id } });
@@ -186,7 +191,7 @@ export class UsersService {
       if (!branch) throw new BadRequestException('Branch does not belong to this company');
     }
     const data: any = { ...dto };
-    if (dto.password) data.password = await bcrypt.hash(dto.password, 10);
+    if (dto.password) data.password = await hashPassword(dto.password);
     const user = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({ where: { id }, data, select: SAFE_SELECT });
       if (dto.password) await this.recordPasswordReset(tx, actor, id, 'user-update');
@@ -206,7 +211,7 @@ export class UsersService {
     const temporaryPassword = dto.generateTemporary ? generateTemporaryPassword() : null;
     const password = temporaryPassword ?? dto.password;
     if (!password) throw new BadRequestException('Enter a new password or choose Generate Temporary Password');
-    const hashed = await bcrypt.hash(password, 10);
+    const hashed = await hashPassword(password);
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data: { password: hashed, mustChangePassword: true } });
       await tx.passwordResetToken.updateMany({ where: { userId: id, used: false }, data: { used: true } });

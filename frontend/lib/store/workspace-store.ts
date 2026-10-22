@@ -80,6 +80,42 @@ const PERSIST_DEBOUNCE_MS = 600;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingValue: StorageValue<WorkspacePersisted> | null = null;
 
+// The saved workspace is only ever written back after it has been LOADED. Zustand persists on every
+// state change, including right after a failed load — and a failed load leaves only the tab the
+// page itself just opened and an empty My Menu in memory, so writing that would overwrite the
+// user's saved tabs and My Menu. Until a load succeeds, writes are held (held changes are written
+// once the load succeeds, merged with the saved state); a temporary failure (API restarting or
+// unreachable: network error / 5xx) is retried in the background with backoff.
+const STORE_NAME = "nexuscore-workspace-tabs";
+let savedStateLoaded = false;
+let heldWrite = false;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+let reloadAttempt = 0;
+/** Background reload delays after a temporary failure (exported for tests); the last one repeats. */
+export const WORKSPACE_RELOAD_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+const MAX_RELOAD_ATTEMPTS = 12; // ~5 minutes; a page reload starts over
+
+const isTemporaryFailure = (error: any) =>
+  !!error?.isNetworkError || (typeof error?.status === "number" && error.status >= 500);
+
+function scheduleReload() {
+  if (reloadTimer || reloadAttempt >= MAX_RELOAD_ATTEMPTS) return;
+  const delay = WORKSPACE_RELOAD_DELAYS_MS[Math.min(reloadAttempt, WORKSPACE_RELOAD_DELAYS_MS.length - 1)];
+  reloadAttempt++;
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null;
+    void useWorkspaceStore.persist.rehydrate();
+  }, delay);
+  (reloadTimer as any)?.unref?.(); // never keeps a Node process (tests) alive
+}
+
+/** Writes the current (already merged) state — used for changes held while the load was pending. */
+function writeCurrentState() {
+  const { partialize, version } = useWorkspaceStore.persist.getOptions();
+  const state = (partialize ? partialize(useWorkspaceStore.getState()) : useWorkspaceStore.getState()) as WorkspacePersisted;
+  backendStorage.setItem(STORE_NAME, { state, version: version ?? 0 });
+}
+
 function flushPendingWrite() {
   const value = pendingValue;
   pendingValue = null;
@@ -113,14 +149,27 @@ const backendStorage: PersistStorage<WorkspacePersisted> = {
         activeKey: tablePreferences.workspace?.activeKey ?? null,
         myMenu: tablePreferences.myMenu ?? [],
       };
+      savedStateLoaded = true;
+      reloadAttempt = 0;
       return { state, version: 0 };
-    } catch (error) {
-      console.error("Failed to load workspace settings:", error);
+    } catch (error: any) {
+      if (isTemporaryFailure(error)) {
+        console.warn(`Workspace tabs not loaded yet (${error?.message || "API unavailable"}) — retrying; saved tabs are kept.`);
+        scheduleReload();
+      } else {
+        console.error("Failed to load workspace settings:", error);
+      }
       return null;
     }
   },
   setItem: (_name, value) => {
     pendingValue = value;
+    if (!savedStateLoaded) {
+      // Held — see savedStateLoaded above. Never write before the saved workspace is known.
+      heldWrite = true;
+      pendingValue = null;
+      return;
+    }
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(flushPendingWrite, PERSIST_DEBOUNCE_MS);
   },
@@ -301,7 +350,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }),
     }),
     {
-      name: "nexuscore-workspace-tabs",
+      name: STORE_NAME,
       storage: backendStorage,
       partialize: (state) => ({
         tabs: state.tabs.map(({ mount: _mount, ...tab }) => tab),
@@ -338,3 +387,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     }
   )
 );
+
+// After a successful load (first or a background retry), write changes made while it was pending —
+// the state is already merged with the saved tabs/My Menu by then, so nothing saved is lost.
+useWorkspaceStore.persist.onFinishHydration(() => {
+  if (!savedStateLoaded || !heldWrite) return;
+  heldWrite = false;
+  writeCurrentState();
+});

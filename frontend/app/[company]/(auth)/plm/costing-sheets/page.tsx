@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { plmApi } from "@/lib/nexuscore-api";
 import { Plus, Search, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 
 const fmt4 = (n: any) => Number(n ?? 0).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 
@@ -25,6 +26,10 @@ export default function CostingSheetsPage() {
       if (search) q.search = search;
       const r: any = await plmApi.costingSheets.list(q);
       setSheets(Array.isArray(r) ? r : (r?.data ?? []));
+    } catch (e: any) {
+      // e.g. BRANCH_REQUIRED (user account without a branch) or the API temporarily unavailable.
+      setSheets([]);
+      toast.error(e?.message || "Failed to load costing sheets");
     } finally {
       setLoading(false);
     }

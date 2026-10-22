@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkOrderService, WORK_ORDER_SCREEN_KEY } from './work-order.service';
@@ -12,6 +12,10 @@ import { assertNonNegative, assertAllNonNegative } from './numeric-guards.util';
 // into MA_WorkOrderItemVariant.Explanation. Do not diverge from this separator.
 const COLOR_SIZE_SEP = '‖';
 
+// The one Production Color comparison this service uses (trimmed, case-insensitive) — the same
+// rule getOrderQtyBySize already matches Manufacturing Quantities' colors with.
+const sameColor = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
 export interface CuttingCardSizeRow {
   sizeCode: string;
   orderQty: number;
@@ -23,9 +27,11 @@ export interface CuttingCardSizeRow {
 
 export interface ColorMatrixRow {
   color: string;
-  bySize: Record<string, { orderQty: number; willBeCutQty: number }>;
-  total: { orderQty: number; willBeCutQty: number };
+  // cutQty: Cut logged for this color across every Fabric (the legacy Cutting Card's own Cut row).
+  bySize: Record<string, { orderQty: number; willBeCutQty: number; cutQty: number }>;
+  total: { orderQty: number; willBeCutQty: number; cutQty: number };
 }
+
 
 export interface ApplicableFabric {
   materialKey: string;
@@ -188,23 +194,28 @@ export class CuttingCardService {
   // never render — there is nothing to cut yet.
   async getColorMatrix(workOrderId: number) {
     await this.workOrderSvc.get(workOrderId); // 404s if the Work Order itself doesn't exist
-    const [sizes, { byColorSize, colorsInOrder, extraCuttingPercent }] = await Promise.all([
+    const [sizes, { byColorSize, colorsInOrder, extraCuttingPercent }, cutByColor] = await Promise.all([
       this.resolveSizes(workOrderId),
       this.getAllVariantQuantities(workOrderId),
+      this.getCutTotalsByColor(workOrderId),
     ]);
     const colors: ColorMatrixRow[] = colorsInOrder.map((color) => {
       const bySizeRaw = byColorSize.get(color)!;
-      const bySize: Record<string, { orderQty: number; willBeCutQty: number }> = {};
+      const cutRaw = cutByColor.get(color.trim().toLowerCase()) ?? {};
+      const bySize: Record<string, { orderQty: number; willBeCutQty: number; cutQty: number }> = {};
       let orderTotal = 0;
       let willBeCutTotal = 0;
+      let cutTotal = 0;
       for (const sizeCode of sizes) {
         const orderQty = bySizeRaw.get(sizeCode) || 0;
         const willBeCutQty = this.willBeCutQty(orderQty, extraCuttingPercent);
-        bySize[sizeCode] = { orderQty, willBeCutQty };
+        const cutQty = cutRaw[sizeCode] || 0;
+        bySize[sizeCode] = { orderQty, willBeCutQty, cutQty };
         orderTotal += orderQty;
         willBeCutTotal += willBeCutQty;
+        cutTotal += cutQty;
       }
-      return { color, bySize, total: { orderQty: orderTotal, willBeCutQty: willBeCutTotal } };
+      return { color, bySize, total: { orderQty: orderTotal, willBeCutQty: willBeCutTotal, cutQty: cutTotal } };
     });
     return { workOrderId, sizes, extraCuttingPercent, colors };
   }
@@ -284,7 +295,7 @@ export class CuttingCardService {
   async getColorCutTotals(workOrderId: number, productionColor: string): Promise<Record<string, number>> {
     const color = productionColor.trim();
     const cards = await this.prisma.cuttingCard.findMany({
-      where: { workOrderId, productionColor: color },
+      where: { workOrderId, productionColor: { equals: color, mode: 'insensitive' } },
       include: { entries: { include: { sizes: true } } },
     });
     const bySize: Record<string, number> = {};
@@ -322,10 +333,13 @@ export class CuttingCardService {
   // Get-or-create, idempotent on the (workOrderId, productionColor, materialKey) unique key —
   // opening the Cutting Entry screen for the same Work Order + Color + Fabric never creates a
   // second row, and a DIFFERENT Fabric under the same Work Order + Color always gets its own.
+  // The color is matched the way sameColor() matches it everywhere else here (trimmed, any letter
+  // case), so "Red" and "RED" never become two cards for the one Production Color.
   private async getOrCreateCard(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, userId?: string) {
     const color = productionColor.trim();
-    const existing = await this.prisma.cuttingCard.findUnique({
-      where: { workOrderId_productionColor_materialKey: { workOrderId, productionColor: color, materialKey } },
+    const existing = await this.prisma.cuttingCard.findFirst({
+      where: { workOrderId, materialKey, productionColor: { equals: color, mode: 'insensitive' } },
+      orderBy: { createdAt: 'asc' },
     });
     if (existing) return existing;
     return this.prisma.cuttingCard.create({ data: { workOrderId, productionColor: color, materialKey, materialLabel, createdBy: userId ?? null } });
@@ -475,13 +489,17 @@ export class CuttingCardService {
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
   }
 
-  // Confirms a CuttingCardEntry genuinely belongs to THIS Work Order before allowing it to be
-  // mutated/deleted — defense in depth against an entryId from a different Work Order being
-  // guessed/replayed (the frontend never constructs cross-WO ids, but the API must not trust that).
-  private async assertEntryBelongsToWorkOrder(entryId: string, workOrderId: number) {
+  // Confirms a CuttingCardEntry genuinely belongs to THIS Work Order AND to the Production Color +
+  // Fabric the request is scoped to before allowing it to be mutated/deleted — an entry of another
+  // color (or Fabric) can never be edited through this color's context, so one color's Cut
+  // quantities can't be changed by mistake from another's screen or a replayed id.
+  private async assertEntryBelongsToWorkOrder(entryId: string, workOrderId: number, productionColor: string, materialKey: string) {
     const entry = await this.prisma.cuttingCardEntry.findUnique({ where: { id: entryId }, include: { cuttingCard: true } });
-    if (!entry || entry.cuttingCard.workOrderId !== workOrderId) {
-      throw new NotFoundException('Cutting Entry not found for this Work Order.');
+    if (
+      !entry || entry.cuttingCard.workOrderId !== workOrderId
+      || !sameColor(entry.cuttingCard.productionColor, productionColor) || entry.cuttingCard.materialKey !== materialKey
+    ) {
+      throw new NotFoundException('Cutting Entry not found for this Work Order, Production Color and Fabric.');
     }
     return entry;
   }
@@ -504,7 +522,7 @@ export class CuttingCardService {
     userId?: string,
     companyId?: string,
   ) {
-    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId, productionColor, materialKey);
     const before = userId && companyId ? await this.loadEntry(entryId) : null;
     await this.prisma.cuttingCardEntry.update({
       where: { id: entryId },
@@ -523,7 +541,7 @@ export class CuttingCardService {
     entryId: string, sizeCode: string, quantity: number, userId?: string, companyId?: string,
   ) {
     assertNonNegative(quantity, `Cut Qty (${sizeCode})`);
-    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId, productionColor, materialKey);
     const before = userId && companyId ? await this.loadEntry(entryId) : null;
     await this.prisma.cuttingCardEntrySize.upsert({
       where: { entryId_sizeCode: { entryId, sizeCode } },
@@ -538,10 +556,96 @@ export class CuttingCardService {
   }
 
   async deleteCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string, userId?: string, companyId?: string) {
-    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId);
+    const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId, productionColor, materialKey);
     const before = userId && companyId ? await this.loadEntry(entryId) : null; // last valid state incl. sizes
     await this.prisma.cuttingCardEntry.delete({ where: { id: entryId } }); // CuttingCardEntrySize rows cascade
     if (before) await this.auditEntry(AUDIT_ACTIONS.DELETE, workOrderId, owned.cuttingCardId, entryId, before, null, userId, companyId);
     return this.getCuttingCard(workOrderId, productionColor, materialKey, materialLabel, userId);
+  }
+
+  // ── Complete-Order Cutting ────────────────────────────────────────────────────────────────
+  // The Cutting Entry screen for the whole Work Order: every Production Color a Fabric applies to,
+  // with ONE size-wise Order / Will Be Cut / Cut / Less / Over summary (totals.bySize — each figure
+  // the sum of the colors' own per-size figures, so one color's over-cut never hides another's
+  // shortfall) and every color's entries tagged with their color. Read-only: storage is unchanged —
+  // one CuttingCard per (Work Order, Color, Fabric) — and entries are added/edited/deleted through
+  // the per-color methods above, so Colour-wise Cutting shows exactly the same entries and Cut.
+
+  // The Work Order's Fabrics (one per materialKey), each with the Production Colors it applies to,
+  // in Manufacturing Quantities' color order — the per-color listApplicableFabrics rule, unioned.
+  async listOrderFabrics(workOrderId: number): Promise<(ApplicableFabric & { colors: string[] })[]> {
+    const { colorsInOrder } = await this.getAllVariantQuantities(workOrderId);
+    const out = new Map<string, ApplicableFabric & { colors: string[] }>();
+    for (const color of colorsInOrder) {
+      for (const f of await this.listApplicableFabrics(workOrderId, color)) {
+        const found = out.get(f.materialKey);
+        if (found) found.colors.push(color);
+        else out.set(f.materialKey, { ...f, colors: [color] });
+      }
+    }
+    return Array.from(out.values());
+  }
+
+  private async requireOrderFabric(workOrderId: number, materialKey: string) {
+    const fabric = (await this.listOrderFabrics(workOrderId)).find((f) => f.materialKey === materialKey);
+    if (!fabric) throw new BadRequestException('This Fabric is not on the Work Order\'s Fabric BOM for any of its Production Colors.');
+    return fabric;
+  }
+
+  // Read-only: never creates a CuttingCard (a color without one simply shows Cut 0 and no entries).
+  async getOrderCutting(workOrderId: number, materialKey: string) {
+    await this.workOrderSvc.get(workOrderId); // 404s if the Work Order itself doesn't exist
+    const fabric = await this.requireOrderFabric(workOrderId, materialKey);
+    const [sizes, { byColorSize, extraCuttingPercent }, cards] = await Promise.all([
+      this.resolveSizes(workOrderId),
+      this.getAllVariantQuantities(workOrderId),
+      this.prisma.cuttingCard.findMany({
+        where: { workOrderId, materialKey },
+        include: { entries: { include: { sizes: true }, orderBy: { createdAt: 'asc' } } },
+      }),
+    ]);
+    const factories = await this.resolveFactoryNames(cards.flatMap((c) => c.entries.map((e) => e.factoryId)));
+    const zero = () => ({ orderQty: 0, willBeCutQty: 0, cutQty: 0, less: 0, over: 0 });
+    const grand: Record<string, ReturnType<typeof zero>> = Object.fromEntries(sizes.map((s) => [s, zero()]));
+    const entries: any[] = [];
+    const colors = fabric.colors.map((color) => {
+      const card = cards.find((c) => sameColor(c.productionColor, color)) ?? null;
+      const cutBySize = new Map<string, number>();
+      for (const e of card?.entries ?? []) for (const s of e.sizes) cutBySize.set(s.sizeCode, (cutBySize.get(s.sizeCode) || 0) + Number(s.quantity));
+      const orderBySize = byColorSize.get(color) ?? new Map<string, number>();
+      const rows: CuttingCardSizeRow[] = sizes.map((sizeCode) => {
+        const orderQty = orderBySize.get(sizeCode) || 0;
+        const willBeCutQty = this.willBeCutQty(orderQty, extraCuttingPercent);
+        const cutQty = cutBySize.get(sizeCode) || 0;
+        const row = { sizeCode, orderQty, willBeCutQty, cutQty, less: Math.max(willBeCutQty - cutQty, 0), over: Math.max(cutQty - willBeCutQty, 0) };
+        for (const k of Object.keys(grand[sizeCode]) as (keyof ReturnType<typeof zero>)[]) grand[sizeCode][k] += row[k];
+        return row;
+      });
+      const totals = rows.reduce((acc, r) => {
+        for (const k of Object.keys(acc) as (keyof typeof acc)[]) acc[k] += r[k];
+        return acc;
+      }, zero());
+      for (const e of card?.entries ?? []) {
+        const factory = e.factoryId != null ? factories.get(e.factoryId) : undefined;
+        const entrySizes: Record<string, number> = {};
+        let total = 0;
+        for (const s of e.sizes) { entrySizes[s.sizeCode] = Number(s.quantity); total += Number(s.quantity); }
+        entries.push({
+          id: e.id, color, cardId: card!.id, createdAt: e.createdAt, date: e.date, factoryId: e.factoryId,
+          factoryCode: factory?.code ?? null, factoryName: factory?.name ?? null,
+          partyNo: e.partyNo, document: e.document, explanation: e.explanation, sizes: entrySizes, total,
+        });
+      }
+      return { color, cardId: card?.id ?? null, rows, totals };
+    });
+    entries.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const grandTotals = Object.values(grand).reduce((acc, r) => {
+      for (const k of Object.keys(acc) as (keyof typeof acc)[]) acc[k] += r[k];
+      return acc;
+    }, zero());
+    return {
+      workOrderId, materialKey, materialLabel: fabric.materialLabel, extraCuttingPercent, sizes,
+      colors, totals: { bySize: grand, grand: grandTotals }, entries,
+    };
   }
 }

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { assertTrialNotExpired } from '../../../common/company-trial';
 import { JwtPayload } from '../../../common/interfaces/jwt-payload.interface';
 
 @Injectable()
@@ -32,6 +33,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User not found or inactive');
     }
+    // A company whose trial has ended cannot use the API (403 TRIAL_EXPIRED; see common/company-trial.ts).
+    assertTrialNotExpired(user.company);
 
     return user;
   }
