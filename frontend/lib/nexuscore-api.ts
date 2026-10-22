@@ -157,7 +157,10 @@ export const plmApi = {
     addLine: (id: string, d: any) => api.post(plm(`/route-cards/${id}/lines`), d), updateLine: (id: string, lineId: string, d: any) => api.put(plm(`/route-cards/${id}/lines/${lineId}`), d), deleteLine: (id: string, lineId: string) => api.delete(plm(`/route-cards/${id}/lines/${lineId}`)),
   },
   studyTemplates: { list: (q?: any) => api.get(plm('/study-templates', q)), create: (d: any) => api.post(plm('/study-templates'), d), get: (id: string) => api.get(plm(`/study-templates/${id}`)), update: (id: string, d: any) => api.put(plm(`/study-templates/${id}`), d), delete: (id: string) => api.delete(plm(`/study-templates/${id}`)), upsertLines: (id: string, lines: any[]) => api.put(plm(`/study-templates/${id}/lines`), lines), deleteLine: (id: string, lineId: string) => api.delete(plm(`/study-templates/${id}/lines/${lineId}`)) },
-  templates: { list: (q?: any) => api.get(plm('/templates', q)), create: (d: any) => api.post(plm('/templates'), d), get: (id: string) => api.get(plm(`/templates/${id}`)), update: (id: string, d: any) => api.put(plm(`/templates/${id}`), d), delete: (id: string) => api.delete(plm(`/templates/${id}`)), duplicate: (id: string) => api.post(plm(`/templates/${id}/duplicate`)) },
+  templates: {
+    list: (q?: any) => api.get(plm('/templates', q)), create: (d: any) => api.post(plm('/templates'), d), get: (id: string) => api.get(plm(`/templates/${id}`)), update: (id: string, d: any) => api.put(plm(`/templates/${id}`), d), delete: (id: string) => api.delete(plm(`/templates/${id}`)), duplicate: (id: string) => api.post(plm(`/templates/${id}/duplicate`)),
+    upsertLines: (id: string, lines: any[]) => api.put(plm(`/templates/${id}/lines`), lines), deleteLine: (id: string, lineId: string) => api.delete(plm(`/templates/${id}/lines/${lineId}`)),
+  },
   costingSheets: {
     list: (q?: any) => api.get(plm('/costing-sheets', q)),
     create: (d: any) => api.post(plm('/costing-sheets'), d),

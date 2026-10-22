@@ -150,4 +150,6 @@ export class PlmDefinitionsController {
   @Put('templates/:id') updateTemplate(@Param('id') id: string, @Body() dto: any) { return this.svc.updateTemplate(id, dto); }
   @Delete('templates/:id') deleteTemplate(@Param('id') id: string) { return this.svc.deleteTemplate(id); }
   @Post('templates/:id/duplicate') duplicateTemplate(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.duplicateTemplate(id, u.id); }
+  @Put('templates/:id/lines') upsertTemplateDetailLines(@Param('id') id: string, @Body() lines: any[]) { return this.svc.upsertTemplateLines(id, lines); }
+  @Delete('templates/:id/lines/:lineId') deleteTemplateDetailLine(@Param('id') id: string, @Param('lineId') lineId: string) { return this.svc.deleteTemplateLine(id, lineId); }
 }
