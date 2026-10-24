@@ -573,6 +573,28 @@ export class PlmDefinitionsService {
   }
 
   // ── PLM Templates ─────────────────────────────────────────────────────────────
+  // Header fields reused as-is from the dto (plain scalar FK columns — departmentId/customerId/
+  // styleCardId/styleDepartmentId — Prisma accepts these directly on create/update, no nested
+  // connect needed). `lines` is stripped out here and only ever written via upsertTemplateLines,
+  // the same split createTemplate/upsertStudyTemplateLines already use for Study Templates.
+  private readonly templateLineInclude = {
+    sampleType: { select: { id: true, code: true, name: true } },
+    activityType: {
+      select: {
+        id: true, code: true, name: true, explanation: true, specialCode: true, durationDay: true,
+        process: { select: { id: true, code: true, name: true } },
+      },
+    },
+    resourceEmployee: { select: { id: true, employeeNumber: true, name: true } },
+  } as const;
+  private readonly templateInclude = {
+    department: { select: { id: true, code: true, name: true } },
+    styleDepartment: { select: { id: true, code: true, name: true } },
+    customer: { select: { id: true, name: true } },
+    styleCard: { select: { id: true, styleNumber: true, title: true } },
+    lines: { include: this.templateLineInclude, orderBy: { sequence: 'asc' } },
+  } as const;
+
   async listTemplates(branchId?: string, type?: string) {
     return this.prisma.plmTemplate.findMany({
       where: {
@@ -584,16 +606,26 @@ export class PlmDefinitionsService {
     });
   }
   async createTemplate(dto: any, createdBy: string) {
-    return this.prisma.plmTemplate.create({ data: { ...dto, createdBy } });
+    const { lines, ...data } = dto;
+    try {
+      return await this.prisma.plmTemplate.create({ data: { ...data, createdBy }, include: this.templateInclude });
+    } catch (e: any) {
+      return rethrowFriendlyUniqueError(e, `Template No "${data.code}" is already in use.`);
+    }
   }
   async getTemplate(id: string) {
-    const r = await this.prisma.plmTemplate.findUnique({ where: { id } });
+    const r = await this.prisma.plmTemplate.findUnique({ where: { id }, include: this.templateInclude });
     if (!r) throw new NotFoundException('PlmTemplate not found');
     return r;
   }
   async updateTemplate(id: string, dto: any) {
     await this.getTemplate(id);
-    return this.prisma.plmTemplate.update({ where: { id }, data: dto });
+    const { lines, ...data } = dto;
+    try {
+      return await this.prisma.plmTemplate.update({ where: { id }, data, include: this.templateInclude });
+    } catch (e: any) {
+      return rethrowFriendlyUniqueError(e, `Template No "${data.code}" is already in use.`);
+    }
   }
   async deleteTemplate(id: string) {
     await this.getTemplate(id);
@@ -605,14 +637,72 @@ export class PlmDefinitionsService {
     return this.prisma.plmTemplate.create({
       data: {
         name: `${t.name} (Copy)`,
+        code: null,
         type: t.type,
         description: t.description,
         structure: t.structure ?? {},
         isDefault: false,
         isActive: t.isActive,
         branchId: t.branchId,
+        departmentId: t.departmentId,
+        customerId: t.customerId,
+        styleCardId: t.styleCardId,
+        styleGroup: t.styleGroup,
+        brand: t.brand,
+        styleDepartmentId: t.styleDepartmentId,
+        styleSpecialCode: t.styleSpecialCode,
         createdBy,
+        lines: {
+          create: (t as any).lines.map((l: any) => ({
+            sequence: l.sequence,
+            previousOrderNo: l.previousOrderNo,
+            sampleTypeId: l.sampleTypeId,
+            activityTypeId: l.activityTypeId,
+            mandatory: l.mandatory,
+            selectSampleType: l.selectSampleType,
+            duration: l.duration,
+            resourceEmployeeId: l.resourceEmployeeId,
+            quantity: l.quantity,
+            explanation: l.explanation,
+            specialCode: l.specialCode,
+            inUse: l.inUse,
+          })),
+        },
       },
+      include: this.templateInclude,
     });
+  }
+
+  // Detail grid — same replace-the-whole-set convention as Study Template lines
+  // (upsertStudyTemplateLines above): delete all existing lines for this template, recreate from
+  // the submitted array in order. `sequence` is set from array index so Item No always matches
+  // the grid's current row order, even if the caller omitted it.
+  async upsertTemplateLines(templateId: string, lines: any[]) {
+    await this.getTemplate(templateId);
+    await this.prisma.plmTemplateLine.deleteMany({ where: { templateId } });
+    if (lines.length) {
+      await this.prisma.plmTemplateLine.createMany({
+        data: lines.map((l, i) => ({
+          templateId,
+          sequence: l.sequence ?? i,
+          previousOrderNo: l.previousOrderNo || null,
+          sampleTypeId: l.sampleTypeId || null,
+          activityTypeId: l.activityTypeId || null,
+          mandatory: !!l.mandatory,
+          selectSampleType: !!l.selectSampleType,
+          duration: l.duration === '' || l.duration == null ? null : Number(l.duration),
+          resourceEmployeeId: l.resourceEmployeeId || null,
+          quantity: l.quantity === '' || l.quantity == null ? null : l.quantity,
+          explanation: l.explanation || null,
+          specialCode: l.specialCode || null,
+          inUse: l.inUse ?? true,
+        })),
+      });
+    }
+    return this.getTemplate(templateId);
+  }
+  async deleteTemplateLine(templateId: string, lineId: string) {
+    await this.prisma.plmTemplateLine.delete({ where: { id: lineId } });
+    return { message: 'Line deleted' };
   }
 }

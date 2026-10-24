@@ -2241,26 +2241,27 @@ model Product {
 // ── CUSTOMERS & ORDERS ────────────────────────────────────────────────────────
 
 model Customer {
-  id         String            @id @default(uuid())
-  name       String
-  email      String?
-  phone      String?
-  address    String?
-  city       String?
-  state      String?
-  country    String?
-  postalCode String?
-  companyId  String?
-  branchId   String?
-  company    Company?          @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  branch     Branch?           @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  orders     Order[]
-  payments   CustomerPayment[]
-  returns     OrderReturn[]
-  styleCards  StyleCard[]
-  sampleCards SampleCard[]
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
+  id           String            @id @default(uuid())
+  name         String
+  email        String?
+  phone        String?
+  address      String?
+  city         String?
+  state        String?
+  country      String?
+  postalCode   String?
+  companyId    String?
+  branchId     String?
+  company      Company?          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch       Branch?           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  orders       Order[]
+  payments     CustomerPayment[]
+  returns      OrderReturn[]
+  styleCards   StyleCard[]
+  sampleCards  SampleCard[]
+  plmTemplates PlmTemplate[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   @@index([companyId])
   @@index([branchId])
@@ -3189,13 +3190,13 @@ model AuditLog {
   // Tenant scope — always the real acting user's own User.companyId, never client-supplied.
   // Required for every row the new AuditService writes; nullable only so the handful of
   // pre-existing rows written before this migration (which never captured it) remain valid.
-  companyId String?
+  companyId        String?
   // The MenuItem.href the action was performed from (same screenKey convention
   // ApprovalConfiguration/ScreenParameter already use) — lets Log Tracking filter/join back to a
   // real screen. moduleName/menuTitle are that MenuItem's own group/title, captured at write time.
-  screenKey  String?
-  moduleName String?
-  menuTitle  String?
+  screenKey        String?
+  moduleName       String?
+  menuTitle        String?
   // Business-friendly identifiers, additive alongside the existing generic entityType/entityId —
   // a real document number (e.g. "PO-7", "W/O-000211") and, for a child/detail-level event, the
   // owning parent document's own identity. All optional: a master-data or non-document entity
@@ -3207,7 +3208,7 @@ model AuditLog {
   // Groups every AuditLog row written by ONE logical operation (e.g. a Purchase Order's header
   // insert + its line inserts) so Log Tracking/Log Details can show "everything this single
   // action touched" without guessing from timestamps alone.
-  correlationId String?
+  correlationId    String?
 
   user User @relation(fields: [changedBy], references: [id])
 
@@ -3326,9 +3327,10 @@ model StyleSampleType {
   sequence    Int     @default(0)
   isActive    Boolean @default(true)
 
-  sampleCards SampleCard[]
-  plmOrders   PlmOrder[]
+  sampleCards   SampleCard[]
+  plmOrders     PlmOrder[]
   activityTypes ActivityTypeCard[]
+  templateLines PlmTemplateLine[]
 }
 
 model DesignDetailType {
@@ -3392,11 +3394,15 @@ model DepartmentCard {
   branchId    String
   createdAt   DateTime @default(now())
 
-  employees    EmployeeCard[]
-  processCards ProcessCard[]
-  styleCards   StyleCard[]
-  sampleCards  SampleCard[]
-  activityTypes ActivityTypeCard[]
+  employees                     EmployeeCard[]
+  processCards                  ProcessCard[]
+  styleCards                    StyleCard[]
+  sampleCards                   SampleCard[]
+  activityTypes                 ActivityTypeCard[]
+  // PLM Template header — two distinct FKs onto this same master ("Department" and "Style
+  // Department" on the reference screenshot), hence the two named relations below.
+  plmTemplatesAsDepartment      PlmTemplate[]      @relation("PlmTemplateDepartment")
+  plmTemplatesAsStyleDepartment PlmTemplate[]      @relation("PlmTemplateStyleDepartment")
 }
 
 model ProcessCard {
@@ -3433,12 +3439,13 @@ model EmployeeCard {
 
   department DepartmentCard @relation(fields: [departmentId], references: [id])
 
-  styleCardsAsProductionMerchandiser StyleCard[] @relation("StyleProductionMerchandiser")
-  styleCardsAsProductMerchandiser    StyleCard[] @relation("StyleProductMerchandiser")
-  styleCardsAsDesigner               StyleCard[] @relation("StyleDesigner")
-  styleCardsAsRepresentative         StyleCard[] @relation("StyleRepresentative")
-  sampleCardsAsDesigner              SampleCard[] @relation("SampleDesigner")
-  sampleCardsAsRepresentative        SampleCard[] @relation("SampleRepresentative")
+  styleCardsAsProductionMerchandiser StyleCard[]       @relation("StyleProductionMerchandiser")
+  styleCardsAsProductMerchandiser    StyleCard[]       @relation("StyleProductMerchandiser")
+  styleCardsAsDesigner               StyleCard[]       @relation("StyleDesigner")
+  styleCardsAsRepresentative         StyleCard[]       @relation("StyleRepresentative")
+  sampleCardsAsDesigner              SampleCard[]      @relation("SampleDesigner")
+  sampleCardsAsRepresentative        SampleCard[]      @relation("SampleRepresentative")
+  plmTemplateLinesAsResource         PlmTemplateLine[]
 }
 
 model ResourceCard {
@@ -3460,33 +3467,33 @@ model ResourceCard {
 }
 
 model ActivityTypeCard {
-  id                                   String   @id @default(uuid())
-  code                                 String   @unique
-  name                                 String
-  explanation                          String?
-  accessCode                          String?
-  specialCode                         String?
-  connectedActivityTypeId              String?
-  departmentId                         String?
-  resourceId                           String?
-  processId                            String?
-  productionVariant                    String?
-  sampleTypeId                         String?
-  durationDay                          Int?
-  nextTransactionStartDuration         Int?
-  nextTransactionStartDurationType     String?
-  previousTransactionStartDuration     Int?
-  previousTransactionStartDurationType String?
-  transactionType                      String?
-  sampleTaskRequestResourceS           Boolean  @default(true)
-  preProduction                        Boolean  @default(false)
-  postProduction                       Boolean  @default(false)
-  resourceFromUserCard                 Boolean  @default(false)
-  generateResourceAssignmentsAutomatically Boolean @default(false)
-  useForPlmTaskRequest                 Boolean  @default(true)
-  inUse                                Boolean  @default(true)
-  branchId                             String
-  createdAt                            DateTime @default(now())
+  id                                       String   @id @default(uuid())
+  code                                     String   @unique
+  name                                     String
+  explanation                              String?
+  accessCode                               String?
+  specialCode                              String?
+  connectedActivityTypeId                  String?
+  departmentId                             String?
+  resourceId                               String?
+  processId                                String?
+  productionVariant                        String?
+  sampleTypeId                             String?
+  durationDay                              Int?
+  nextTransactionStartDuration             Int?
+  nextTransactionStartDurationType         String?
+  previousTransactionStartDuration         Int?
+  previousTransactionStartDurationType     String?
+  transactionType                          String?
+  sampleTaskRequestResourceS               Boolean  @default(true)
+  preProduction                            Boolean  @default(false)
+  postProduction                           Boolean  @default(false)
+  resourceFromUserCard                     Boolean  @default(false)
+  generateResourceAssignmentsAutomatically Boolean  @default(false)
+  useForPlmTaskRequest                     Boolean  @default(true)
+  inUse                                    Boolean  @default(true)
+  branchId                                 String
+  createdAt                                DateTime @default(now())
 
   connectedActivityType ActivityTypeCard?  @relation("ActivityTypeSelf", fields: [connectedActivityTypeId], references: [id])
   relatedActivityTypes  ActivityTypeCard[] @relation("ActivityTypeSelf")
@@ -3494,6 +3501,7 @@ model ActivityTypeCard {
   resource              ResourceCard?      @relation(fields: [resourceId], references: [id])
   process               ProcessCard?       @relation(fields: [processId], references: [id])
   sampleType            StyleSampleType?   @relation(fields: [sampleTypeId], references: [id])
+  templateLines         PlmTemplateLine[]
 }
 
 model ColorCard {
@@ -3608,24 +3616,24 @@ model RouteCard {
   branchId    String
   createdAt   DateTime @default(now())
 
-  lines RouteCardLine[]
+  lines              RouteCardLine[]
   // Route-name-only pickers on Style Card BOM header / Sample Card — see StyleCard.bomRouteCardId
   // and SampleCard.routeCardId. No Route Processes are read/copied through either relation.
-  styleCardsBomRoute StyleCard[]  @relation("StyleCardBomRoute")
-  sampleCardsRoute   SampleCard[] @relation("SampleCardRoute")
+  styleCardsBomRoute StyleCard[]     @relation("StyleCardBomRoute")
+  sampleCardsRoute   SampleCard[]    @relation("SampleCardRoute")
 }
 
 model RouteCardLine {
-  id               String   @id @default(uuid())
-  routeCardId      String
-  processId        String
-  explanation      String?
-  unitPrice        Decimal? @db.Decimal(10, 2)
-  forex            String?
-  forexRate        Decimal? @db.Decimal(10, 4)
-  forexUnitPrice   Decimal? @db.Decimal(10, 2)
-  isActive         Boolean  @default(true)
-  sequence         Int      @default(0)
+  id             String   @id @default(uuid())
+  routeCardId    String
+  processId      String
+  explanation    String?
+  unitPrice      Decimal? @db.Decimal(10, 2)
+  forex          String?
+  forexRate      Decimal? @db.Decimal(10, 4)
+  forexUnitPrice Decimal? @db.Decimal(10, 2)
+  isActive       Boolean  @default(true)
+  sequence       Int      @default(0)
 
   routeCard RouteCard   @relation(fields: [routeCardId], references: [id], onDelete: Cascade)
   process   ProcessCard @relation(fields: [processId], references: [id])
@@ -3836,8 +3844,8 @@ model StyleCard {
   // Sample Card Master screen (legacy-ERP-style header/General tab parity) — no existing field
   // represented any of these three, added directly on StyleCard rather than a new table since
   // this screen reuses StyleCard as its backing record.
-  inUse                    Boolean  @default(true)
-  sentByCustomer           Boolean  @default(false)
+  inUse                    Boolean @default(true)
+  sentByCustomer           Boolean @default(false)
   productCode              String?
   // Style Card screen (General tab parity with the reference screenshot) — Access Code/Special
   // Code follow the same plain-text convention Fabric Card already uses for these two fields;
@@ -3876,54 +3884,55 @@ model StyleCard {
   washCare               StyleWashCare?
   expenseLines           StyleExpenseLine[]
   costingSheets          CostingSheet[]
+  plmTemplates           PlmTemplate[]
 }
 
 model StyleBomLine {
-  id              String  @id @default(uuid())
-  styleCardId     String
-  lineType        String
+  id                String   @id @default(uuid())
+  styleCardId       String
+  lineType          String
   // The actual binding to the legacy Fabric/Trim Card master (IM_Item.RecId — a plain nullable
   // Int, not a Prisma @relation, since IM_Item is a raw-SQL legacy table outside Prisma's own
   // schema, the same convention IM_ReceiptItem.ColorCardId already uses for a different legacy
   // master). fabricCode/fabricName remain the denormalized display copy set alongside it.
   fabricInventoryId Int?
-  fabricCode      String?
-  fabricName      String?
-  explanation     String?
-  placement       String?
-  process         String?
-  variant         String?
-  rowColumn       String?
-  colorCardId     String?
-  willBeCut       Boolean @default(false)
-  mainFabric      Boolean @default(false)
-  unit            String?
+  fabricCode        String?
+  fabricName        String?
+  explanation       String?
+  placement         String?
+  process           String?
+  variant           String?
+  rowColumn         String?
+  colorCardId       String?
+  willBeCut         Boolean  @default(false)
+  mainFabric        Boolean  @default(false)
+  unit              String?
   // The Unit resolved from the selected Fabric/Trim Card's own configured Item Unit
   // (IM_ItemUnitItemSize.RecId, via LegacyMasterLookupService.listItemUnits — the same per-item
   // Unit source Purchase Order/Purchase Receipt already resolve through, unit-conversion.util.ts).
   // Same "plain nullable Int, not a Prisma relation" convention as fabricInventoryId above; `unit`
   // stays the denormalized display code set alongside it.
-  unitId          Int?
+  unitId            Int?
   // Fabric BOM row's own auto-quantity calculator inputs (Area m² = Width * Length / 10,000,
   // then Quantity = Area * Weight/m² — see bom-tab.tsx's calcFabricQuantity). Previously
   // calculator-only/never persisted here (no columns existed) — quantity (below) was the only
   // value saved. Added so the raw Length/Width/Weight a user enters survive Save -> Reload
   // instead of resetting to 0, matching the equivalent real columns Work Order's own BOM
   // persistence (MA_RecipeItem.MarkerWidth/MarkerLength/M2Weight) already has.
-  marketLength    Decimal? @db.Decimal(10, 4)
-  marketWidth     Decimal? @db.Decimal(10, 4)
-  marketWeight    Decimal? @db.Decimal(10, 4)
-  quantity        Decimal @default(0) @db.Decimal(14, 4)
-  wastePct        Decimal @default(0) @db.Decimal(8, 4)
-  dyeWastagePct   Decimal @default(0) @db.Decimal(8, 4)
-  otherWastagePct Decimal @default(0) @db.Decimal(8, 4)
-  unitPrice       Decimal @default(0) @db.Decimal(14, 4)
-  component       String?
-  dia             String?
-  gauge           String?
-  finishWidth     String?
-  finishRoute     String?
-  revision        String?
+  marketLength      Decimal? @db.Decimal(10, 4)
+  marketWidth       Decimal? @db.Decimal(10, 4)
+  marketWeight      Decimal? @db.Decimal(10, 4)
+  quantity          Decimal  @default(0) @db.Decimal(14, 4)
+  wastePct          Decimal  @default(0) @db.Decimal(8, 4)
+  dyeWastagePct     Decimal  @default(0) @db.Decimal(8, 4)
+  otherWastagePct   Decimal  @default(0) @db.Decimal(8, 4)
+  unitPrice         Decimal  @default(0) @db.Decimal(14, 4)
+  component         String?
+  dia               String?
+  gauge             String?
+  finishWidth       String?
+  finishRoute       String?
+  revision          String?
   // Legacy BOM column-set extension (Manage Columns) — plain scalar fields matching the exact
   // free-text/boolean/decimal convention every field above already uses; no master table backs
   // any of these (confirmed during audit), so they're genuine new columns, not a second table.
@@ -3933,9 +3942,9 @@ model StyleBomLine {
   // to MA_RecipeItem.NotForRequirement/IsFixQuantity): the first leaves the line out of
   // Requirements, the second makes Requirements use this Quantity instead of a Work Order override —
   // see fabric-yarn-requirements.service.ts resolveRequirementBomLines. No other screen reads them.
-  notForRequirement Boolean @default(false)
-  useFixQuantity    Boolean @default(false)
-  printWastagePct   Decimal @default(0) @db.Decimal(8, 4)
+  notForRequirement Boolean  @default(false)
+  useFixQuantity    Boolean  @default(false)
+  printWastagePct   Decimal  @default(0) @db.Decimal(8, 4)
   forex             String?
   manProductCode    String?
   orderCondition    String?
@@ -3947,7 +3956,7 @@ model StyleBomLine {
   bodyColor         String?
   printColor        String?
   dyeingProcess     String?
-  sortOrder       Int     @default(0)
+  sortOrder         Int      @default(0)
 
   styleCard StyleCard  @relation(fields: [styleCardId], references: [id], onDelete: Cascade)
   colorCard ColorCard? @relation(fields: [colorCardId], references: [id])
@@ -4083,7 +4092,7 @@ model PackingListItemSize {
 // synced — this table simply supersedes them for any consumer, e.g. PLM BOM's own Yarn
 // consumption breakdown, once populated).
 model FabricYarnRecipeLine {
-  id                String  @id @default(uuid())
+  id                String   @id @default(uuid())
   // The Fabric Card this recipe belongs to (IM_Item.RecId — a plain nullable Int, not a Prisma
   // relation, since IM_Item is a raw-SQL legacy table outside Prisma's own schema; same
   // convention StyleBomLine.fabricInventoryId already uses).
@@ -4108,10 +4117,10 @@ model FabricYarnRecipeLine {
   variant2          String?
   process           String?
   knittedInVariants String?
-  percentage        Decimal @default(0) @db.Decimal(8, 4)
-  wastePct          Decimal @default(0) @db.Decimal(8, 4)
-  dyeWastagePct     Decimal @default(0) @db.Decimal(8, 4)
-  sortOrder         Int     @default(0)
+  percentage        Decimal  @default(0) @db.Decimal(8, 4)
+  wastePct          Decimal  @default(0) @db.Decimal(8, 4)
+  dyeWastagePct     Decimal  @default(0) @db.Decimal(8, 4)
+  sortOrder         Int      @default(0)
   // Drives the Yarn Recipe list screen's "Last Updated" column (legacy-erp/yarn-recipes) — the
   // most recent write among a bucket's own rows. Prisma sets/refreshes this automatically on every
   // create/update through this model, including the delete-then-recreate upsertRecipe() already
@@ -4196,7 +4205,7 @@ model SampleWashCare {
 }
 
 model SampleBomLine {
-  id                String  @id @default(uuid())
+  id                String   @id @default(uuid())
   sampleCardId      String
   lineType          String
   fabricInventoryId Int?
@@ -4208,18 +4217,18 @@ model SampleBomLine {
   variant           String?
   rowColumn         String?
   colorCardId       String?
-  willBeCut         Boolean @default(false)
-  mainFabric        Boolean @default(false)
+  willBeCut         Boolean  @default(false)
+  mainFabric        Boolean  @default(false)
   unit              String?
   unitId            Int?
   marketLength      Decimal? @db.Decimal(10, 4)
   marketWidth       Decimal? @db.Decimal(10, 4)
   marketWeight      Decimal? @db.Decimal(10, 4)
-  quantity          Decimal @default(0) @db.Decimal(14, 4)
-  wastePct          Decimal @default(0) @db.Decimal(8, 4)
-  dyeWastagePct     Decimal @default(0) @db.Decimal(8, 4)
-  otherWastagePct   Decimal @default(0) @db.Decimal(8, 4)
-  unitPrice         Decimal @default(0) @db.Decimal(14, 4)
+  quantity          Decimal  @default(0) @db.Decimal(14, 4)
+  wastePct          Decimal  @default(0) @db.Decimal(8, 4)
+  dyeWastagePct     Decimal  @default(0) @db.Decimal(8, 4)
+  otherWastagePct   Decimal  @default(0) @db.Decimal(8, 4)
+  unitPrice         Decimal  @default(0) @db.Decimal(14, 4)
   component         String?
   dia               String?
   gauge             String?
@@ -4227,9 +4236,9 @@ model SampleBomLine {
   finishRoute       String?
   revision          String?
   // Exact mirror of StyleBomLine's own extension above — see its comment.
-  notForRequirement Boolean @default(false)
-  useFixQuantity    Boolean @default(false)
-  printWastagePct   Decimal @default(0) @db.Decimal(8, 4)
+  notForRequirement Boolean  @default(false)
+  useFixQuantity    Boolean  @default(false)
+  printWastagePct   Decimal  @default(0) @db.Decimal(8, 4)
   forex             String?
   manProductCode    String?
   orderCondition    String?
@@ -4241,7 +4250,7 @@ model SampleBomLine {
   bodyColor         String?
   printColor        String?
   dyeingProcess     String?
-  sortOrder         Int     @default(0)
+  sortOrder         Int      @default(0)
 
   sampleCard SampleCard @relation(fields: [sampleCardId], references: [id], onDelete: Cascade)
   colorCard  ColorCard? @relation(fields: [colorCardId], references: [id])
@@ -4276,7 +4285,7 @@ model SwatchCard {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  productCards   ProductCardSwatch[]
+  productCards ProductCardSwatch[]
 }
 
 model ProductCard {
@@ -4337,33 +4346,33 @@ model ProductMeasurement {
 // ── PLM — Samples ─────────────────────────────────────────────────────────────
 
 model SampleCard {
-  id           String    @id @default(uuid())
-  sampleNumber String    @unique
-  styleCardId  String?
-  sampleTypeId String
-  title        String
-  description  String?
-  season       String?
-  year         Int?
-  status       String    @default("draft")
-  fabricTypeId String?
-  colorway     String?
-  size         String?
-  quantity     Int?
-  assignedTo   String?
-  dueDate      DateTime?
-  cost         Decimal?  @db.Decimal(12, 2)
-  currency     String    @default("PKR")
-  images       Json?
-  attachments  Json?
-  notes        String?
-  branchId     String
-  createdBy    String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                 String    @id @default(uuid())
+  sampleNumber       String    @unique
+  styleCardId        String?
+  sampleTypeId       String
+  title              String
+  description        String?
+  season             String?
+  year               Int?
+  status             String    @default("draft")
+  fabricTypeId       String?
+  colorway           String?
+  size               String?
+  quantity           Int?
+  assignedTo         String?
+  dueDate            DateTime?
+  cost               Decimal?  @db.Decimal(12, 2)
+  currency           String    @default("PKR")
+  images             Json?
+  attachments        Json?
+  notes              String?
+  branchId           String
+  createdBy          String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
   // "Route" picker — an existing RouteCard selected by name, id stored here. Does not read/copy
   // RouteCardLine (Route Processes); independent of StyleCard's own bomRouteCardId.
-  routeCardId  String?
+  routeCardId        String?
   // Independent tab-parity fields (mirrors the equivalent StyleCard field/relation exactly) —
   // own SampleCard-owned data, never linked to any Style Card.
   explanations       String?
@@ -4393,21 +4402,21 @@ model SampleCard {
   sizes              Json?
   colorways          Json?
 
-  sampleType StyleSampleType     @relation(fields: [sampleTypeId], references: [id])
-  styleCard  StyleCard?          @relation(fields: [styleCardId], references: [id])
-  routeCard  RouteCard?          @relation("SampleCardRoute", fields: [routeCardId], references: [id])
-  measurementChart MeasurementChart? @relation(fields: [measurementChartId], references: [id])
-  department       DepartmentCard?   @relation(fields: [departmentId], references: [id])
-  customer         Customer?         @relation(fields: [customerId], references: [id])
-  designer         EmployeeCard?     @relation("SampleDesigner", fields: [designerId], references: [id])
-  representative   EmployeeCard?     @relation("SampleRepresentative", fields: [representativeId], references: [id])
-  details    SampleCardDetail[]
-  washCare   SampleWashCare?
-  bomLines   SampleBomLine[]
-  studyTemplates StudyTemplateCard[]
-  costingSheets  CostingSheet[]
-  orders     PlmOrder[]
-  history    SampleCardHistory[]
+  sampleType       StyleSampleType     @relation(fields: [sampleTypeId], references: [id])
+  styleCard        StyleCard?          @relation(fields: [styleCardId], references: [id])
+  routeCard        RouteCard?          @relation("SampleCardRoute", fields: [routeCardId], references: [id])
+  measurementChart MeasurementChart?   @relation(fields: [measurementChartId], references: [id])
+  department       DepartmentCard?     @relation(fields: [departmentId], references: [id])
+  customer         Customer?           @relation(fields: [customerId], references: [id])
+  designer         EmployeeCard?       @relation("SampleDesigner", fields: [designerId], references: [id])
+  representative   EmployeeCard?       @relation("SampleRepresentative", fields: [representativeId], references: [id])
+  details          SampleCardDetail[]
+  washCare         SampleWashCare?
+  bomLines         SampleBomLine[]
+  studyTemplates   StudyTemplateCard[]
+  costingSheets    CostingSheet[]
+  orders           PlmOrder[]
+  history          SampleCardHistory[]
 }
 
 model SampleCardHistory {
@@ -4426,17 +4435,70 @@ model SampleCardHistory {
 // ── PLM — Templates ───────────────────────────────────────────────────────────
 
 model PlmTemplate {
-  id          String   @id @default(uuid())
-  name        String
-  type        String
-  description String?
-  structure   Json
-  isDefault   Boolean  @default(false)
-  isActive    Boolean  @default(true)
-  branchId    String?
-  createdBy   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String   @id @default(uuid())
+  // "No" on the reference screenshot (TAO-style Merchandising template header) — the original
+  // generic template registry only had `name`; this is a real gap, filled using the exact
+  // code+name convention every other *Card master in this schema already uses (FabricCard,
+  // ActivityTypeCard, BrandCard, ...), not an invented field.
+  code              String?  @unique
+  name              String
+  type              String
+  description       String?
+  structure         Json
+  isDefault         Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  // Header fields added to match the reference screenshot's "General" section. Department/
+  // Customer/Style reuse real existing FKs (DepartmentCard/Customer/StyleCard); Style Group and
+  // Brand stay plain text, mirroring StyleCard's own groupCode/groupName and brand columns
+  // (StyleCard deliberately keeps Brand as free text rather than a BrandCard FK — same
+  // convention followed here for consistency); Style Special Code mirrors StyleCard.specialCode.
+  departmentId      String?
+  customerId        String?
+  styleCardId       String?
+  styleGroup        String?
+  brand             String?
+  styleDepartmentId String?
+  styleSpecialCode  String?
+  branchId          String?
+  createdBy         String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  department      DepartmentCard?   @relation("PlmTemplateDepartment", fields: [departmentId], references: [id])
+  styleDepartment DepartmentCard?   @relation("PlmTemplateStyleDepartment", fields: [styleDepartmentId], references: [id])
+  customer        Customer?         @relation(fields: [customerId], references: [id])
+  styleCard       StyleCard?        @relation(fields: [styleCardId], references: [id])
+  lines           PlmTemplateLine[]
+}
+
+// Detail grid rows for the PLM Template screen — grouped visually by Sample Type on the
+// frontend (consecutive rows sharing the same sampleTypeId), reusing the existing parent/detail
+// relationship rather than inventing a separate grouping entity. One line = one picked
+// ActivityTypeCard (which already carries its own Process + default Duration/Resource), plus
+// this template's own overrides (Mandatory, Select Sample Type, Duration, Resource, Quantity,
+// Explanation, Special Code, In Use) — see the Resource Explanation column, which shows actual
+// staff names, hence resourceEmployeeId points at EmployeeCard, not ActivityTypeCard's own
+// (equipment-type) ResourceCard field.
+model PlmTemplateLine {
+  id                 String   @id @default(uuid())
+  templateId         String
+  sequence           Int      @default(0)
+  previousOrderNo    String?
+  sampleTypeId       String?
+  activityTypeId     String?
+  mandatory          Boolean  @default(false)
+  selectSampleType   Boolean  @default(false)
+  duration           Int?
+  resourceEmployeeId String?
+  quantity           Decimal? @db.Decimal(10, 2)
+  explanation        String?
+  specialCode        String?
+  inUse              Boolean  @default(true)
+
+  template         PlmTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  sampleType       StyleSampleType?  @relation(fields: [sampleTypeId], references: [id])
+  activityType     ActivityTypeCard? @relation(fields: [activityTypeId], references: [id])
+  resourceEmployee EmployeeCard?     @relation(fields: [resourceEmployeeId], references: [id])
 }
 
 // ── PLM — Orders & Tasks ──────────────────────────────────────────────────────
