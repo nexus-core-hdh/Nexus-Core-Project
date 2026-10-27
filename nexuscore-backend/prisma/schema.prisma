@@ -3414,6 +3414,10 @@ model ProcessCard {
   standardTime Decimal? @db.Decimal(8, 2)
   resourceType String?
   isActive     Boolean  @default(true)
+  // The legacy MA_Process (RecId) this process is recorded under in Order Manufacturing Entry
+  // (MA_WorkOrderProduction.ProcessId). The two process masters share no key — their codes
+  // differ — so this explicit link is the only mapping used; blank = not available there yet.
+  legacyProcessId Int?
 
   department    DepartmentCard?     @relation(fields: [departmentId], references: [id])
   studyLines    StudyTemplateLine[]

@@ -62,8 +62,10 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
   // pre-selected (work-orders/page.tsx's own initialStyleCardId effect). No record is created
   // here — the Work Order itself is only created once the user actually Saves there, so
   // Cancel-without-Save leaves nothing behind, same as opening New Work Order normally.
+  // No explicit tab title: the resolver already shows "New Work Order" for `mode=create`, and an
+  // explicit one would outrank the record label the Work Order reports once saved.
   const createWorkOrder = () => {
-    navigateOrOpenTab(router, `/legacy-erp/work-orders?mode=create&styleCardId=${styleCardId}`, { title: "New Work Order" });
+    navigateOrOpenTab(router, `/legacy-erp/work-orders?mode=create&styleCardId=${styleCardId}`);
   };
 
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>;
@@ -142,7 +144,7 @@ export function OrderInfoTab({ styleCardId, sampleCardId }: { styleCardId?: stri
                 <TableCell>{o.customerOrderNo || "—"}</TableCell>
                 <TableCell className="text-right font-mono">{o.quantity ?? 0}</TableCell>
                 <TableCell>
-                  <button type="button" onClick={() => navigateOrOpenTab(router, `/legacy-erp/work-orders?id=${o.id}&mode=edit`, { title: o.workOrderNo })}>
+                  <button type="button" onClick={() => navigateOrOpenTab(router, `/legacy-erp/work-orders?id=${o.id}&mode=edit`)}>
                     <ExternalLink className="h-4 w-4 text-muted-foreground" />
                   </button>
                 </TableCell>

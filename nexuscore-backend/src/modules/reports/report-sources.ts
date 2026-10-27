@@ -12,9 +12,19 @@
 //
 // Adding a source: declare it below with its Prisma model, fields and — for a table without its
 // own branchId — the `scope` relation that leads to the record that has one.
+//
+// Legacy ERP reports can also use any eligible legacy database table as `table:<name>`; those
+// sources are not declared here but discovered from the database catalog (legacy-schema-catalog.ts).
 
 import type { Prisma } from '@prisma/client';
 import { LEGACY_REPORT_SOURCES } from './legacy-report-sources';
+import { TABLE_SECTION_TITLES } from './legacy-schema-catalog';
+import { ORDER_FORM_SOURCE } from './work-order-order-form.report';
+import { GATE_PASS_SOURCE } from './inward-gate-pass.report';
+import { FABRIC_REPORT_SOURCE, TRIM_REPORT_SOURCE, YARN_REPORT_SOURCE } from './yarn-requirement.report';
+import { DYEING_SOURCE } from './dyeing-follow-up.report';
+import { PROCESS_FOLLOW_UP_SOURCE } from './process-follow-up.report';
+import type { SectionColumnDef } from './work-order-order-form.report';
 
 export type ReportFieldType = 'string' | 'number' | 'date' | 'boolean';
 
@@ -42,6 +52,16 @@ export interface ReportField {
   /** SQL sources only: the column expression (over the source's table aliases). Always a fixed
    *  string or Prisma.Sql written here — never built from user input. */
   sql?: string | Prisma.Sql;
+  /** Only these filter operators (default: every operator of the field's type). */
+  operators?: string[];
+  /** The filter value is picked with this Legacy ERP master lookup (its id is the value). */
+  lookup?: { masterKey: string; lookupPath?: string; multiple?: boolean };
+  /** The filter value is one of these choices (the run prompt shows them as a list). */
+  options?: { value: string; label: string }[];
+  /** Document sources only: the field is a section of the printed document, not a value. */
+  section?: boolean;
+  /** A section's own printable columns (configurable per report — see work-order-order-form.report.ts). */
+  sectionColumns?: (SectionColumnDef & { defaultVisible: boolean })[];
 }
 
 interface ReportSourceBase {
@@ -81,7 +101,18 @@ export interface SqlReportSource extends ReportSourceBase {
   where: string;
 }
 
-export type ReportSource = PrismaReportSource | SqlReportSource;
+/**
+ * One record printed as a multi-section document (e.g. a Work Order's Order Form). Its `section`
+ * fields are the report's columns (which sections, in which order, under which title) and its
+ * other field is the record to print; `builder` names the code that builds the sections from the
+ * same services the record's own screens use (see work-order-order-form.report.ts).
+ */
+export interface DocumentReportSource extends ReportSourceBase {
+  kind: 'document';
+  builder: string;
+}
+
+export type ReportSource = PrismaReportSource | SqlReportSource | DocumentReportSource;
 
 type FieldSpec = [key: string, label: string, type?: ReportFieldType];
 
@@ -676,6 +707,13 @@ export const REPORT_SOURCES: ReportSource[] = [
   COSTING_RAW_MATERIALS, COSTING_LABOR, COSTING_OTHER,
   PRODUCT_CARDS, MOOD_BOARDS, STUDY_TEMPLATES, SAMPLE_HISTORY,
   ...DOCKET_SOURCES,
+  ORDER_FORM_SOURCE,
+  GATE_PASS_SOURCE,
+  YARN_REPORT_SOURCE,
+  FABRIC_REPORT_SOURCE,
+  TRIM_REPORT_SOURCE,
+  DYEING_SOURCE,
+  PROCESS_FOLLOW_UP_SOURCE,
 ];
 
 export function findReportSource(key: string, module?: string): ReportSource | undefined {
@@ -683,12 +721,13 @@ export function findReportSource(key: string, module?: string): ReportSource | u
 }
 
 /** Every menu section title any source uses (so empty ones can be recognised and removed). */
-export const REPORT_SECTION_TITLES = new Set(REPORT_SOURCES.map((s) => s.menuSection.title));
+export const REPORT_SECTION_TITLES = new Set([...REPORT_SOURCES.map((s) => s.menuSection.title), ...TABLE_SECTION_TITLES]);
 
 /** Filter operators per field type. Count and computed fields are not filterable. */
 export const OPERATORS: Record<ReportFieldType, string[]> = {
   string: ['equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'endsWith', 'isEmpty', 'isNotEmpty'],
   number: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between', 'isEmpty', 'isNotEmpty'],
+  // (Document sources may also offer 'in' — "is one of", a list of record ids — via ReportField.operators.)
   date: ['on', 'before', 'after', 'between', 'isEmpty', 'isNotEmpty'],
   boolean: ['isTrue', 'isFalse'],
 };

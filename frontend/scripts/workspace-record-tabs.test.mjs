@@ -15,7 +15,7 @@ const { findRecordRoute, isNewRecordPath, resolveTabKey, tabKeyForHref } = await
 const { navigateOrOpenTab, syncModuleRouteTab } = await import("@/lib/workspace/navigate");
 const { syncRecordRouteTab } = await import("@/hooks/use-record-tab-sync");
 const { adoptWorkspaceRecordId } = await import("@/hooks/use-workspace-record-id");
-const { resolveWorkspaceTabTitle } = await import("@/lib/workspace/resolve-tab-title");
+const { resolveWorkspaceTabTitle, styleCardTabTitle } = await import("@/lib/workspace/resolve-tab-title");
 
 await new Promise((done) =>
   useWorkspaceStore.persist.hasHydrated() ? done() : useWorkspaceStore.persist.onFinishHydration(done)
@@ -711,5 +711,67 @@ describe("Packing List workspace tabs", () => {
     useWorkspaceStore.getState().setTabRecordLabel(PL_KEY(21), "PL-00021");
     assert.deepEqual(keys(), [PL_KEY(21)]);
     assert.equal(resolveWorkspaceTabTitle(tabOf(PL_KEY(21)), entryByHref).title, "Packing List [PL-00021]");
+  });
+});
+
+// ── Identifiable tabs for several open records of one screen ────────────────────────────────────
+describe("identifiable record tabs", () => {
+  const WO = "/legacy-erp/work-orders";
+  const WO_KEY = (id) => `${WO}?id=${id}`;
+  const MENU = new Map(
+    [[STYLE_LIST, "Style Cards"], [`${WO}-list`, "Work Order"]].map(([href, title]) => [href, { title, href }])
+  );
+  const shown = (key) => resolveWorkspaceTabTitle(tabOf(key), MENU).title;
+
+  it("Style Card tabs read 'Style Card | {Code} | {Name}', skipping blanks, undefined until loaded", () => {
+    assert.equal(styleCardTabTitle({ styleNumber: "SC-2026-8606", title: "new test" }), "Style Card | SC-2026-8606 | new test");
+    assert.equal(styleCardTabTitle({ styleNumber: "SC-2026-8606", title: "  " }), "Style Card | SC-2026-8606");
+    assert.equal(styleCardTabTitle({ styleNumber: null, title: "new test" }), "Style Card | new test");
+    assert.equal(styleCardTabTitle(null), undefined);
+    assert.equal(styleCardTabTitle({ styleNumber: "", title: "" }), undefined);
+  });
+
+  it("two open Style Cards are distinguishable, and a rename after save updates the label", () => {
+    land(STYLE_A);
+    land(STYLE_B);
+    useWorkspaceStore.getState().setTabTitle(STYLE_A, styleCardTabTitle({ styleNumber: "SC-1", title: "Alpha" })); // what useWorkspaceTabTitle does
+    useWorkspaceStore.getState().setTabTitle(STYLE_B, styleCardTabTitle({ styleNumber: "SC-2", title: "Beta" }));
+    assert.equal(shown(STYLE_A), "Style Card | SC-1 | Alpha");
+    assert.equal(shown(STYLE_B), "Style Card | SC-2 | Beta");
+    useWorkspaceStore.getState().setTabTitle(STYLE_A, styleCardTabTitle({ styleNumber: "SC-1", title: "Alpha Renamed" }));
+    assert.equal(shown(STYLE_A), "Style Card | SC-1 | Alpha Renamed");
+  });
+
+  it("a new Style Card reads 'New Style Card' until saved, then its code and name", () => {
+    land(`${STYLE_LIST}/new`);
+    assert.equal(shown(`${STYLE_LIST}/new`), "New Style Card");
+    land(STYLE_A); // save -> router.replace(`/style-cards/${id}`)
+    useWorkspaceStore.getState().setTabTitle(STYLE_A, styleCardTabTitle({ styleNumber: "SC-9", title: "Fresh" }));
+    assert.deepEqual(keys(), [STYLE_A]);
+    assert.equal(shown(STYLE_A), "Style Card | SC-9 | Fresh");
+  });
+
+  it("several Work Orders show their own numbers; one created from a Style Card ends up numbered too", () => {
+    openFromMenu(`${WO}?id=212&mode=edit`);
+    openFromMenu(`${WO}?id=213&mode=edit`);
+    useWorkspaceStore.getState().setTabRecordLabel(WO_KEY(212), "W/O-000212");
+    useWorkspaceStore.getState().setTabRecordLabel(WO_KEY(213), "W/O-000213");
+    assert.equal(shown(WO_KEY(212)), "Work Order [W/O-000212]");
+    assert.equal(shown(WO_KEY(213)), "Work Order [W/O-000213]");
+
+    // Style Card -> Order Info -> Create Order opens the New Work Order form with no explicit title.
+    navigateOrOpenTab(router, `${WO}?mode=create&styleCardId=abc`);
+    assert.equal(shown(WO), "New Work Order");
+    adoptWorkspaceRecordId(WO, 214); // first save
+    useWorkspaceStore.getState().setTabRecordLabel(WO_KEY(214), "W/O-000214");
+    assert.equal(shown(WO_KEY(214)), "Work Order [W/O-000214]");
+  });
+
+  it("the title hooks key record tabs slug-free and keep labels while a hosted screen is unmounted", () => {
+    const hooks = readFileSync(new URL("../hooks/use-workspace-tab-title.ts", import.meta.url), "utf8");
+    assert.match(hooks, /import \{ usePathname \} from "@\/lib\/app-navigation";/, "same slug-free pathname the record tabs are keyed by");
+    assert.ok(!/return \(\) => setTab(Title|RecordLabel)\(/.test(hooks), "no clearing on unmount");
+    const orderInfo = readFileSync(new URL("../app/[company]/(auth)/plm/style-cards/[id]/_components/order-info-tab.tsx", import.meta.url), "utf8");
+    assert.ok(!/work-orders\?[^`]*`,\s*\{\s*title:/.test(orderInfo), "Work Order links leave the title to the resolver/record label");
   });
 });

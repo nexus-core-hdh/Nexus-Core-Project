@@ -3,6 +3,13 @@
 // Same conventions as standard-reports.ts: only declared fields, validated like a designer save;
 // `ask(...)` filters take their value when the report is opened (blank = no restriction).
 import type { ReportDefinitionInput, ReportFilter } from './report-builder.service';
+import { ORDER_FORM_SECTIONS, ORDER_FORM_SOURCE_KEY, ORDER_FORM_WORK_ORDER_FIELD } from './work-order-order-form.report';
+import { GATE_PASS_RECEIPT_FIELD, GATE_PASS_SECTIONS, GATE_PASS_SOURCE_KEY } from './inward-gate-pass.report';
+import { DYEING_FIELDS, DYEING_REPORT_NAME, DYEING_SECTIONS, DYEING_SOURCE_KEY } from './dyeing-follow-up.report';
+import {
+  PROCESS_FOLLOW_UP_EMPTY_FIELD, PROCESS_FOLLOW_UP_FIELDS, PROCESS_FOLLOW_UP_REPORT_NAME, PROCESS_FOLLOW_UP_SECTIONS, PROCESS_FOLLOW_UP_SOURCE_KEY,
+} from './process-follow-up.report';
+import { BOM_FALLBACK_FIELD, MATERIAL_REPORT_NAMES, MATERIAL_REPORT_SECTIONS, MATERIAL_REPORT_SOURCE_KEYS, YARN_REPORT_ORDER_NO_FIELD, YARN_REPORT_WORK_ORDERS_FIELD } from './yarn-requirement.report';
 
 type Def = Omit<ReportDefinitionInput, 'filters'> & { filters?: Omit<ReportFilter, 'id'>[] };
 
@@ -560,7 +567,68 @@ const CONTRACTS: Def[] = [
   },
 ];
 
-export const STANDARD_LEGACY_REPORTS: Def[] = [...INVENTORY, ...PURCHASE, ...PRODUCTION, ...FINANCE, ...CONTRACTS];
+// ── Documents ──────────────────────────────────────────────────────────────────
+
+const DOCUMENTS: Def[] = [
+  {
+    // Opened from the Work Orders list: right-click → Print → Order Form (the list passes the
+    // Work Order to the "ask when running" filter).
+    name: 'Order Form',
+    description: 'A Work Order printed as the Order Form: header, Color/Size Chart, recipes, requirements and embellishments.',
+    dataSource: ORDER_FORM_SOURCE_KEY,
+    columns: cols(...ORDER_FORM_SECTIONS.map(([key]) => key)),
+    filters: [ask(ORDER_FORM_WORK_ORDER_FIELD, 'eq')],
+  },
+  {
+    // Opened from an inward Inventory Receipt: right-click / ⋮ → Print → Inward Gate Pass.
+    name: 'Inward Gate Pass',
+    description: 'An inward receipt printed as the Inward Gate Pass: supplier, IGP #, warehouse, driver, vehicle, party OGP, received items with totals, and signatures.',
+    dataSource: GATE_PASS_SOURCE_KEY,
+    columns: cols(...GATE_PASS_SECTIONS.map(([key]) => key)),
+    filters: [ask(GATE_PASS_RECEIPT_FIELD, 'eq')],
+  },
+  // Opened from the Work Orders list (the selected Work Orders) or a Work Order: Print → Yarn /
+  // Fabric / Trim Requirement. Same layout for the three materials.
+  ...(['yarn', 'fabric', 'trim'] as const).map((material): Def => ({
+    name: MATERIAL_REPORT_NAMES[material],
+    description: `${material[0].toUpperCase()}${material.slice(1)} requirement of the chosen Work Orders — each Work Order with its ${material === 'yarn' ? 'yarns' : `${material}s`}, purchase orders, receipts and production issues — and Cumulative Totals.`,
+    dataSource: MATERIAL_REPORT_SOURCE_KEYS[material],
+    columns: cols(...MATERIAL_REPORT_SECTIONS(material).map(([key]) => key)),
+    // Asked each run; left blank it means No — requirements are never calculated from the BOM unasked.
+    filters: [ask(YARN_REPORT_WORK_ORDERS_FIELD, 'in'), ask(YARN_REPORT_ORDER_NO_FIELD, 'startsWith'), ask(BOM_FALLBACK_FIELD, 'equals')],
+  })),
+  {
+    // Every filter asked when the report runs, all optional (blank = no restriction), combined with AND.
+    name: DYEING_REPORT_NAME,
+    description: 'Outside-process sent, received and returned quantities by subcontractor and Party No, with Party / Subcontractor totals, Kalan and Fire%.',
+    dataSource: DYEING_SOURCE_KEY,
+    columns: cols(...DYEING_SECTIONS.map(([key]) => key)),
+    filters: [
+      ask(DYEING_FIELDS.dateFrom, 'gte'), ask(DYEING_FIELDS.dateTo, 'lte'), ask(DYEING_FIELDS.subcontractors, 'in'),
+      ask(DYEING_FIELDS.partyNo, 'contains'), ask(DYEING_FIELDS.receiptNo, 'contains'), ask(DYEING_FIELDS.documentNo, 'contains'),
+      ask(DYEING_FIELDS.inventory, 'in'), ask(DYEING_FIELDS.inventoryName, 'contains'), ask(DYEING_FIELDS.process, 'equals'),
+      ask(DYEING_FIELDS.workOrders, 'in'),
+    ],
+  },
+  {
+    // Every filter asked when the report runs, all optional (blank = no restriction), combined with AND.
+    name: PROCESS_FOLLOW_UP_REPORT_NAME,
+    description: 'Order Manufacturing sent, received (A / B quality ...), return and repair quantities per Work Order, Color and Factory, one section per Process with its total and Balance.',
+    dataSource: PROCESS_FOLLOW_UP_SOURCE_KEY,
+    columns: cols(...PROCESS_FOLLOW_UP_SECTIONS.map(([key]) => key)),
+    filters: [
+      ask(PROCESS_FOLLOW_UP_FIELDS.dateFrom, 'gte'), ask(PROCESS_FOLLOW_UP_FIELDS.dateTo, 'lte'),
+      ask(PROCESS_FOLLOW_UP_FIELDS.customers, 'in'), ask(PROCESS_FOLLOW_UP_FIELDS.workOrders, 'in'),
+      ask(PROCESS_FOLLOW_UP_FIELDS.orderNo, 'contains'), ask(PROCESS_FOLLOW_UP_FIELDS.styleCode, 'contains'),
+      ask(PROCESS_FOLLOW_UP_FIELDS.styleName, 'contains'), ask(PROCESS_FOLLOW_UP_FIELDS.color, 'contains'),
+      ask(PROCESS_FOLLOW_UP_FIELDS.processes, 'in'), ask(PROCESS_FOLLOW_UP_FIELDS.factories, 'in'),
+      // Left blank it means No — only processes with entries, as on the legacy report.
+      ask(PROCESS_FOLLOW_UP_EMPTY_FIELD, 'equals'),
+    ],
+  },
+];
+
+export const STANDARD_LEGACY_REPORTS: Def[] = [...INVENTORY, ...PURCHASE, ...PRODUCTION, ...FINANCE, ...CONTRACTS, ...DOCUMENTS];
 
 export function standardLegacyReportInputs(): ReportDefinitionInput[] {
   return STANDARD_LEGACY_REPORTS.map((d) => ({ ...d, filters: (d.filters ?? []) as ReportFilter[] }));

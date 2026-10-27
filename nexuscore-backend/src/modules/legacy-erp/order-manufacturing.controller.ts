@@ -20,6 +20,11 @@ export class OrderManufacturingController {
     return this.svc.getContext(workOrderId, processId ? Number(processId) || null : null);
   }
 
+  // The Process dropdown's options: the Work Order's Route processes, or every process when no Route restricts it.
+  @Get('processes') processes(@Query('workOrderId', ParseIntPipe) workOrderId: number) {
+    return this.svc.allowedProcesses(workOrderId);
+  }
+
   @Get('entries') entries(
     @Query('workOrderId', ParseIntPipe) workOrderId: number,
     @Query('processId', ParseIntPipe) processId: number,

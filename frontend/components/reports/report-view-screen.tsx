@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "@/lib/app-navigation";
 import { format, parseISO } from "date-fns";
-import { Download, FileBarChart2, FileSpreadsheet, FileText, Lock, Pencil, Play, RefreshCw, Sheet } from "lucide-react";
+import { Download, FileBarChart2, FileSpreadsheet, FileText, Lock, Pencil, Play, Printer, RefreshCw, Sheet } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,9 @@ import {
   type ReportExportFormat,
   type ReportParams,
   type ReportResult,
+  type ReportSourceField,
 } from "@/lib/nexuscore-api";
-import { PromptFiltersForm, ReportResultTable } from "./report-shared";
+import { PromptFiltersForm, ReportResultTable, ReportSections } from "./report-shared";
 
 const EXPORTS: { format: ReportExportFormat; label: string; icon: typeof FileText }[] = [
   { format: "pdf", label: "PDF", icon: FileText },
@@ -38,20 +39,34 @@ export function ReportViewScreen({ module }: { module: ReportModuleKey }) {
   const reportApi = useMemo(() => reportBuilderApiFor(module), [module]);
   const ui = REPORT_MODULE_UI[module];
   const router = useRouter();
-  const id = useWorkspaceSearchParams().get("id");
+  const searchParams = useWorkspaceSearchParams();
+  const id = searchParams.get("id");
+  // ?p.<field>=<value>[&pl.<field>=<display text>] fills that field's "ask when running" filter —
+  // e.g. the Work Orders list's Print → Order Form passes the right-clicked Work Order.
+  const prefill = searchParams.toString();
   const [catalog, setCatalog] = useState<ReportCatalog | null>(null);
   const [definition, setDefinition] = useState<ReportDefinition | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [params, setParams] = useState<ReportParams>({});
+  const [paramLabels, setParamLabels] = useState<Record<string, string>>({});
   const [result, setResult] = useState<ReportResult | null>(null);
   const [running, setRunning] = useState(false);
   const [exporting, setExporting] = useState<ReportExportFormat | null>(null);
 
   const hasPrompts = !!definition?.filters?.some((f) => f.prompt);
-  const fields = useMemo(() => {
-    const source = catalog?.sources.find((s) => s.key === definition?.dataSource);
-    return new Map((source?.fields ?? []).map((f) => [f.key, f]));
-  }, [catalog, definition]);
+  // Database table sources list no fields in the catalog: resolve the ones the prompt filters use.
+  const [tableFields, setTableFields] = useState<ReportSourceField[]>([]);
+  const source = catalog?.sources.find((s) => s.key === definition?.dataSource);
+  useEffect(() => {
+    if (!source?.dynamic || !definition) return;
+    const keys = definition.filters.filter((f) => f.prompt).map((f) => f.field);
+    if (!keys.length) return;
+    reportApi.resolveFields(definition.dataSource, keys).then((r) => setTableFields(r.fields)).catch(() => setTableFields([]));
+  }, [source?.dynamic, definition, reportApi]);
+  const fields = useMemo(
+    () => new Map((source?.dynamic ? tableFields : source?.fields ?? []).map((f) => [f.key, f])),
+    [source, tableFields],
+  );
 
   const run = useCallback(async (reportId: string, runParams: ReportParams) => {
     setRunning(true);
@@ -72,11 +87,26 @@ export function ReportViewScreen({ module }: { module: ReportModuleKey }) {
       setCatalog(cat);
       setDefinition(def);
       setLoadError(null);
-      if (!def.filters?.some((f) => f.prompt)) void run(def.id, {});
+      const query = new URLSearchParams(prefill);
+      const prompts = (def.filters ?? []).filter((f) => f.prompt);
+      const filled: ReportParams = {};
+      const labels: Record<string, string> = {};
+      for (const f of prompts) {
+        const value = query.get(`p.${f.field}`);
+        if (!value) continue;
+        filled[f.id] = { value };
+        const label = query.get(`pl.${f.field}`);
+        if (label) labels[f.id] = label;
+      }
+      setParams(filled);
+      setParamLabels(labels);
+      // Run straight away when nothing is asked, or when the opener filled the prompts it means (e.g.
+      // Print → Yarn Requirement fills Work Orders; a prompt left blank means "no restriction").
+      if (!prompts.length || Object.keys(filled).length) void run(def.id, filled);
     } catch (e: any) {
       setLoadError(e.status === 404 ? "This report no longer exists." : e.status === 403 ? "You don't have permission to view reports." : e.message || "Could not load the report");
     }
-  }, [id, run, reportApi]);
+  }, [id, run, reportApi, prefill]);
 
   useEffect(() => {
     void load();
@@ -84,6 +114,12 @@ export function ReportViewScreen({ module }: { module: ReportModuleKey }) {
     window.addEventListener(MENU_CHANGED_EVENT, load);
     return () => window.removeEventListener(MENU_CHANGED_EVENT, load);
   }, [load]);
+
+  // Document reports (e.g. the Order Form): the PDF export, opened for the browser's Print dialog.
+  const doPrint = () => {
+    if (!definition) return;
+    reportApi.printPdf(definition.id, params).catch((e: any) => toast.error(e.message || "Could not create the PDF"));
+  };
 
   const doExport = async (fmt: ReportExportFormat) => {
     if (!definition) return;
@@ -134,6 +170,11 @@ export function ReportViewScreen({ module }: { module: ReportModuleKey }) {
                 <Pencil className="mr-2 h-3.5 w-3.5" />Edit
               </Button>
             )}
+            {caps.export && source?.document && (
+              <Button variant="outline" size="sm" onClick={doPrint} disabled={!result?.sections?.length}>
+                <Printer className="mr-2 h-3.5 w-3.5" />Print
+              </Button>
+            )}
             {caps.export && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -160,7 +201,7 @@ export function ReportViewScreen({ module }: { module: ReportModuleKey }) {
 
       {hasPrompts && (
         <div className="rounded-md border p-4">
-          <PromptFiltersForm filters={definition.filters} fields={fields} params={params} onChange={setParams} />
+          <PromptFiltersForm filters={definition.filters} fields={fields} params={params} onChange={setParams} labels={paramLabels} />
           <p className="mt-3 text-xs text-muted-foreground">Leave a value blank to include everything for that filter.</p>
         </div>
       )}
@@ -168,12 +209,24 @@ export function ReportViewScreen({ module }: { module: ReportModuleKey }) {
       {result ? (
         <>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{result.rowCount.toLocaleString()} {result.rowCount === 1 ? "row" : "rows"}</span>
+            <span>{result.sections ? `${result.sections.length} ${result.sections.length === 1 ? "section" : "sections"}` : `${result.rowCount.toLocaleString()} ${result.rowCount === 1 ? "row" : "rows"}`}</span>
             <span>·</span>
             <span>Generated {format(parseISO(result.generatedAt), "dd MMM yyyy, HH:mm")}</span>
             {result.appliedFilters.map((f) => <Badge key={f} variant="secondary" className="font-normal">{f}</Badge>)}
           </div>
-          <ReportResultTable result={result} />
+          {result.notice ? (
+            <Empty className="rounded-md border py-10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><Play /></EmptyMedia>
+                <EmptyTitle>Nothing to show yet</EmptyTitle>
+                <EmptyDescription>{result.notice}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : result.sections ? (
+            <ReportSections sections={result.sections} />
+          ) : (
+            <ReportResultTable result={result} />
+          )}
         </>
       ) : running ? (
         <Skeleton className="h-64 w-full" />

@@ -153,7 +153,10 @@ export function ManageReportsScreen({ module }: { module: ReportModuleKey }) {
             <SelectTrigger className="h-9 w-full sm:w-60"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All data sources</SelectItem>
-              {(catalog?.sources ?? []).map((src) => <SelectItem key={src.key} value={src.key}>{src.label}</SelectItem>)}
+              {/* Only the sources reports actually use — Legacy ERP offers hundreds of database tables. */}
+              {(catalog?.sources ?? []).filter((src) => (reports ?? []).some((r) => r.dataSource === src.key)).map((src) => (
+                <SelectItem key={src.key} value={src.key}>{src.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

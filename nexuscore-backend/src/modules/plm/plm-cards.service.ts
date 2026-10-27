@@ -83,6 +83,9 @@ export class PlmCardsService {
         where,
         include: {
           moodBoard: { select: { id: true, title: true } },
+          // The selected Route's master code — the Work Order's Style lookup takes its Route Code
+          // from a row of this list (bomRouteCode, else this code).
+          bomRouteCard: { select: { id: true, name: true, code: true } },
           _count: { select: { sampleCards: true, productCards: true, plmOrders: true } },
         },
         orderBy: { createdAt: 'desc' },
@@ -129,9 +132,11 @@ export class PlmCardsService {
         productMerchandiser: true,
         designer: true,
         representative: true,
-        // BOM tab "Route" picker — name-only display, id stored on bomRouteCardId. Deliberately
-        // no RouteCardLine/process include here — Route Processes are a separate future task.
-        bomRouteCard: { select: { id: true, name: true } },
+        // BOM tab "Route" picker — name-only display, id stored on bomRouteCardId; its master
+        // `code` is the Route Code a blank bomRouteCode falls back to (Style Card BOM header, Work
+        // Order Style Info). Deliberately no RouteCardLine/process include here — Route Processes
+        // are a separate future task.
+        bomRouteCard: { select: { id: true, name: true, code: true } },
         washCare: true,
         details: { include: { designDetailType: true } },
         sampleCards: { select: { id: true, sampleNumber: true, title: true, status: true } },
@@ -157,7 +162,7 @@ export class PlmCardsService {
     return this.prisma.styleCard.update({
       where: { id },
       data: dto,
-      include: { moodBoard: { select: { id: true, title: true } }, bomRouteCard: { select: { id: true, name: true } } },
+      include: { moodBoard: { select: { id: true, title: true } }, bomRouteCard: { select: { id: true, name: true, code: true } } },
     });
   }
 

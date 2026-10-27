@@ -1434,7 +1434,9 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
       `}</style>
 
       {/* Toolbar — Search left, Manage Columns + Add Row right, same row, same placement as
-          Purchase Order's own grid toolbar (purchase-order-line-grid.tsx). */}
+          Purchase Order's own grid toolbar (purchase-order-line-grid.tsx). Manage Columns is a
+          per-user view preference (doesn't touch the receipt), so it stays available in view mode
+          (e.g. an Approved receipt) — only Add Row is edit-only. */}
       <div className={cn(HEADER_H, "flex items-center justify-between gap-3 border-b border-border px-3")}>
         <div className="relative w-full max-w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1446,16 +1448,16 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
             className="h-7 border-0 bg-muted/40 pl-8 text-[13px] shadow-none focus-visible:ring-1"
           />
         </div>
-        {!readOnly && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
-              <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
-            </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-7 px-2.5 text-[13px]" onClick={gridColumns.manageColumns.openModal}>
+            <ListOrdered className="h-3.5 w-3.5 mr-1" />Manage Columns
+          </Button>
+          {!readOnly && (
             <Button variant="ghost" size="sm" className="h-7 px-2.5 text-[13px]" onClick={addRow}>
               <Plus className="h-3.5 w-3.5 mr-1" />Add Row
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <Table role="grid" aria-label="Purchase receipt detail lines" className="table-fixed" style={{ width: totalTableWidth, minWidth: "100%" }}>
@@ -1482,13 +1484,13 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                 >
                   <span
                     title={col.label}
-                    draggable={!fixed && !readOnly}
+                    draggable={!fixed}
                     onDragStart={gridColumns.getHeaderDragProps(col.key).onDragStart}
                     onDragEnd={gridColumns.getHeaderDragProps(col.key).onDragEnd}
                     data-col={col.key}
                     className={cn(
                       HEADER_H, "flex w-full min-w-0 items-center justify-center truncate text-center", CELL_PAD,
-                      !fixed && !readOnly && "cursor-grab active:cursor-grabbing",
+                      !fixed && "cursor-grab active:cursor-grabbing",
                     )}
                   >
                     {col.label}

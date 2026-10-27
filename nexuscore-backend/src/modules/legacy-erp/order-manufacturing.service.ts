@@ -113,6 +113,34 @@ const toHex = (c?: string | null): string | null => {
   return null;
 };
 
+type LegacyProcess = { id: number; code: string | null; name: string | null };
+export type RouteProcessProblem = 'not-linked' | 'linked-process-missing';
+export interface ResolvedRouteProcess {
+  /** The Route Card line's own process (PLM ProcessCard) — what the Route Card screen shows. */
+  routeProcess: { id: string; code: string; name: string };
+  /** The legacy MA_Process it is recorded under (ProcessCard.legacyProcessId), or null. */
+  legacy: LegacyProcess | null;
+  problem: RouteProcessProblem | null;
+}
+
+/**
+ * A Route Card's active lines (already in the Route's order) resolved to the legacy MA_Process
+ * Order Manufacturing Entry records under — only through the explicit ProcessCard.legacyProcessId
+ * link (never by name or code: the two masters' codes differ). A line with no link, or a link to a
+ * deleted / missing MA_Process, is kept with its problem so it is reported, not dropped.
+ */
+export function resolveRouteProcesses(
+  lines: { processCardId: string; code: string; name: string; legacyProcessId: number | null }[],
+  legacyById: Map<number, LegacyProcess>,
+): ResolvedRouteProcess[] {
+  return lines.map((l) => {
+    const routeProcess = { id: l.processCardId, code: l.code, name: l.name };
+    if (l.legacyProcessId == null) return { routeProcess, legacy: null, problem: 'not-linked' as const };
+    const legacy = legacyById.get(Number(l.legacyProcessId)) ?? null;
+    return { routeProcess, legacy, problem: legacy ? null : ('linked-process-missing' as const) };
+  });
+}
+
 @Injectable()
 export class OrderManufacturingService {
   constructor(
@@ -143,6 +171,46 @@ export class OrderManufacturingService {
     `);
     return rows.map((r) => ({ id: Number(r.id), code: r.code, name: r.name }));
   }
+  /**
+   * The processes this Work Order may record, from its Route: Work Order (MA_WorkOrder.StyleCardId)
+   * → Style Card (bomRouteCardId) → Route Card → its active RouteCardLine rows, in the Route Card
+   * screen's own order (RouteCardLine.sequence) → each line's ProcessCard → its explicitly linked
+   * legacy MA_Process (ProcessCard.legacyProcessId; see resolveRouteProcesses).
+   *  - No Route: every MA_Process, unrestricted (unchanged behaviour).
+   *  - A Route: `routeProcesses` lists every one of its active processes; `processes` only those
+   *    with a live legacy process (the ones an entry can store); `diagnostics` says, per process, why
+   *    one is not available. Never falls back to every process — an empty Route allows nothing.
+   */
+  async allowedProcesses(workOrderId: number) {
+    const master: LegacyProcess[] = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "RecId" as id, "ProcessCode" as code, "ProcessName" as name FROM "MA_Process" WHERE COALESCE("IsDeleted", 0) = 0 ORDER BY "ProcessName", "RecId"`))
+      .map((r: any) => ({ id: Number(r.id), code: (r.code as string | null) ?? null, name: (r.name as string | null) ?? null }));
+    const wo = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT "StyleCardId" as "styleCardId" FROM "MA_WorkOrder" WHERE "RecId" = ${workOrderId} AND "IsDeleted" = 0`);
+    if (!wo[0]) throw new NotFoundException('Work order not found');
+    const styleCardId = wo[0].styleCardId as string | null;
+    const routes = styleCardId ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT rc."id", rc."code", rc."name" FROM "StyleCard" sc JOIN "RouteCard" rc ON rc."id" = sc."bomRouteCardId" WHERE sc."id" = ${styleCardId}`) : [];
+    const route = routes[0] ? { id: String(routes[0].id), code: String(routes[0].code), name: String(routes[0].name) } : null;
+    if (!route) return { restricted: false, reason: 'no-route' as const, route: null, processes: master, routeProcesses: [] as ResolvedRouteProcess[], diagnostics: [] as string[] };
+
+    const lines = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT pc."id" as "processCardId", pc."code", pc."name", pc."legacyProcessId"
+      FROM "RouteCardLine" l JOIN "ProcessCard" pc ON pc."id" = l."processId"
+      WHERE l."routeCardId" = ${route.id} AND l."isActive" = true
+      ORDER BY l."sequence" ASC`));
+    const routeProcesses = resolveRouteProcesses(lines.map((l: any) => ({
+      processCardId: String(l.processCardId), code: String(l.code), name: String(l.name), legacyProcessId: l.legacyProcessId == null ? null : Number(l.legacyProcessId),
+    })), new Map(master.map((m) => [m.id, m])));
+    const processes: LegacyProcess[] = [];
+    for (const r of routeProcesses) if (r.legacy && !processes.some((p) => p.id === r.legacy!.id)) processes.push(r.legacy);
+    const label = (p: { code: string | null; name: string | null }) => [p.code, p.name].filter(Boolean).join(' ');
+    const diagnostics = routeProcesses.filter((r) => r.problem).map((r) => r.problem === 'not-linked'
+      ? `Route process ${label(r.routeProcess)} has no linked legacy process (MA_Process) — it cannot be recorded here until its Process Card is linked to one.`
+      : `Route process ${label(r.routeProcess)} is linked to a legacy process that no longer exists — its Process Card needs a new link.`);
+    if (!routeProcesses.length) diagnostics.push(`Route ${label(route)} has no active processes.`);
+    return { restricted: true, reason: routeProcesses.length ? null : ('no-route-processes' as const), route, processes, routeProcesses, diagnostics };
+  }
+
   private async processInfo(processId: number | null) {
     if (processId == null) return null;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT "RecId" as id, "ProcessCode" as code, "ProcessName" as name FROM "MA_Process" WHERE "RecId" = ${processId} AND COALESCE("IsDeleted", 0) = 0`);
@@ -487,6 +555,14 @@ export class OrderManufacturingService {
     const existingById = new Map(existing.map((e) => [e.id!, e]));
 
     const incoming = (dto.rows || []).map((r) => this.normalizeRow(r, sizes));
+    // New entries only for a process the Work Order's Route allows (when it restricts any); entries
+    // already saved under a process since dropped from the Route can still be edited or deleted.
+    if (incoming.some((r) => r.id == null)) {
+      const allowed = await this.allowedProcesses(workOrderId);
+      if (allowed.restricted && !allowed.processes.some((p) => p.id === processId)) {
+        throw new BadRequestException(`Process "${[head.process.code, head.process.name].filter(Boolean).join(' ')}" is not on this Work Order's Route (${allowed.route?.name ?? ''}). New entries can only use the Route's processes that are linked to a legacy process${allowed.processes.length ? `: ${allowed.processes.map((p) => [p.code, p.name].filter(Boolean).join(' ')).join(', ')}` : ' — none is linked yet'}.`);
+      }
+    }
     for (const r of incoming) {
       assertAllNonNegative({ Weight: r.weight, ...Object.fromEntries(Object.entries(r.sizes).map(([s, q]) => [`Quantity (${s})`, q])) });
       if (r.qualityTypeId != null && !qualityMap.has(r.qualityTypeId)) throw new BadRequestException('Unknown Type (Quality Type).');

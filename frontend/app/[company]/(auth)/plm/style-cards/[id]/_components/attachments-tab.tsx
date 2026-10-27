@@ -77,6 +77,36 @@ export function AttachmentsTab({ styleCardId, sampleCardId, card, onReloadCard }
   const attachmentUrl = (a: any) => (String(a.url || "").startsWith("http") ? a.url : `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || "http://localhost:4000/api/v1"}/${String(a.url || "").replace(/^\//, "")}`);
   const isImage = (a: any) => String(a.type || "").startsWith("image/");
 
+  // Double-click opens the stored file through the same GET /upload/:id route the thumbnails use.
+  // That route already decides inline (images, PDF) vs attachment (everything else, with the original
+  // file name), so this only fetches it with the session and hands the result to the browser. The
+  // tab is opened synchronously, inside the double-click, so popup blockers allow it; it is closed
+  // again for downloads and errors.
+  const openAttachment = async (a: any) => {
+    if (!a.url) { toast.error("This attachment has no file to open"); return; }
+    const url = attachmentUrl(a);
+    const win = window.open("", "_blank");
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(url, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) throw new Error(res.status === 404 ? "File not found — it may have been removed" : res.status === 401 ? "Your session has expired, please sign in again" : `Could not open file (${res.status})`);
+      const blobUrl = URL.createObjectURL(await res.blob());
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      if (win && (res.headers.get("Content-Disposition") || "").startsWith("inline")) {
+        win.location.href = blobUrl;
+      } else {
+        win?.close();
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = a.name || "attachment";
+        link.click();
+      }
+    } catch (e: any) {
+      win?.close();
+      toast.error(e.message || "Could not open file");
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -104,7 +134,12 @@ export function AttachmentsTab({ styleCardId, sampleCardId, card, onReloadCard }
       ) : (
         <div className="grid grid-cols-4 gap-3">
           {attachments.map((a) => (
-            <div key={a.id} className="group relative rounded-md border overflow-hidden">
+            <div
+              key={a.id}
+              onDoubleClick={() => openAttachment(a)}
+              title="Double-click to open"
+              className="group relative rounded-md border overflow-hidden cursor-pointer select-none"
+            >
               {isImage(a) ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={attachmentUrl(a)} alt={a.name} className="h-24 w-full object-cover" />
@@ -115,7 +150,9 @@ export function AttachmentsTab({ styleCardId, sampleCardId, card, onReloadCard }
               )}
               <span className="block truncate bg-background/90 px-1.5 py-1 text-[11px]">{a.name}</span>
               <button
-                onClick={() => removeAttachment(a.id)}
+                onClick={(e) => { e.stopPropagation(); removeAttachment(a.id); }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                title="Remove"
                 className="absolute right-1 top-1 rounded-full bg-background/90 p-0.5 opacity-0 group-hover:opacity-100"
               >
                 <X className="h-3.5 w-3.5" />

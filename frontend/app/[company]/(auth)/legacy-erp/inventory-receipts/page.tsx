@@ -9,6 +9,7 @@ import { ScrollableTabsList } from "@/components/shared/scrollable-tabs-list";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
+import { inwardGatePassAction } from "@/components/legacy-erp/inward-gate-pass";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -32,7 +33,7 @@ import { consumePlanningPrefillLines } from "@/lib/legacy-erp/planning-prefill";
 import { PendingOrdersDialog } from "./_components/pending-orders-dialog";
 import { RelatedReceiptImportDialog } from "./_components/related-receipt-import-dialog";
 import { CustomizedFieldsTab } from "./_components/customized-fields-tab";
-import { getReceiptTypeConfig, SUBCONTRACT_RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
+import { getReceiptTypeConfig, isInwardReceiptType, SUBCONTRACT_RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
 import { useUniversalActions, type RelatedReceiptRef } from "@/hooks/legacy-erp/use-universal-actions";
 import { useUniversalActionShortcuts } from "@/hooks/legacy-erp/use-universal-action-shortcuts";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
@@ -483,6 +484,12 @@ export default function InventoryReceiptPage() {
     onDelete: receiptId ? () => setDeleteConfirmOpen(true) : undefined,
   });
   useUniversalActionShortcuts(universalActions);
+  // Right-click / ⋮ menus: on inward receipt types the universal actions' own (placeholder) Print
+  // becomes Print → Inward Gate Pass — Manage Reports' Inward Gate Pass report for this saved
+  // receipt — in its usual place; other receipt types keep the placeholder unchanged.
+  const menuActions = isInwardReceiptType(receiptType)
+    ? universalActions.map((a) => (a.key === "print" ? { ...inwardGatePassAction(router, { id: receiptId, receiptNo: form.receiptNo, receiptType }), separatorBefore: a.separatorBefore } : a))
+    : universalActions;
 
   const saveRequired = (label: string) => (
     <Empty className="py-10">
@@ -508,13 +515,19 @@ export default function InventoryReceiptPage() {
   // naming architecture safely supports it) — it's persisted/traceable via the form field and
   // grid/worklist columns instead.
   const receiptTypeSuffix = form.subcontractTypeLabel ? ` - ${form.subcontractTypeLabel}` : "";
-  const titleText = receiptId ? `${cfg.label} [${receiptType}-${cfg.label}] [${statusLabel}]${receiptTypeSuffix} - ${form.receiptNo}` : `New ${cfg.label}`;
-  // Puts this same titleText onto the actual Workspace tab (it already existed for the in-page
-  // header above) — a no-op outside the workspace tab stack, see use-workspace-tab-title.ts.
-  useWorkspaceTabTitle(titleText);
+  // The full legacy label goes on the Workspace tab only — built from live form state, so it
+  // re-applies when another receipt is loaded or its approval status changes. A no-op outside
+  // the workspace tab stack, see use-workspace-tab-title.ts.
+  const tabTitle = receiptId
+    ? `${cfg.label} [${receiptType}-${cfg.label}] [${statusLabel}]${receiptTypeSuffix} - ${form.receiptNo ?? ""}`
+    : `New ${cfg.label}`;
+  useWorkspaceTabTitle(tabTitle);
+  // The page heading is just the receipt type — status is the badge beside it, and the
+  // Receipt No / Subcontract Type have their own fields.
+  const titleText = receiptId ? cfg.label : `New ${cfg.label}`;
 
   return (
-    <RowContextMenu actions={universalActions}>
+    <RowContextMenu actions={menuActions}>
     <div className="mx-auto max-w-[1700px] space-y-4 p-4 lg:p-6">
       <ModuleHeader
         icon={Truck}
@@ -585,7 +598,7 @@ export default function InventoryReceiptPage() {
               </>
             )}
             <div className="hidden h-6 w-px bg-border sm:block" />
-            <RowActionsMenu actions={universalActions} />
+            <RowActionsMenu actions={menuActions} />
           </>
         }
       />

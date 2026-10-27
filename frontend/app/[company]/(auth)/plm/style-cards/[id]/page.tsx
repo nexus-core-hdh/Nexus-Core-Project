@@ -18,7 +18,8 @@ import { FormGrid } from "@/components/forms/form-grid";
 import { FormSwitchField as FieldCheck, FieldLabel, spanClass } from "@/components/forms/form-field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
-import { useWorkspaceRecordLabel } from "@/hooks/use-workspace-tab-title";
+import { useWorkspaceTabTitle } from "@/hooks/use-workspace-tab-title";
+import { styleCardTabTitle } from "@/lib/workspace/resolve-tab-title";
 
 import { GeneralTab } from "./_components/general-tab";
 import { CARD_TAB_ICONS } from "./_components/tab-icons";
@@ -60,7 +61,9 @@ export default function StyleCardDetailPage() {
   const [nameError, setNameError] = useState('');
   const [codePreview, setCodePreview] = useState('');
   const [activeTab, setActiveTab] = useState("General");
-  useWorkspaceRecordLabel(card?.title || card?.styleNumber || undefined);
+  // Tab label "Style Card | {Code} | {Name}" from the loaded record (refreshed by every setCard,
+  // e.g. after a save renames it); a new Style Card's tab resolves to "New Style Card" meanwhile.
+  useWorkspaceTabTitle(styleCardTabTitle(recordId ? card : null));
 
   const load = async (targetId: string) => {
     setLoading(true);

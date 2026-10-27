@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, ChevronDown, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw } from "lucide-react";
+import { ClipboardList, Save, Plus, Trash2, Search, ArrowDownToLine, ChevronDown, Image as ImageIcon, Ruler, Pencil, Copy, Hash, AlertTriangle, Boxes, FileText, RefreshCw, Printer } from "lucide-react";
+import { openWorkOrderOrderForm } from "@/components/legacy-erp/work-order-order-form";
+import { materialRequirementActions } from "@/components/legacy-erp/yarn-requirement-report";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
@@ -31,6 +33,7 @@ import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { navigateOrOpenTab, replaceWorkspaceUrl } from "@/lib/workspace/navigate";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
+import { effectiveRouteCode } from "@/lib/plm/route-code";
 import { CustomizedFieldsPanel, type CustomizedFieldsHandle } from "@/components/custom-fields/customized-fields-panel";
 
 import { DatePicker } from "@/components/ui/date-picker";
@@ -590,6 +593,8 @@ export default function WorkOrderPage() {
           linkedStyleCard = await plmApi.styleCards.get(f.styleCardId);
           setStyleRows((rs) => rs.map((r, i) => i === 0 ? {
             ...r, styleCardId: linkedStyleCard.id, styleCode: linkedStyleCard.styleNumber || r.styleCode, styleName: linkedStyleCard.title || r.styleName,
+            // Route Code is not stored on the Work Order — it is the linked Style Card's (as on Select / Refresh).
+            routeCode: effectiveRouteCode(linkedStyleCard) || r.routeCode,
           } : r));
           setStyleCardFull(linkedStyleCard);
         } catch {
@@ -710,7 +715,7 @@ export default function WorkOrderPage() {
         if (cancelled) return;
         setStyleRows((rs) => rs.map((r, i) => i === 0 ? {
           ...r, styleCardId: card.id, styleCode: card.styleNumber, styleName: card.title,
-          routeCode: card.bomRouteCode || "",
+          routeCode: effectiveRouteCode(card),
         } : r));
         setStyleCardFull(card);
         setHeader((h) => ({ ...h, styleCardId: card.id }));
@@ -758,7 +763,7 @@ export default function WorkOrderPage() {
     const card = row.raw;
     setStyleRows((rs) => rs.map((r) => r.id === lookupRowId ? {
       ...r, styleCardId: card.id, styleCode: card.styleNumber, styleName: card.title,
-      routeCode: card.bomRouteCode || "", customerOrderNo: r.customerOrderNo,
+      routeCode: effectiveRouteCode(card), customerOrderNo: r.customerOrderNo,
     } : r));
     // First Style row drives BOM-transfer/Wash&Care/Gallery/Sizes for this Work Order. It's also
     // the one that now persists to the real MA_WorkOrder.StyleCardId column on Save (header-level
@@ -816,7 +821,7 @@ export default function WorkOrderPage() {
     try {
       const card: any = await plmApi.styleCards.get(styleCardId);
       setStyleRows((rs) => rs.map((r, i) => i === 0 ? {
-        ...r, styleCode: card.styleNumber || r.styleCode, styleName: card.title || r.styleName, routeCode: card.bomRouteCode || r.routeCode,
+        ...r, styleCode: card.styleNumber || r.styleCode, styleName: card.title || r.styleName, routeCode: effectiveRouteCode(card) || r.routeCode,
       } : r));
       setStyleCardFull(card);
       toast.success("Style Card data refreshed");
@@ -1071,6 +1076,14 @@ export default function WorkOrderPage() {
         onSelect: () => openRequirements(r.type, r.label),
       })),
     },
+    // Print → Order Form: the Order Form report (Legacy ERP → Manage Reports) for this saved Work Order.
+    {
+      key: "print", label: "Print", icon: Printer, onSelect: () => {}, disabled: !woId, separatorBefore: true,
+      subActions: [{
+        key: "print-order-form", label: "Order Form", icon: FileText, disabled: !woId,
+        onSelect: () => { if (woId) void openWorkOrderOrderForm(router, { id: woId, workOrderNo: header.workOrderNo }); },
+      }, ...materialRequirementActions(router, woId ? [{ id: woId, workOrderNo: header.workOrderNo }] : [], !woId)],
+    },
   ];
 
   // Transfer buttons live in BomTab's own toolbar (via its toolbarExtra slot) — after a
@@ -1124,7 +1137,7 @@ export default function WorkOrderPage() {
 
   return (
     <div className="mx-auto max-w-[1900px] space-y-3 p-4">
-      {/* Right-click anywhere on the Work Order — Save/Edit/Copy Order/Edit Code/Select Size —
+      {/* Right-click anywhere on the Work Order — Save/Edit/Copy Order/Edit Code/Select Size/Print —
           same RowContextMenu/RowActionsMenu primitive purchase-orders/page.tsx's own universal
           action menu already uses, not a new context-menu system. */}
       <RowContextMenu actions={workOrderActions}>

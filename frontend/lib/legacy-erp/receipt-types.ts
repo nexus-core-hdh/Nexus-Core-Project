@@ -32,6 +32,12 @@ export const RECEIPT_TYPES: ReceiptTypeConfig[] = [
   { receiptType: 3, key: "return-wholesale-receipt", label: "Return Wholesale Receipt", numberPrefix: "RWS" },
 ];
 
+/** Inward receipt types — goods coming in — mirroring the backend's DIRECTION_CLASS 'IN'
+ *  (receipt-types.config.ts: Purchase Receipt, Outside Process Receive, Outside Process Sent Return).
+ *  Offers Print → Inward Gate Pass; the backend refuses any other type for that report. */
+export const INWARD_RECEIPT_TYPES: readonly number[] = [2, 11, 133];
+export const isInwardReceiptType = (receiptType: number) => INWARD_RECEIPT_TYPES.includes(Number(receiptType));
+
 export const getReceiptTypeConfig = (receiptType: number): ReceiptTypeConfig =>
   RECEIPT_TYPES.find((t) => t.receiptType === receiptType) ?? RECEIPT_TYPES[0];
 

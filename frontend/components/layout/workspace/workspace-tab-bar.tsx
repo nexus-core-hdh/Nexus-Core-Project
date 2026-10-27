@@ -45,6 +45,8 @@ const BULK_CLOSE_COPY: Record<BulkCloseKind, string> = {
 // targeted via a stylesheet rule, hence this one scoped class + <style> tag —
 // still no browser-visible scrollbar, on any engine, ever.
 const SCROLLER_CLASS = "workspace-tab-scroller";
+// The Inventory Receipt entry screen (any company slug) — not its -list worklist.
+const INVENTORY_RECEIPT_PATH = /\/legacy-erp\/inventory-receipts$/;
 
 // One arrow click scrolls by most (not all) of a viewport, so the tab that
 // was at the edge stays partially visible as a scan anchor — the same
@@ -279,6 +281,12 @@ export function WorkspaceTabBar() {
         >
           {tabs.map((tab, tabIndex) => {
             const { title, icon: Icon } = resolveWorkspaceTabTitle(tab, entryByHref);
+            // Inventory Receipt tabs carry the full legacy label ("{Type} [{n}-{Type}] [{Status}] -
+            // {Subcontract Type} - {Receipt No}") — let them grow wider than other tabs, and split off
+            // the trailing Receipt No so it never gets truncated: if space still runs out, the middle
+            // of the label is ellipsised instead.
+            const isReceiptTab = INVENTORY_RECEIPT_PATH.test(tab.href.split("?")[0]);
+            const tailAt = isReceiptTab ? title.lastIndexOf(" - ") : -1;
             const isActive = onTabRoute && tab.key === activeKey;
             const pinned = pinnedKeys.has(tab.key);
             const tabMenuActions: RowAction[] = [
@@ -305,6 +313,9 @@ export function WorkspaceTabBar() {
                   // the label's `title` tooltip / this aria-label always carry the complete title.
                   className={cn(
                     "group/tab relative flex h-8 min-w-[130px] max-w-[min(40rem,70vw)] shrink-0 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2.5 text-sm transition-colors duration-150",
+                    // Inventory Receipt tabs only: a wider cap for their longer label (cn's twMerge
+                    // lets this later max-w win over the default above).
+                    isReceiptTab && "max-w-[min(64rem,85vw)]",
                     // Active tab: raised surface plus a primary accent bar along its bottom edge, so it
                     // stands out at a glance in both light and dark themes.
                     isActive
@@ -313,7 +324,14 @@ export function WorkspaceTabBar() {
                   )}
                 >
                   {Icon && <Icon className={cn("h-3.5 w-3.5 shrink-0", isActive && "text-primary")} />}
-                  <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
+                  {tailAt > 0 ? (
+                    <span title={title} className="flex min-w-0 flex-1 whitespace-pre">
+                      <span className="min-w-0 truncate">{title.slice(0, tailAt)}</span>
+                      <span className="shrink-0">{title.slice(tailAt)}</span>
+                    </span>
+                  ) : (
+                    <span title={title} className="min-w-0 flex-1 truncate">{title}</span>
+                  )}
                   <button
                     type="button"
                     title={pinned ? "Unpin from My Menu" : "Pin to My Menu"}

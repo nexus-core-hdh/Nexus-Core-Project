@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { processOptions } from "@/lib/legacy-erp/process-options";
 import { API_BASE_URL } from "@/lib/api";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
@@ -106,7 +107,11 @@ export default function OrderManufacturingEntryPage() {
     : null;
 
   const pickOrder = (o: MasterOption) => { setWorkOrderId(Number(o.id)); load(Number(o.id), processId); };
-  const pickProcess = (o: MasterOption) => { setProcessId(Number(o.id)); load(workOrderId, Number(o.id)); };
+  const pickProcess = (o: MasterOption & { unavailable?: string }) => {
+    // A Route process with no legacy process: explain, keep the current selection.
+    if (o.unavailable) { toast.error(o.unavailable); return; }
+    setProcessId(Number(o.id)); load(workOrderId, Number(o.id));
+  };
 
   const openChild = (mode: "in" | "out" | "repair-sent" | "repair-received", title: string) => {
     if (!workOrderId || !ctx?.process || !selectedColor) return;
@@ -163,6 +168,11 @@ export default function OrderManufacturingEntryPage() {
                 displayValue={processLabel(ctx?.process ?? null)}
                 // Existing 'process' master (MA_Process). The field shows "Code Name", e.g. "12 Sewing".
                 fetchOptions={async (t) => {
+                  // With an Order chosen: every process of its Style Card's Route, in route order (one
+                  // not linked to a legacy process is listed but not selectable), or every process
+                  // when it has no Route — re-read on every open, so a changed Order / Route shows at
+                  // once. Without an Order: the Process master, as before.
+                  if (workOrderId) return processOptions(await legacyErpApi.orderManufacturing.processes(workOrderId), t);
                   const rows = (await legacyErpApi.lookupTable("process", t)) as any[];
                   return (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, code: r.code, name: [r.code, r.name].filter(Boolean).join(" ") }));
                 }}

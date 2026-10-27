@@ -64,6 +64,11 @@ import { TrimPlanningController } from './trim-planning.controller';
 import { TrimPlanningService } from './trim-planning.service';
 import { CuttingCardController } from './cutting-card.controller';
 import { CuttingCardService } from './cutting-card.service';
+import { WorkOrderOrderFormService } from './work-order-order-form.service';
+import { InventoryReceiptGatePassService } from './inventory-receipt-gate-pass.service';
+import { YarnRequirementReportService } from './yarn-requirement-report.service';
+import { DyeingFollowUpService } from './dyeing-follow-up.service';
+import { ProcessFollowUpService } from './process-follow-up.service';
 import { PackingListController } from './packing-list.controller';
 import { PackingListService } from './packing-list.service';
 import { OrderManufacturingController } from './order-manufacturing.controller';
@@ -171,6 +176,11 @@ import { AuditModule } from '../audit/audit.module';
     WorkOrderService,
     FabricYarnRequirementsService,
     CuttingCardService,
+    WorkOrderOrderFormService,
+    InventoryReceiptGatePassService,
+    YarnRequirementReportService,
+    DyeingFollowUpService,
+    ProcessFollowUpService,
     PackingListService,
     OrderManufacturingService,
     DeleteDependencyService,
@@ -190,6 +200,8 @@ import { AuditModule } from '../audit/audit.module';
   // the Dashboard's Recent Transactions card reads Purchase Orders / Financial Receipts / IM_Receipt
   // receipts (Purchase, Subcontract, ...) through their own list() (same filters, approval status
   // and paging) instead of a second query of those tables.
-  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService, InventoryReceiptService],
+  // WorkOrderOrderFormService / InventoryReceiptGatePassService build the Report Builder's Order Form
+  // and Inward Gate Pass document sources (reports/work-order-order-form.report.ts, inward-gate-pass.report.ts).
+  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService, InventoryReceiptService, WorkOrderOrderFormService, InventoryReceiptGatePassService, YarnRequirementReportService, DyeingFollowUpService, ProcessFollowUpService],
 })
 export class LegacyErpModule {}

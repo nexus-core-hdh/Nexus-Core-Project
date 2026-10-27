@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -11,6 +11,7 @@ import {
   ReportSource,
   PrismaReportSource,
   SqlReportSource,
+  DocumentReportSource,
   VALUELESS_OPERATORS,
   findReportSource,
 } from './report-sources';
@@ -19,11 +20,31 @@ import { standardLegacyReportInputs } from './standard-legacy-reports';
 import { standardDocketReportInputs } from './standard-docket-reports';
 import { ReportModuleConfig, reportModule, reportViewHref } from './report-modules';
 import { sqlCondition, sqlQuery } from './report-sql';
+import { LegacySchemaCatalog, isTableSource, tableSourceSection } from './legacy-schema-catalog';
+import { WorkOrderOrderFormService } from '../legacy-erp/work-order-order-form.service';
+import { InventoryReceiptGatePassService } from '../legacy-erp/inventory-receipt-gate-pass.service';
+import { GATE_PASS_RECEIPT_FIELD, gatePassSections } from './inward-gate-pass.report';
+import { RequirementMaterial, YarnRequirementReportService, YarnReportSelection } from '../legacy-erp/yarn-requirement-report.service';
+import { BOM_FALLBACK_FIELD, BOM_FALLBACK_YES, MATERIAL_REPORT_SOURCE_KEYS, YARN_REPORT_ORDER_NO_FIELD, YARN_REPORT_WORK_ORDERS_FIELD, yarnReportSections } from './yarn-requirement.report';
+import type { ReportDocumentInfo } from './document-sections';
+import { DyeingFollowUpSelection, DyeingFollowUpService } from '../legacy-erp/dyeing-follow-up.service';
+import { DYEING_FIELDS, DYEING_SOURCE_KEY, dyeingSections } from './dyeing-follow-up.report';
+import { ProcessFollowUpSelection, ProcessFollowUpService } from '../legacy-erp/process-follow-up.service';
+import {
+  PROCESS_FOLLOW_UP_EMPTY_FIELD, PROCESS_FOLLOW_UP_EMPTY_YES, PROCESS_FOLLOW_UP_FIELDS, PROCESS_FOLLOW_UP_SOURCE_KEY, processFollowUpSections,
+} from './process-follow-up.report';
+import { ORDER_FORM_WORK_ORDER_FIELD, ReportSection, SectionColumnConfig, cleanSectionColumns, orderFormSections } from './work-order-order-form.report';
 
 /** Most rows a report run or export returns; anything beyond is reported as truncated. */
 export const MAX_REPORT_ROWS = 10000;
 const PREVIEW_ROWS = 50;
 const MAX_SORTS = 3;
+/** Most columns a report on a database table source may select. */
+const MAX_TABLE_COLUMNS = 60;
+/** Longest a single report query may run before the database cancels it. */
+const SQL_STATEMENT_TIMEOUT_MS = 20000;
+/** Modules whose reports may use any eligible database table (`table:<name>`) as their data source. */
+const TABLE_SOURCE_MODULES = new Set(['legacy-erp']);
 
 const MENU_PARENT_TITLE = 'Reports';
 const STANDARD_REPORTS: Record<string, () => ReportDefinitionInput[]> = {
@@ -36,6 +57,8 @@ export interface ReportColumn {
   field: string;
   label?: string;
   total?: boolean;
+  /** Document sections: the section's own columns (order, labels, widths, alignment, decimals, visibility). */
+  sectionColumns?: SectionColumnConfig[];
 }
 export interface ReportFilter {
   id: string;
@@ -77,6 +100,13 @@ export interface ReportResult {
   truncated: boolean;
   appliedFilters: string[];
   generatedAt: string;
+  /** Document sources: the printed sections (columns/rows above stay empty). */
+  sections?: ReportSection[];
+  /** Document sources: how the document prints around its sections (title, company address). */
+  document?: ReportDocumentInfo;
+  /** Why there is nothing to show yet (e.g. a document report without its record chosen). Not
+   *  "message": the global response interceptor lifts a payload's "message" into its envelope. */
+  notice?: string | null;
 }
 
 /** Nullability along a field's path, read from the Prisma schema itself. */
@@ -98,36 +128,115 @@ function pathInfo(model: string, path: string[]) {
 const OPERATOR_LABEL: Record<string, string> = {
   equals: 'is', notEquals: 'is not', contains: 'contains', notContains: 'does not contain', startsWith: 'starts with',
   endsWith: 'ends with', isEmpty: 'is empty', isNotEmpty: 'is not empty', eq: '=', neq: '≠', gt: '>', gte: '≥',
-  lt: '<', lte: '≤', between: 'between', on: 'on', before: 'before', after: 'after', isTrue: 'is Yes', isFalse: 'is No',
+  lt: '<', lte: '≤', between: 'between', in: 'is one of', on: 'on', before: 'before', after: 'after', isTrue: 'is Yes', isFalse: 'is No',
 };
+
+/** Document filter values by field: the operator and the (fixed or answered) value. */
+type DocumentFilterValues = Record<string, { operator: string; value: string }>;
+/** "12, 15,20" → [12, 15, 20]; undefined unless it is a non-empty list of positive integers (≤ 500). */
+function parseIdList(value: string | undefined): number[] | undefined {
+  const ids = String(value ?? '').split(',').map((v) => v.trim()).filter(Boolean).map(Number);
+  return ids.length && ids.length <= 500 && ids.every((n) => Number.isInteger(n) && n > 0) ? [...new Set(ids)] : undefined;
+}
 
 @Injectable()
 export class ReportBuilderService {
+  /** Database tables discovered from the catalog (Legacy ERP "table:" sources). */
+  private readonly schema: LegacySchemaCatalog;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-  ) {}
+    // Builds the Work Order Order Form document source. Optional so the standard-report seed
+    // scripts, which only validate definitions, can construct this service without Nest.
+    @Optional() private readonly orderForm?: WorkOrderOrderFormService,
+    // Builds the Inward Gate Pass document source (same reason it is optional).
+    @Optional() private readonly gatePass?: InventoryReceiptGatePassService,
+    // Builds the Yarn Requirement document source (same reason it is optional).
+    @Optional() private readonly yarnReport?: YarnRequirementReportService,
+    // Builds the Dyeing Follow-up document source (same reason it is optional).
+    @Optional() private readonly dyeing?: DyeingFollowUpService,
+    // Builds the Process Follow-up document source (same reason it is optional).
+    @Optional() private readonly processFollowUp?: ProcessFollowUpService,
+  ) {
+    this.schema = new LegacySchemaCatalog(prisma);
+  }
 
   // ── Catalog & capabilities ──────────────────────────────────────────────────
 
   /** Data sources for a module, plus what the current user may do with reports. */
   async catalog(module: string, user: ReportUser) {
+    const curated = REPORT_SOURCES.filter((s) => s.module === module).map((s) => ({
+      key: s.key,
+      label: s.label,
+      description: s.description,
+      group: 'Ready-made Sources',
+      dynamic: false,
+      document: s.kind === 'document',
+      fields: s.fields.map((f) => ({
+        key: f.key, label: f.label, group: f.group, type: f.type,
+        filterable: !f.countOf && !f.compute && !f.section,
+        sortable: !f.compute && s.kind !== 'document',
+        ...(f.operators ? { operators: f.operators } : {}),
+        ...(f.lookup ? { lookup: f.lookup } : {}),
+        ...(f.options ? { options: f.options } : {}),
+        ...(f.section ? { section: true } : {}),
+        ...(f.sectionColumns ? { sectionColumns: f.sectionColumns } : {}),
+      })),
+    }));
+    // Table sources carry no fields here (hundreds of tables): the designer loads them per source.
+    let tables: { key: string; label: string; description: string; group: string; table: string; dynamic: true; fields: [] }[] = [];
+    let tableSourcesError: string | null = null;
+    if (TABLE_SOURCE_MODULES.has(module)) {
+      try {
+        tables = (await this.schema.sources()).map((t) => ({ ...t, dynamic: true as const, fields: [] as [] }));
+      } catch {
+        tableSourcesError = 'Database tables could not be read right now; only the ready-made sources are listed.';
+      }
+    }
     return {
       module: { key: reportModule(module).key, label: reportModule(module).label },
-      sources: REPORT_SOURCES.filter((s) => s.module === module).map((s) => ({
-        key: s.key,
-        label: s.label,
-        description: s.description,
-        fields: s.fields.map((f) => ({
-          key: f.key, label: f.label, group: f.group, type: f.type,
-          filterable: !f.countOf && !f.compute,
-          sortable: !f.compute,
-        })),
-      })),
+      sources: [...curated, ...tables],
+      tableSourcesError,
       operators: OPERATORS,
       capabilities: await this.capabilities(module, user),
       maxRows: MAX_REPORT_ROWS,
     };
+  }
+
+  /**
+   * Fields of a database table source: with `keys`, the metadata of exactly those fields (and the
+   * ones that no longer resolve); otherwise the field groups at `path` (see LegacySchemaCatalog.describe).
+   */
+  async sourceFields(module: string, input: { source?: string; path?: string; keys?: string[] }) {
+    const source = String(input?.source ?? '');
+    if (!TABLE_SOURCE_MODULES.has(module) || !isTableSource(source)) throw new BadRequestException('Choose a database table data source');
+    if (Array.isArray(input.keys)) return this.schema.resolveFields(source, input.keys.slice(0, 500));
+    return this.schema.describe(source, input.path ? String(input.path) : '');
+  }
+
+  /** Checks a definition exactly as saving would, and lists the relationship paths it joins. */
+  async validate(module: string, input: ReportDefinitionInput) {
+    const clean = await this.normalize(module, { ...input, name: input?.name?.trim() || 'Untitled' });
+    const keys = [...clean.columns.map((c) => c.field), ...clean.filters.map((f) => f.field), ...clean.sorting.map((s) => s.field)];
+    return {
+      valid: true,
+      definition: clean,
+      joinPaths: isTableSource(clean.dataSource) ? await this.schema.joinPaths(clean.dataSource, keys) : [],
+    };
+  }
+
+  /**
+   * The source a definition runs on. Ready-made sources are declared in code; a "table:" source is
+   * built from the database catalog for exactly the fields the definition uses (throws a readable
+   * error if any of them no longer exists).
+   */
+  private async resolveSource(module: string, key: string, fieldKeys: string[]): Promise<ReportSource | undefined> {
+    if (isTableSource(key)) {
+      if (!TABLE_SOURCE_MODULES.has(module)) return undefined;
+      return this.schema.buildSource(key, fieldKeys);
+    }
+    return findReportSource(key, module);
   }
 
   private async capabilities(module: string, user: ReportUser) {
@@ -166,7 +275,7 @@ export class ReportBuilderService {
   }
 
   async create(module: string, input: ReportDefinitionInput, user: ReportUser) {
-    const clean = this.normalize(module, input);
+    const clean = await this.normalize(module, input);
     await this.assertUniqueName(module, clean.name, user.companyId);
     const created = await this.prisma.$transaction(async (tx) => {
       const def = await tx.reportDefinition.create({
@@ -208,7 +317,7 @@ export class ReportBuilderService {
   async update(module: string, id: string, input: ReportDefinitionInput, user: ReportUser) {
     const existing = await this.get(module, id, user);
     const mod = reportModule(module);
-    const clean = this.normalize(existing.module, input);
+    const clean = await this.normalize(existing.module, input);
     if (clean.name.toLowerCase() !== existing.name.toLowerCase()) {
       await this.assertUniqueName(existing.module, clean.name, user.companyId, id);
     }
@@ -255,7 +364,7 @@ export class ReportBuilderService {
     return { id };
   }
 
-  private toData(clean: ReturnType<ReportBuilderService['normalize']>) {
+  private toData(clean: Awaited<ReturnType<ReportBuilderService['normalize']>>) {
     const json = (v: unknown) => v as Prisma.InputJsonValue;
     return {
       name: clean.name,
@@ -305,7 +414,9 @@ export class ReportBuilderService {
   private async ensureSourceSection(tx: Prisma.TransactionClient, mod: ReportModuleConfig, dataSource: string, companyId: string): Promise<string> {
     await this.ensureMenuParent(tx, mod);
     const MENU_GROUP = mod.menuGroup;
-    const section = findReportSource(dataSource)?.menuSection ?? { title: 'Other Reports', icon: 'BarChart3' };
+    const section = isTableSource(dataSource)
+      ? tableSourceSection(dataSource)
+      : findReportSource(dataSource)?.menuSection ?? { title: 'Other Reports', icon: 'BarChart3' };
     const title = section.title;
     const existing = await tx.menuItem.findFirst({ where: { group: MENU_GROUP, parentId: null, title, companyId } });
     if (existing) return existing.id;
@@ -340,31 +451,49 @@ export class ReportBuilderService {
 
   // ── Validation ──────────────────────────────────────────────────────────────
 
-  private normalize(module: string, input: ReportDefinitionInput) {
-    const source = findReportSource(String(input?.dataSource ?? ''), module);
+  private async normalize(module: string, input: ReportDefinitionInput) {
+    const keys = [input?.columns, input?.filters, input?.sorting].flatMap((list) => (Array.isArray(list) ? list.map((x) => String(x?.field)) : []));
+    const source = await this.resolveSource(module, String(input?.dataSource ?? ''), keys);
     if (!source) throw new BadRequestException('Choose a valid data source');
+    if (isTableSource(source.key) && Array.isArray(input.columns) && input.columns.length > MAX_TABLE_COLUMNS) {
+      throw new BadRequestException(`A report can have at most ${MAX_TABLE_COLUMNS} columns`);
+    }
+    const isDocument = source.kind === 'document';
     const fieldByKey = new Map(source.fields.map((f) => [f.key, f]));
 
     const name = String(input.name ?? '').trim();
     if (!name) throw new BadRequestException('Report name is required');
     if (name.length > 120) throw new BadRequestException('Report name must be at most 120 characters');
 
-    if (!Array.isArray(input.columns) || input.columns.length === 0) throw new BadRequestException('Select at least one column');
+    if (!Array.isArray(input.columns) || input.columns.length === 0) throw new BadRequestException(isDocument ? 'Select at least one section' : 'Select at least one column');
     const seen = new Set<string>();
     const columns: ReportColumn[] = [];
     for (const c of input.columns) {
       const field = fieldByKey.get(String(c?.field));
       if (!field) throw new BadRequestException(`Unknown column "${c?.field}"`);
+      // A document's columns are its sections; its other fields only choose the record.
+      if (isDocument && !field.section) throw new BadRequestException(`"${field.label}" is not a section of this document`);
       if (seen.has(field.key)) continue;
       seen.add(field.key);
       const label = String(c.label ?? '').trim().slice(0, 100);
-      columns.push({ field: field.key, ...(label && label !== field.label ? { label } : {}), ...(c.total && field.type === 'number' ? { total: true } : {}) });
+      let sectionColumns: SectionColumnConfig[] | undefined;
+      if (field.sectionColumns) {
+        try {
+          sectionColumns = cleanSectionColumns(field.sectionColumns, (c as ReportColumn).sectionColumns);
+        } catch (e) {
+          throw new BadRequestException(`${field.label}: ${(e as Error).message}`);
+        }
+      }
+      columns.push({
+        field: field.key, ...(label && label !== field.label ? { label } : {}), ...(c.total && field.type === 'number' ? { total: true } : {}),
+        ...(sectionColumns ? { sectionColumns } : {}),
+      });
     }
 
     const filters: ReportFilter[] = (Array.isArray(input.filters) ? input.filters : []).map((f) => {
       const field = fieldByKey.get(String(f?.field));
-      if (!field || field.countOf || field.compute) throw new BadRequestException(`Field "${field?.label ?? f?.field}" cannot be filtered`);
-      if (!OPERATORS[field.type].includes(f.operator)) throw new BadRequestException(`Invalid condition for "${field.label}"`);
+      if (!field || field.countOf || field.compute || field.section) throw new BadRequestException(`Field "${field?.label ?? f?.field}" cannot be filtered`);
+      if (!(field.operators ?? OPERATORS[field.type]).includes(f.operator)) throw new BadRequestException(`Invalid condition for "${field.label}"`);
       const needsValue = !VALUELESS_OPERATORS.has(f.operator);
       const prompt = needsValue && !!f.prompt;
       const value = needsValue && !prompt ? String(f.value ?? '').trim() : '';
@@ -372,7 +501,10 @@ export class ReportBuilderService {
       if (needsValue && !prompt && (!value || (f.operator === 'between' && !value2))) {
         throw new BadRequestException(`Enter a value for the "${field.label}" filter, or set it to ask when the report runs`);
       }
-      if (!prompt) this.condition(source, field, f.operator, value, value2); // validates the value's format
+      if (!prompt && !isDocument) this.condition(source, field, f.operator, value, value2); // validates the value's format
+      if (!prompt && isDocument && f.operator === 'eq' && !Number.isFinite(Number(value))) throw new BadRequestException(`"${field.label}" needs a number`);
+      if (!prompt && isDocument && f.operator === 'in' && !parseIdList(value)) throw new BadRequestException(`"${field.label}" needs one or more records`);
+      if (!prompt && field.options && !field.options.some((o) => o.value === value)) throw new BadRequestException(`Choose one of the options for "${field.label}"`);
       return {
         id: typeof f.id === 'string' && f.id ? f.id : randomUUID(),
         field: field.key,
@@ -383,7 +515,8 @@ export class ReportBuilderService {
       };
     });
 
-    const sorting: ReportSort[] = (Array.isArray(input.sorting) ? input.sorting : []).slice(0, MAX_SORTS).map((s) => {
+    // A document prints one record — there is nothing to sort.
+    const sorting: ReportSort[] = (Array.isArray(input.sorting) && !isDocument ? input.sorting : []).slice(0, MAX_SORTS).map((s) => {
       const field = fieldByKey.get(String(s?.field));
       if (!field) throw new BadRequestException(`Unknown sort field "${s?.field}"`);
       if (field.compute) throw new BadRequestException(`"${field.label}" is calculated and cannot be used for sorting`);
@@ -402,9 +535,9 @@ export class ReportBuilderService {
   }
 
   /** Runs an unsaved definition — the builder's live preview. */
-  preview(module: string, input: ReportDefinitionInput, params: ReportParams, user: ReportUser) {
+  async preview(module: string, input: ReportDefinitionInput, params: ReportParams, user: ReportUser) {
     // A preview must not require a name or values for prompt filters yet.
-    const clean = this.normalize(module, { ...input, name: input?.name?.trim() || 'Preview' });
+    const clean = await this.normalize(module, { ...input, name: input?.name?.trim() || 'Preview' });
     return this.execute(module, clean, params, user, PREVIEW_ROWS, null);
   }
 
@@ -416,8 +549,10 @@ export class ReportBuilderService {
     limit: number,
     id: string | null,
   ): Promise<ReportResult> {
-    const source = findReportSource(def.dataSource, module);
+    const usedKeys = [...(def.columns ?? []), ...(def.filters ?? []), ...(def.sorting ?? [])].map((x) => String(x?.field));
+    const source = await this.resolveSource(module, def.dataSource, usedKeys);
     if (!source) throw new BadRequestException('This report uses a data source that no longer exists');
+    if (source.kind === 'document') return this.executeDocument(source, def, params, user, id);
     const fieldByKey = new Map(source.fields.map((f) => [f.key, f]));
     const columns = def.columns
       .map((c) => ({ col: c, field: fieldByKey.get(c.field) }))
@@ -455,9 +590,15 @@ export class ReportBuilderService {
       totals[field.key] = rows.reduce((sum, row) => sum + (typeof row[field.key] === 'number' ? (row[field.key] as number) : 0), 0);
     }
 
+    // Two default labels alike (e.g. "Code" of two linked tables): add where each comes from.
+    const labelCount = new Map<string, number>();
+    for (const { col, field } of columns) if (!col.label) labelCount.set(field.label, (labelCount.get(field.label) ?? 0) + 1);
+    const columnLabel = (col: ReportColumn, field: ReportField) =>
+      col.label || ((labelCount.get(field.label) ?? 0) > 1 ? `${field.label} (${field.group.split(' › ').pop()})` : field.label);
+
     return {
       report: { id, name: def.name, description: def.description ?? null, source: source.label },
-      columns: columns.map(({ col, field }) => ({ key: field.key, label: col.label || field.label, type: field.type, total: !!col.total && field.type === 'number' })),
+      columns: columns.map(({ col, field }) => ({ key: field.key, label: columnLabel(col, field), type: field.type, total: !!col.total && field.type === 'number' })),
       rows,
       totals,
       rowCount: rows.length,
@@ -467,8 +608,214 @@ export class ReportBuilderService {
     };
   }
 
+  /**
+   * A document source: the record chosen by its filter (fixed or asked at run time), printed as the
+   * sections the report's columns list. Without a record chosen yet, an empty result with a message.
+   */
+  private async executeDocument(
+    source: DocumentReportSource,
+    def: { name: string; description?: string | null; columns: ReportColumn[]; filters: ReportFilter[] },
+    params: ReportParams,
+    user: ReportUser,
+    id: string | null,
+  ): Promise<ReportResult> {
+    const builder = this.documentBuilders()[source.builder];
+    if (!builder) throw new BadRequestException('This document report is not available here');
+    // The values of the builder's filter fields (fixed, or answered when the report runs).
+    const values: DocumentFilterValues = {};
+    for (const f of def.filters ?? []) {
+      if (!builder.fields.includes(f.field) && !builder.options?.includes(f.field)) continue;
+      const raw = String((f.prompt ? params?.[f.id]?.value : f.value) ?? '').trim();
+      if (raw) values[f.field] = { operator: f.operator, value: raw };
+    }
+    const base = {
+      report: { id, name: def.name, description: def.description ?? null, source: source.label },
+      columns: [], rows: [], totals: {}, rowCount: 0, truncated: false, generatedAt: new Date().toISOString(),
+    };
+    // Only the record-choosing fields count here — an option (e.g. the BOM fallback) chooses nothing.
+    if (!builder.allowEmpty && !builder.fields.some((f) => values[f])) return { ...base, appliedFilters: [], sections: [], notice: `Choose the ${builder.noun} to print.` };
+    const built = await builder.build(values, user, def.columns ?? []);
+    return {
+      ...base,
+      rowCount: built.sections.reduce((t, s) => t + s.rows.length, 0),
+      appliedFilters: [built.applied],
+      sections: built.sections,
+      document: built.document,
+      notice: null,
+    };
+  }
+
+  /**
+   * The document sources' builders, by DocumentReportSource.builder: the filter field that names
+   * the record, what it is called in messages, and how its sections are built from the record's
+   * data (via the same services its own screens use).
+   */
+  private documentBuilders(): Record<string, {
+    fields: string[]; noun: string;
+    /** Filter fields that set how the document is built, not which records it prints. */
+    options?: string[];
+    /** Runs with no filter given (every filter optional — e.g. the Dyeing Follow-up prints all lines). */
+    allowEmpty?: boolean;
+    build: (values: DocumentFilterValues, user: ReportUser, columns: ReportColumn[]) => Promise<{ sections: ReportSection[]; applied: string; document: ReportDocumentInfo }>;
+  }> {
+    /** One record's id from a single-record filter ("=" a number); a missing one is reported by name. */
+    const recordId = async <T>(values: DocumentFilterValues, field: string, noun: string, load: (id: number) => Promise<T>): Promise<T> => {
+      const id = Number(values[field]?.value);
+      if (!Number.isInteger(id) || id <= 0) throw new BadRequestException(`Choose a valid ${noun}`);
+      return load(id).catch((e) => {
+        if (e instanceof NotFoundException) throw new BadRequestException(`${noun} ${id} was not found (or has been deleted)`);
+        throw e;
+      });
+    };
+    return {
+      'work-order-order-form': {
+        fields: [ORDER_FORM_WORK_ORDER_FIELD], noun: 'Work Order',
+        build: async (values, user, columns) => {
+          if (!this.orderForm) throw new BadRequestException('This document report is not available here');
+          const data = await recordId(values, ORDER_FORM_WORK_ORDER_FIELD, 'Work Order', (id) => this.orderForm!.build(id, user.companyId));
+          return {
+            sections: orderFormSections(data, columns),
+            applied: `Work Order ${data.header.workOrderNo}`,
+            document: { showTitle: true, companyAddress: null },
+          };
+        },
+      },
+      'inward-gate-pass': {
+        fields: [GATE_PASS_RECEIPT_FIELD], noun: 'Receipt',
+        build: async (values, user, columns) => {
+          if (!this.gatePass) throw new BadRequestException('This document report is not available here');
+          const data = await recordId(values, GATE_PASS_RECEIPT_FIELD, 'Receipt', (id) => this.gatePass!.build(id, user.companyId));
+          return {
+            sections: gatePassSections(data, columns),
+            applied: `Receipt ${data.header.receiptNo}`,
+            // The printed form has no title line (removed on request); its header carries the company.
+            document: { showTitle: false, companyAddress: data.company.address, showSectionTitles: false },
+          };
+        },
+      },
+      [DYEING_SOURCE_KEY]: {
+        fields: Object.values(DYEING_FIELDS), noun: 'receipts', allowEmpty: true,
+        build: async (values: DocumentFilterValues, _user: ReportUser, columns: ReportColumn[]) => {
+          if (!this.dyeing) throw new BadRequestException('This document report is not available here');
+          const sel: DyeingFollowUpSelection = {};
+          const applied: string[] = [];
+          const ids = async (field: string, label: string, table: 'account' | 'item' | 'workOrder') => {
+            const v = values[field];
+            if (!v) return undefined;
+            const list = parseIdList(v.value);
+            if (!list) throw new BadRequestException(`Choose valid values for "${label}"`);
+            applied.push(`${label}: ${(await this.dyeing!.names(table, list)).join(', ')}`);
+            return list;
+          };
+          const match = (field: string, label: string) => {
+            const v = values[field];
+            if (!v) return undefined;
+            const operator = (['equals', 'contains', 'startsWith'].includes(v.operator) ? v.operator : 'contains') as 'equals' | 'contains' | 'startsWith';
+            applied.push(`${label} ${OPERATOR_LABEL[operator]} ${v.value}`);
+            return { operator, value: v.value };
+          };
+          const from = values[DYEING_FIELDS.dateFrom]?.value;
+          const to = values[DYEING_FIELDS.dateTo]?.value;
+          if (from) { sel.dateFrom = from.slice(0, 10); applied.push(`Date From ${sel.dateFrom}`); }
+          if (to) { sel.dateTo = to.slice(0, 10); applied.push(`Date To ${sel.dateTo}`); }
+          sel.subcontractorIds = await ids(DYEING_FIELDS.subcontractors, 'Party Name', 'account');
+          sel.partyNo = match(DYEING_FIELDS.partyNo, 'Party No');
+          sel.receiptNo = match(DYEING_FIELDS.receiptNo, 'Receipt No');
+          sel.documentNo = match(DYEING_FIELDS.documentNo, 'Document No');
+          sel.inventoryIds = await ids(DYEING_FIELDS.inventory, 'Inventory Code', 'item');
+          sel.inventoryName = match(DYEING_FIELDS.inventoryName, 'Inventory Name');
+          sel.process = match(DYEING_FIELDS.process, 'Process');
+          sel.workOrderIds = await ids(DYEING_FIELDS.workOrders, 'Work Order No', 'workOrder');
+          const data = await this.dyeing.build(sel);
+          return {
+            sections: dyeingSections(data, columns),
+            applied: applied.join(' · ') || 'All subcontract receipts',
+            document: { showTitle: true, companyAddress: null, showSectionTitles: false },
+          };
+        },
+      },
+      [PROCESS_FOLLOW_UP_SOURCE_KEY]: {
+        fields: Object.values(PROCESS_FOLLOW_UP_FIELDS), noun: 'Work Orders', allowEmpty: true, options: [PROCESS_FOLLOW_UP_EMPTY_FIELD],
+        build: async (values: DocumentFilterValues, _user: ReportUser, columns: ReportColumn[]) => {
+          if (!this.processFollowUp) throw new BadRequestException('This document report is not available here');
+          const svc = this.processFollowUp;
+          const F = PROCESS_FOLLOW_UP_FIELDS;
+          const sel: ProcessFollowUpSelection = {};
+          const applied: string[] = [];
+          const ids = async (field: string, label: string, table: 'account' | 'workOrder' | 'process') => {
+            const v = values[field];
+            if (!v) return undefined;
+            const list = parseIdList(v.value);
+            if (!list) throw new BadRequestException(`Choose valid values for "${label}"`);
+            applied.push(`${label}: ${(await svc.names(table, list)).join(', ')}`);
+            return list;
+          };
+          const match = (field: string, label: string) => {
+            const v = values[field];
+            if (!v) return undefined;
+            const operator = (['equals', 'contains', 'startsWith'].includes(v.operator) ? v.operator : 'contains') as 'equals' | 'contains' | 'startsWith';
+            applied.push(`${label} ${OPERATOR_LABEL[operator]} ${v.value}`);
+            return { operator, value: v.value };
+          };
+          const from = values[F.dateFrom]?.value;
+          const to = values[F.dateTo]?.value;
+          if (from) { sel.dateFrom = from.slice(0, 10); applied.push(`Date From ${sel.dateFrom}`); }
+          if (to) { sel.dateTo = to.slice(0, 10); applied.push(`Date To ${sel.dateTo}`); }
+          sel.customerIds = await ids(F.customers, 'Customer', 'account');
+          sel.workOrderIds = await ids(F.workOrders, 'Work Order No', 'workOrder');
+          sel.orderNo = match(F.orderNo, 'Order No');
+          sel.styleCode = match(F.styleCode, 'Style Code');
+          sel.styleName = match(F.styleName, 'Style Name');
+          sel.color = match(F.color, 'Color');
+          sel.processIds = await ids(F.processes, 'Process', 'process');
+          sel.factoryIds = await ids(F.factories, 'Factory', 'account');
+          // Unanswered or "No" = as on the legacy report: only processes that have entries.
+          const includeEmptyProcesses = values[PROCESS_FOLLOW_UP_EMPTY_FIELD]?.value === PROCESS_FOLLOW_UP_EMPTY_YES;
+          const data = await svc.build(sel, { includeEmptyProcesses });
+          if (includeEmptyProcesses) applied.push('Processes without entries shown');
+          return {
+            sections: processFollowUpSections(data, columns),
+            applied: applied.join(' · ') || 'All Work Orders',
+            // 20 columns, as on the legacy report: compact print so every one fits the page.
+            document: { showTitle: true, companyAddress: null, showSectionTitles: false, compactTables: true },
+          };
+        },
+      },
+      // Yarn / Fabric / Trim cumulative requirement — one builder, the material from the source.
+      ...Object.fromEntries((Object.keys(MATERIAL_REPORT_SOURCE_KEYS) as RequirementMaterial[]).map((material) => [MATERIAL_REPORT_SOURCE_KEYS[material], {
+        fields: [YARN_REPORT_WORK_ORDERS_FIELD, YARN_REPORT_ORDER_NO_FIELD], noun: 'Work Orders', options: [BOM_FALLBACK_FIELD],
+        build: async (values: DocumentFilterValues, _user: ReportUser, columns: ReportColumn[]) => {
+          if (!this.yarnReport) throw new BadRequestException('This document report is not available here');
+          const sel: YarnReportSelection = {};
+          const ids = values[YARN_REPORT_WORK_ORDERS_FIELD];
+          if (ids) {
+            const list = parseIdList(ids.value);
+            if (!list) throw new BadRequestException('Choose valid Work Orders');
+            sel.workOrderIds = list;
+          }
+          const no = values[YARN_REPORT_ORDER_NO_FIELD];
+          if (no) sel.workOrderNo = { operator: no.operator as 'startsWith' | 'contains' | 'equals', value: no.value };
+          // BOM fallback only when explicitly chosen — unanswered or "No" never calculates.
+          const calculateFromBom = values[BOM_FALLBACK_FIELD]?.value === BOM_FALLBACK_YES;
+          const data = await this.yarnReport.build(sel, material, { calculateFromBom });
+          const applied = [
+            ...(ids ? [`Work Orders: ${data.workOrders.map((w) => w.header.workOrderNo).join(', ') || 'none found'}`] : []),
+            ...(no ? [`Order No ${OPERATOR_LABEL[no.operator] ?? no.operator} ${no.value}`] : []),
+            calculateFromBom ? 'Missing requirements calculated from BOM' : 'Saved requirements only',
+          ];
+          return {
+            sections: yarnReportSections(data, columns),
+            applied: applied.join(' · '),
+            document: { showTitle: true, companyAddress: null },
+          };
+        },
+      }])),
+    };
+  }
+
   /** A filter condition in the source's own query language (Prisma where-object or SQL). */
   private condition(source: ReportSource, field: ReportField, operator: string, value: string, value2: string): unknown {
+    if (source.kind === 'document') throw new BadRequestException('Document reports have no query conditions'); // handled by executeDocument
     return source.kind === 'sql'
       ? sqlCondition(field, operator, value, value2)
       : this.toCondition(source.model, field, operator, value, value2);
@@ -491,7 +838,16 @@ export class ReportBuilderService {
     source: SqlReportSource, fields: ReportField[], conditions: Prisma.Sql[],
     sorts: { field: ReportField; direction: 'asc' | 'desc' }[], take: number,
   ): Promise<Record<string, unknown>[]> {
-    const records = await this.prisma.$queryRaw<Record<string, unknown>[]>(sqlQuery(source, fields, conditions, sorts, take));
+    // A time limit per query, so an expensive report cannot tie up the database.
+    const records = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
+      return tx.$queryRaw<Record<string, unknown>[]>(sqlQuery(source, fields, conditions, sorts, take));
+    }, { timeout: SQL_STATEMENT_TIMEOUT_MS + 5000 }).catch((e: any) => {
+      if (/statement timeout|canceling statement/i.test(String(e?.message))) {
+        throw new BadRequestException('The report took too long to run. Add filters or remove some linked-table columns and try again.');
+      }
+      throw e;
+    });
     return records.map((r) => Object.fromEntries(fields.map((f, i) => [f.key, this.normalizeValue(r[`c${i}`])])));
   }
 

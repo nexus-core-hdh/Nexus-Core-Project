@@ -49,8 +49,13 @@ export function NavDesktop({ isCollapsed, accounts, currentFolder = "INBOX", onF
   const loadCounts = React.useCallback(async () => {
     try {
       const counts = await mailApi.getMailCounts();
+      // Merge onto the current (zero) counts: the API may return a partial object or `{}`
+      // (the /mail/counts stub does), which must not wipe out `folders`/`labels`.
       if (counts && typeof counts === 'object') {
-        setMailCounts(counts);
+        setMailCounts((prev) => ({
+          folders: { ...prev.folders, ...((counts as any).folders || {}) },
+          labels: { ...prev.labels, ...((counts as any).labels || {}) },
+        }));
       }
     } catch (error: any) {
       console.error("Failed to load mail counts:", error);

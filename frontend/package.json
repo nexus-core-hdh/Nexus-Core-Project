@@ -21,6 +21,8 @@
     "test:cutting-modes": "node --test scripts/cutting-modes.test.mjs",
     "test:company-actions": "node --test scripts/company-actions.test.mjs",
     "test:clipboard": "node --test scripts/clipboard.test.mjs",
+    "test:route-code": "node --test scripts/route-code.test.mjs",
+    "test:om-process-route": "node --test scripts/om-process-route.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "prebuild": "node scripts/check-production-env.mjs && node scripts/generate-workspace-registry.mjs && node -e \"require('fs').rmSync('.next/dev/types',{recursive:true,force:true})\"",
     "build": "next build",

@@ -82,6 +82,20 @@ function createReportBuilderController(mod: ReportModuleConfig): Type<unknown> {
       return this.reports.preview(mod.key, definition, params ?? {}, u);
     }
 
+    @Post('source-fields')
+    @Permissions(VIEW)
+    @ApiOperation({ summary: 'Fields of a database table source: groups at a relationship path, or metadata of given field keys' })
+    sourceFields(@Body() body: { source?: string; path?: string; keys?: string[] }) {
+      return this.reports.sourceFields(mod.key, body ?? {});
+    }
+
+    @Post('validate')
+    @Permissions(VIEW)
+    @ApiOperation({ summary: 'Validate a report definition as saving would, and list the relationship paths it joins' })
+    validate(@Body('definition') definition: ReportDefinitionInput) {
+      return this.reports.validate(mod.key, definition);
+    }
+
     @Post('reports/:id/export')
     @Permissions(EXPORT)
     @ApiOperation({ summary: `Export a saved ${mod.label} report as CSV, Excel or PDF` })

@@ -1117,6 +1117,16 @@ export const legacyErpApi = {
   // Order Manufacturing Entry (order-manufacturing.service.ts) — main read model, the shared
   // Manufacturing IN/OUT/Sent (Repair)/Received (Repair) child-screen entries, and Price Contract.
   orderManufacturing: {
+    // The Process dropdown's options: the Work Order's Route processes (restricted), or every process.
+    processes: (workOrderId: number): Promise<{
+      restricted: boolean; reason: 'no-route' | 'no-route-processes' | null;
+      route: { id: string; code: string; name: string } | null;
+      /** Selectable legacy processes (MA_Process) — the Route's linked ones, or every one without a Route. */
+      processes: { id: number; code: string | null; name: string | null }[];
+      /** Every active process of the Route, in route order, with its linked legacy process or the problem. */
+      routeProcesses: { routeProcess: { id: string; code: string; name: string }; legacy: { id: number; code: string | null; name: string | null } | null; problem: 'not-linked' | 'linked-process-missing' | null }[];
+      diagnostics: string[];
+    }> => api.get(`/legacy-erp/order-manufacturing/processes?workOrderId=${workOrderId}`),
     context: (workOrderId: number, processId?: number | null) =>
       api.get(`/legacy-erp/order-manufacturing/context?workOrderId=${workOrderId}${processId ? `&processId=${processId}` : ""}`),
     getEntries: (workOrderId: number, processId: number, color: string, mode: string) =>
@@ -1362,17 +1372,64 @@ export const bpmApi = {
 // ─── Report Builder (user-defined reports) ─────────────────────────────────────
 
 export type ReportFieldType = 'string' | 'number' | 'date' | 'boolean';
-export interface ReportSourceField { key: string; label: string; group: string; type: ReportFieldType; filterable: boolean; sortable: boolean }
-export interface ReportSourceInfo { key: string; label: string; description: string; fields: ReportSourceField[] }
+/** A document section's column type: a field type, or 'image' — a stored picture (e.g. Style Picture). */
+export type ReportSectionColumnType = ReportFieldType | 'image';
+export interface ReportSourceField {
+  key: string; label: string; group: string; type: ReportFieldType; filterable: boolean; sortable: boolean;
+  /** Database table sources only: the physical table / column the field reads, and how it is linked. */
+  table?: string; column?: string | null; relation?: 'base' | 'to-one' | 'to-many';
+  /** Only these filter operators (default: every operator of the field's type). */
+  operators?: string[];
+  /** The filter value is picked with this Legacy ERP master lookup (its id is the value). */
+  lookup?: { masterKey: string; lookupPath?: string; multiple?: boolean };
+  /** The filter value is one of these choices (shown as a list); the first is the default when left blank. */
+  options?: { value: string; label: string }[];
+  /** Document sources: the field is a printed section, chosen as a column. */
+  section?: boolean;
+  /** A section's own printable columns (configured per report as ReportColumnDef.sectionColumns). */
+  sectionColumns?: ReportSectionColumnDef[];
+}
+/** A column a document section can print. labelEditable false = its heading comes from the data. */
+export interface ReportSectionColumnDef { key: string; label: string; type: ReportSectionColumnType; labelEditable?: boolean; defaultVisible: boolean }
+/** One section column's saved settings. width = characters (blank = automatic). */
+export interface ReportSectionColumnConfig { key: string; label?: string; width?: number; align?: 'left' | 'center' | 'right'; decimals?: number; hidden?: boolean }
+export interface ReportSourceInfo {
+  key: string; label: string; description: string; fields: ReportSourceField[];
+  /** Picker heading ("Ready-made Sources", "Inventory (IM)", ...). */
+  group?: string;
+  /** A database table discovered from the schema: its fields are loaded with sourceFields(). */
+  dynamic?: boolean;
+  table?: string;
+  /** One record printed as several sections (e.g. the Work Order Order Form). */
+  document?: boolean;
+}
+/** A table's fields in a database table source, with the FK link that leads to it. */
+export interface ReportFieldGroup {
+  /** Relationship path of the group ('' = the base table); pass to sourceFields() to load further. */
+  id: string;
+  label: string;
+  table: string;
+  relation: 'base' | 'to-one' | 'to-many';
+  depth: number;
+  via: string | null;
+  fields: ReportSourceField[];
+  expandable: boolean;
+}
 export interface ReportCapabilities { view: boolean; create: boolean; update: boolean; delete: boolean; export: boolean }
 export interface ReportCatalog {
   module: { key: string; label: string };
   sources: ReportSourceInfo[];
+  /** Set when the database tables could not be listed (ready-made sources still are). */
+  tableSourcesError?: string | null;
   operators: Record<ReportFieldType, string[]>;
   capabilities: ReportCapabilities;
   maxRows: number;
 }
-export interface ReportColumnDef { field: string; label?: string; total?: boolean }
+export interface ReportColumnDef {
+  field: string; label?: string; total?: boolean;
+  /** Document sections: the section's own columns, in order (absent = the section's default columns). */
+  sectionColumns?: ReportSectionColumnConfig[];
+}
 export interface ReportFilterDef { id: string; field: string; operator: string; value?: string; value2?: string; prompt?: boolean }
 export interface ReportSortDef { field: string; direction: 'asc' | 'desc' }
 export interface ReportDefinitionInput {
@@ -1400,6 +1457,29 @@ export interface ReportResult {
   truncated: boolean;
   appliedFilters: string[];
   generatedAt: string;
+  /** Document reports: the printed sections. */
+  sections?: ReportSection[];
+  /** Why there is nothing to show yet (e.g. no Work Order chosen). */
+  notice?: string | null;
+  /** Document reports: how the document prints around its sections. */
+  document?: { showTitle: boolean; companyAddress: string | null; showSectionTitles?: boolean };
+}
+/** One section of a document report: label / value fields (with picture and stamps) or a table. */
+export interface ReportSection {
+  key: string;
+  title: string;
+  /** 'signatures' = blank signing lines, one per row label. */
+  /** 'inline' = label: value pairs on one line (a Work Order's header above its table). */
+  layout: 'fields' | 'table' | 'signatures' | 'inline';
+  columns: { key: string; label: string; type: ReportSectionColumnType; total: boolean; width?: number | null; align?: 'left' | 'center' | 'right' | null; decimals?: number | null }[];
+  rows: Record<string, any>[];
+  footerRows: Record<string, any>[];
+  note: string | null;
+  emptyText: string;
+  /** 'fields' layout: whether the record has a picture panel (Order Form header). */
+  picture?: boolean;
+  imageUrl?: string | null;
+  badges?: string[];
 }
 export type ReportExportFormat = 'csv' | 'xlsx' | 'pdf';
 
@@ -1430,6 +1510,31 @@ async function downloadFile(path: string, body: unknown, fallbackName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Opens a POST file response (a report's PDF export) in a new browser tab, to print or save it.
+ *  The tab is opened before the request (still inside the click), so pop-up blockers allow it. */
+async function openFileInTab(path: string, body: unknown) {
+  const tab = window.open('', '_blank');
+  if (!tab) throw new Error('The print tab was blocked — allow pop-ups for this site and try again.');
+  tab.document.write('<!doctype html><title>Preparing…</title><p style="font:14px Arial;padding:16px">Preparing the PDF…</p>');
+  const token = localStorage.getItem('auth_token');
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Could not create the PDF' }));
+      throw new Error(err.message || 'Could not create the PDF');
+    }
+    tab.location.href = URL.createObjectURL(await res.blob());
+  } catch (e) {
+    tab.close();
+    throw e;
+  }
+}
+
 /** Modules with user-defined reports, and where their report screens live. */
 export type ReportModuleKey = 'plm' | 'legacy-erp' | 'docket';
 export const REPORT_MODULE_UI: Record<ReportModuleKey, { label: string; basePath: string }> = {
@@ -1437,6 +1542,21 @@ export const REPORT_MODULE_UI: Record<ReportModuleKey, { label: string; basePath
   'legacy-erp': { label: 'Legacy ERP', basePath: '/legacy-erp/reports' },
   docket: { label: 'Docket Management', basePath: '/dockets/reports' },
 };
+
+/** The Work Order Order Form document source (backend reports/work-order-order-form.report.ts):
+ *  its data source key and the filter field that takes the Work Order's id. */
+export const ORDER_FORM_REPORT = { dataSource: 'work-order-order-form', workOrderField: 'workOrderId' } as const;
+/** The Inward Gate Pass document source (backend reports/inward-gate-pass.report.ts). */
+export const GATE_PASS_REPORT = { dataSource: 'inward-gate-pass', receiptField: 'receiptId' } as const;
+/** The Yarn Requirement document source (backend reports/yarn-requirement.report.ts). */
+export const YARN_REPORT = { dataSource: 'yarn-requirement-report', workOrdersField: 'workOrderIds' } as const;
+/** The Yarn / Fabric / Trim cumulative requirement sources (same filters and layout), with their standard report names. */
+export const MATERIAL_REPORTS = {
+  yarn: { dataSource: 'yarn-requirement-report', reportName: 'Yarn Requirement Report', label: 'Yarn Requirement' },
+  fabric: { dataSource: 'fabric-requirement-report', reportName: 'Fabric Cumulative Report', label: 'Fabric Requirement' },
+  trim: { dataSource: 'trim-requirement-report', reportName: 'Trim Cumulative Report', label: 'Trim Requirement' },
+} as const;
+export type MaterialReportKey = keyof typeof MATERIAL_REPORTS;
 
 /** Report Builder API of one module (/report-builder/<module>/...). */
 export function reportBuilderApiFor(module: ReportModuleKey) {
@@ -1451,8 +1571,19 @@ export function reportBuilderApiFor(module: ReportModuleKey) {
     run: (id: string, params: ReportParams = {}) => api.post<ReportResult>(`${base}/reports/${id}/run`, { params }),
     preview: (definition: ReportDefinitionInput, params: ReportParams = {}) =>
       api.post<ReportResult>(`${base}/preview`, { definition, params }),
+    /** Field groups of a database table source at a relationship path ('' = base table and its direct links). */
+    sourceFields: (source: string, path = '') =>
+      api.post<{ groups: ReportFieldGroup[] }>(`${base}/source-fields`, { source, path }),
+    /** Metadata of given field keys of a database table source, and the keys that no longer exist. */
+    resolveFields: (source: string, keys: string[]) =>
+      api.post<{ fields: ReportSourceField[]; missing: { key: string; reason: string }[] }>(`${base}/source-fields`, { source, keys }),
+    validate: (definition: ReportDefinitionInput) =>
+      api.post<{ valid: boolean; joinPaths: string[] }>(`${base}/validate`, { definition }),
     export: (id: string, format: ReportExportFormat, params: ReportParams = {}) =>
       downloadFile(`${base}/reports/${id}/export`, { format, params }, `report.${format}`),
+    /** The report's PDF export, opened in a new tab for the browser's Print / Save as PDF. */
+    printPdf: (id: string, params: ReportParams = {}) =>
+      openFileInTab(`${base}/reports/${id}/export`, { format: 'pdf', params }),
   };
 }
 export type ReportBuilderApi = ReturnType<typeof reportBuilderApiFor>;

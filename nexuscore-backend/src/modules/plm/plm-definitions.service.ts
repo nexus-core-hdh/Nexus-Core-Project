@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // Translates a Prisma unique-constraint violation (P2002) into a clean, user-facing message
@@ -172,10 +173,28 @@ export class PlmDefinitionsService {
   private normalizeProcessCardDto(dto: any) {
     return dto.departmentId === '' ? { ...dto, departmentId: null } : dto;
   }
+  /**
+   * The Legacy Process link (ProcessCard.legacyProcessId → MA_Process.RecId) — the process Order
+   * Manufacturing Entry records this Route process under. Blank clears it; otherwise it must be an
+   * existing, not deleted MA_Process not already linked to another Process Card (one-to-one, so a
+   * legacy process never stands for two route processes). Left untouched when not sent.
+   */
+  private async checkLegacyProcessLink(dto: any, selfId?: string) {
+    if (!('legacyProcessId' in dto)) return dto;
+    const raw = dto.legacyProcessId;
+    if (raw === '' || raw === null || raw === undefined) return { ...dto, legacyProcessId: null };
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) throw new BadRequestException('Choose a valid Legacy Process.');
+    const found = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`SELECT "RecId" as id FROM "MA_Process" WHERE "RecId" = ${id} AND COALESCE("IsDeleted", 0) = 0`);
+    if (!found.length) throw new BadRequestException('The chosen Legacy Process does not exist (or has been deleted).');
+    const taken = await this.prisma.processCard.findFirst({ where: { legacyProcessId: id, ...(selfId ? { NOT: { id: selfId } } : {}) }, select: { code: true, name: true } });
+    if (taken) throw new BadRequestException(`That Legacy Process is already linked to Process ${taken.code} ${taken.name}.`);
+    return { ...dto, legacyProcessId: id };
+  }
   async createProcessCard(dto: any) {
     try {
       return await this.prisma.processCard.create({
-        data: this.normalizeProcessCardDto(dto),
+        data: await this.checkLegacyProcessLink(this.normalizeProcessCardDto(dto)),
         include: { department: { select: { id: true, name: true } } },
       });
     } catch (e: any) {
@@ -193,7 +212,7 @@ export class PlmDefinitionsService {
   async updateProcessCard(id: string, dto: any) {
     await this.getProcessCard(id);
     try {
-      return await this.prisma.processCard.update({ where: { id }, data: this.normalizeProcessCardDto(dto) });
+      return await this.prisma.processCard.update({ where: { id }, data: await this.checkLegacyProcessLink(this.normalizeProcessCardDto(dto), id) });
     } catch (e: any) {
       rethrowFriendlyUniqueError(e, 'A process already exists with this code.');
     }

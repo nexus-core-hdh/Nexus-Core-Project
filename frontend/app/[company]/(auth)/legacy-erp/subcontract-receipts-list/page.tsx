@@ -7,6 +7,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { RowContextMenu, RowActionsMenu, type RowAction } from "@/components/legacy-erp/row-actions";
+import { inwardGatePassAction } from "@/components/legacy-erp/inward-gate-pass";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -195,6 +196,8 @@ export default function SubcontractReceiptsListPage() {
   const getRowActions = (row: any): RowAction[] => [
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row) },
     { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row) },
+    // Print → Inward Gate Pass — only on inward rows (Outside Process Receive / Sent Return).
+    inwardGatePassAction(router, { id: row.id, receiptNo: row.receiptNo, receiptType: row.receiptType }),
     { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.receiptNo, receiptType: row.receiptType }), destructive: true, separatorBefore: true },
   ];
 

@@ -12,9 +12,11 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { legacyErpApi } from "@/lib/nexuscore-api";
+import { openWorkOrderOrderForm } from "@/components/legacy-erp/work-order-order-form";
+import { materialRequirementActions } from "@/components/legacy-erp/yarn-requirement-report";
 import { toast } from "sonner";
 import { navigateOrOpenTab } from "@/lib/workspace/navigate";
-import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight, MousePointerClick, XCircle } from "lucide-react";
+import { Search, RefreshCw, Plus, Eye, Pencil, Trash2, ClipboardList, SearchX, ChevronRight, MousePointerClick, XCircle, Printer, FileText } from "lucide-react";
 import { WorklistTable, type WorklistTableColumn } from "@/components/legacy-erp/worklist-table";
 import { workOrderListColumns } from "@/components/legacy-erp/work-orders-lookup";
 import { formatCell } from "@/lib/legacy-erp/humanize";
@@ -123,8 +125,24 @@ export default function WorkOrderListPage() {
   const getRowActions = (row: any): RowAction[] => [
     { key: "view", label: "View", icon: Eye, onSelect: () => view(row.id) },
     { key: "update", label: "Update", icon: Pencil, onSelect: () => update(row.id) },
+    {
+      key: "print", label: "Print", icon: Printer, onSelect: () => {}, separatorBefore: true,
+      subActions: [
+        { key: "order-form", label: "Order Form", icon: FileText, onSelect: () => printOrderForm(row) },
+        // Yarn / Fabric / Trim Requirement: the selected Work Orders when this row is one of several selected, else just this row.
+        ...materialRequirementActions(router, yarnTargets(row)),
+      ],
+    },
     { key: "delete", label: "Delete", icon: Trash2, onSelect: () => setDeleteTarget({ id: row.id, code: row.workOrderNo }), destructive: true, separatorBefore: true },
   ];
+
+  // Print → Order Form: the Order Form report (Manage Reports) for the right-clicked Work Order.
+  const printOrderForm = (row: any) => openWorkOrderOrderForm(router, { id: row.id, workOrderNo: row.workOrderNo });
+  // Print → Yarn / Fabric / Trim Requirement cover the current selection when the right-clicked row is part of it.
+  const yarnTargets = (row: any) => {
+    const picked = selectedIds.has(row.id) && selectedIds.size > 1 ? sortedRows.filter((r: any) => selectedIds.has(r.id)) : [row];
+    return picked.map((r: any) => ({ id: r.id, workOrderNo: r.workOrderNo }));
+  };
 
   const view = (id: number) => navigateOrOpenTab(router, `/legacy-erp/work-orders?id=${id}&mode=view`);
   const update = (id: number) => navigateOrOpenTab(router, `/legacy-erp/work-orders?id=${id}&mode=edit`);

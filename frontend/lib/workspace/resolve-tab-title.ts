@@ -74,6 +74,14 @@ function findOwningEntry(key: string, entryByHref: Map<string, ScreenEntry>): Sc
   return best;
 }
 
+/** A Style Card tab's explicit title (via useWorkspaceTabTitle): "Style Card | {Code} | {Name}",
+ *  skipping whichever is blank. `undefined` until a record with a Code or Name is loaded, so the
+ *  tab keeps its automatic "New Style Card"/"Style Card" label meanwhile. */
+export function styleCardTabTitle(card: { styleNumber?: string | null; title?: string | null } | null | undefined): string | undefined {
+  const parts = [card?.styleNumber, card?.title].map((v) => (v ?? "").trim()).filter(Boolean);
+  return parts.length ? ["Style Card", ...parts].join(" | ") : undefined;
+}
+
 /**
  * Central screen-title resolution for the Workspace tab bar — the single
  * place a tab's route/query gets turned into the human-readable label shown

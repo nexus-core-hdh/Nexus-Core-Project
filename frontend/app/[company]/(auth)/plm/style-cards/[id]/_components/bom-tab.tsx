@@ -27,6 +27,7 @@ import { UdfGridCell } from "@/components/custom-fields/udf-grid-cell";
 import { useDecimalParameters } from "@/hooks/use-decimal-parameters";
 import { ManageColumnsModal } from "@/components/shared/manage-columns-modal";
 import { normalizeNonNegative } from "@/lib/numeric-guards";
+import { effectiveRouteCode, routeCodeAfterRouteChange } from "@/lib/plm/route-code";
 
 import { OptionSelect } from "@/components/ui/option-select";
 export type BomRow = {
@@ -1590,7 +1591,15 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
             <Label className="text-xs text-muted-foreground">Route</Label>
             <OptionSelect
               value={header.bomRouteCardId}
-              onChange={(e) => setHeader((h) => ({ ...h, bomRouteCardId: e.target.value }))}
+              // Route Code follows the chosen Route's master code (unless typed in by hand) — see route-code.ts.
+              onChange={(e) => {
+                const next = e.target.value;
+                setHeader((h) => ({
+                  ...h,
+                  bomRouteCardId: next,
+                  bomRouteCode: routeCodeAfterRouteChange(h.bomRouteCode, routeCards.find((rc) => rc.id === h.bomRouteCardId), routeCards.find((rc) => rc.id === next)),
+                }));
+              }}
               className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               <option value="">—</option>
@@ -1599,7 +1608,11 @@ export function BomTab({ styleCardId, sampleCardId, card, onReloadCard, workOrde
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Route Code</Label>
-            <Input className="h-8 text-sm" value={header.bomRouteCode} onChange={(e) => setHeader((h) => ({ ...h, bomRouteCode: e.target.value }))} />
+            {/* Blank = the selected Route's master code applies (shown as the placeholder, used by Work Orders). */}
+            <Input
+              className="h-8 text-sm" value={header.bomRouteCode} onChange={(e) => setHeader((h) => ({ ...h, bomRouteCode: e.target.value }))}
+              placeholder={effectiveRouteCode({ bomRouteCard: routeCards.find((rc) => rc.id === header.bomRouteCardId) }) || undefined}
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Embroidery Route</Label>

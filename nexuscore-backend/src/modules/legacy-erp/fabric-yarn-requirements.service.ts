@@ -1157,6 +1157,7 @@ export class FabricYarnRequirementsService {
       id: string; inventoryId: any; inventoryCode: any; inventoryName: any; quantity: number;
       colorCardId: string | null; colorCode: string | null; colorName: string | null;
       requirementUnit: { id: number; code: string; name: string } | null;
+      variant1: string | null; productionColor: string | null; consumptionUnitCode: string | null; process: string | null;
     }>();
     for (const r of rows) {
       const key = this.requirementGroupKey(r as any);
@@ -1172,9 +1173,107 @@ export class FabricYarnRequirementsService {
         // GRM-resolved quantities into one SUM — there is structurally no way for two different
         // resolved units to reach the same group key.
         requirementUnit: (r as any).requirementUnit ?? null,
+        // Display-only (the Order Form report's "Variants" column); never part of the grouping.
+        variant1: (r as any).variant1 ?? null,
+        productionColor: (r as any).garmentColor ?? null,
+        // The unit the quantity stays in when the item has no Requirement Calculation unit (Fabric/Trim).
+        consumptionUnitCode: (r as any).consumptionUnit?.code ?? null,
+        process: (r as any).process ?? null,
       });
     }
     return Array.from(byGroup.values());
+  }
+
+  // ── Order Form report (work-order-order-form.service.ts) — one Requirement Detail section ─────
+  // The rows last SAVED for this tab (MA_Requirement) when the tab has any, else the live
+  // color-wise calculation the Requirements screen shows before its first Save — `source` says
+  // which. Saved quantities are printed as stored, never recomputed. Read-only.
+  async getRequirementDetail(workOrderId: number, tab: RequirementTab) {
+    const requirementType = REQUIREMENT_TYPE[tab];
+    const [savedRaw, live] = await Promise.all([
+      this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT "RecId" as id, "InventoryId" as "inventoryId", "ColorCardId" as "colorCardId", "Quantity" as quantity, "RequirementGroup" as "requirementGroup"
+        FROM "MA_Requirement"
+        WHERE "RequirementType" = ${requirementType}
+          AND "WorkOrderItemId" IN (SELECT "RecId" FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId})
+          AND "IsDeleted" = 0
+        ORDER BY "RecId"
+      `),
+      this.getColorWiseRequirements(workOrderId, tab),
+    ]);
+    const saved = sanitizeRawRow(savedRaw) as any[];
+    // Same identity save() persisted into RequirementGroup (requirementGroupKey, sliced to 100).
+    const liveByGroup = new Map(live.map((r) => [String(r.id).slice(0, 100), r]));
+    const base = saved.length
+      ? saved.map((s) => {
+        const match = s.requirementGroup ? liveByGroup.get(String(s.requirementGroup)) : undefined;
+        return {
+          inventoryId: s.inventoryId != null ? Number(s.inventoryId) : null,
+          colorCardId: s.colorCardId ?? null,
+          quantity: Number(s.quantity) || 0,
+          variant1: match?.variant1 ?? null,
+          productionColor: match?.productionColor ?? null,
+          consumptionUnitCode: match?.consumptionUnitCode ?? null,
+          process: match?.process ?? null,
+        };
+      })
+      : live.map((r) => ({
+        inventoryId: r.inventoryId != null ? Number(r.inventoryId) : null,
+        colorCardId: r.colorCardId,
+        quantity: r.quantity,
+        variant1: r.variant1,
+        productionColor: r.productionColor,
+        consumptionUnitCode: r.consumptionUnitCode,
+        process: r.process,
+      }));
+
+    const ids = base.map((r) => r.inventoryId);
+    const [names, colors, { units }, unitFactors] = await Promise.all([
+      this.resolveInventoryNames(ids),
+      this.resolveColorCards(base.map((r) => r.colorCardId)),
+      this.resolveRequirementUnits(ids),
+      this.resolveConsumptionUnitFactors(ids),
+    ]);
+    // Yarn: the Knitting / Dye Waste % its Yarn Recipe lines define (the recipe each Fabric line of
+    // this Work Order actually resolves to), and Bags = the quantity converted through the yarn's own
+    // BAG unit (IM_ItemUnitItemSize) — blank when the yarn has no Requirement or BAG unit.
+    const yarnWaste = new Map<number, { waste: Set<number>; dye: Set<number> }>();
+    if (tab === 'yarn') {
+      for (const line of await this.resolveRequirementBomLines(workOrderId, 'fabric')) {
+        if (line.inventoryId == null) continue;
+        for (const r of await this.yarnRecipeSvc.resolveEffectiveRecipe(Number(line.inventoryId), line.colorCardId ?? null)) {
+          if (r.yarnInventoryId == null) continue;
+          const w = yarnWaste.get(r.yarnInventoryId) ?? { waste: new Set<number>(), dye: new Set<number>() };
+          w.waste.add(Number(r.wastePct) || 0);
+          w.dye.add(Number(r.dyeWastagePct) || 0);
+          yarnWaste.set(r.yarnInventoryId, w);
+        }
+      }
+    }
+    const rows = base.map((r) => {
+      const unit = r.inventoryId != null ? units.get(r.inventoryId) ?? null : null;
+      const bag = r.inventoryId != null ? unitFactors.get(`${r.inventoryId}:BAG`) : undefined;
+      const waste = r.inventoryId != null ? yarnWaste.get(r.inventoryId) : undefined;
+      return {
+        inventoryId: r.inventoryId,
+        inventoryCode: r.inventoryId != null ? names.get(r.inventoryId)?.code ?? null : null,
+        inventoryName: r.inventoryId != null ? names.get(r.inventoryId)?.name ?? null : null,
+        colorName: r.colorCardId ? colors.get(String(r.colorCardId))?.name ?? null : null,
+        variant1: r.variant1,
+        productionColor: r.productionColor,
+        process: r.process,
+        unit: unit?.code ?? r.consumptionUnitCode ?? null,
+        quantity: Math.round(r.quantity * 10000) / 10000,
+        ...(tab === 'yarn' ? {
+          wastePct: waste ? [...waste.waste] : [],
+          dyeWastagePct: waste ? [...waste.dye] : [],
+          bags: unit && bag && unit.code?.toUpperCase() !== 'BAG'
+            ? Math.round(applyUnitFactor(toBaseAmount(r.quantity, unit.unitFactor, unit.unitDivisor), bag.unitFactor, bag.unitDivisor) * 100) / 100
+            : null,
+        } : {}),
+      };
+    });
+    return { source: saved.length ? ('saved' as const) : ('calculated' as const), rows };
   }
 
   // ── Total Requirements Table — matches the legacy reference screen exactly: GROUP BY Inventory
