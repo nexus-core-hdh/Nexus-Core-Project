@@ -272,6 +272,16 @@ export function ReportSections({ sections, className }: { sections: ReportSectio
     if (type === "image") return ""; // drawn as a thumbnail by the table cell
     return formatCell(v, type);
   };
+  // Optional row / cell colours from the report (`__fill`, `__cellFills` — see the backend's
+  // document-sections.ts cellFill): a background with readable text on it.
+  const fillStyle = (row: Record<string, unknown>, key: string): React.CSSProperties | undefined => {
+    const own = (row.__cellFills as Record<string, unknown> | undefined)?.[key];
+    const fill = typeof own === "string" ? own : row.__fill;
+    if (typeof fill !== "string" || !/^#[0-9a-f]{6}$/i.test(fill)) return undefined;
+    const n = parseInt(fill.slice(1), 16);
+    const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+    return { backgroundColor: fill, color: lum > 0.6 ? "#111111" : "#FFFFFF" };
+  };
   const alignClass = (a: string) => (a === "right" ? "text-right tabular-nums" : a === "center" ? "text-center" : "text-left");
   // Configured width in characters; blank = automatic.
   const widthStyle = (c: Col) => (c.width ? { width: `${c.width}ch`, minWidth: `${c.width}ch` } : undefined);
@@ -345,7 +355,7 @@ export function ReportSections({ sections, className }: { sections: ReportSectio
                   {s.rows.map((r, i) => (
                     <TableRow key={i}>
                       {s.columns.map((c) => (
-                        <TableCell key={c.key} style={widthStyle(c)} className={cn("py-1.5 text-sm", c.width && "whitespace-normal break-words", alignClass(spec(s, r, c).align))}>
+                        <TableCell key={c.key} style={{ ...widthStyle(c), ...fillStyle(r, c.key) }} className={cn("py-1.5 text-sm", c.width && "whitespace-normal break-words", alignClass(spec(s, r, c).align))}>
                           {c.type === "image"
                             // A stored picture column (e.g. Style Picture): a thumbnail, blank without one.
                             ? (typeof r[c.key] === "string" && r[c.key]
@@ -362,7 +372,7 @@ export function ReportSections({ sections, className }: { sections: ReportSectio
                     {s.footerRows.map((r, i) => (
                       <TableRow key={i}>
                         {s.columns.map((c) => (
-                          <TableCell key={c.key} style={widthStyle(c)} className={cn("py-1.5 text-sm font-semibold", alignClass(spec(s, r, c).align))}>{cell(s, r, c)}</TableCell>
+                          <TableCell key={c.key} style={{ ...widthStyle(c), ...fillStyle(r, c.key) }} className={cn("py-1.5 text-sm font-semibold", alignClass(spec(s, r, c).align))}>{cell(s, r, c)}</TableCell>
                         ))}
                       </TableRow>
                     ))}

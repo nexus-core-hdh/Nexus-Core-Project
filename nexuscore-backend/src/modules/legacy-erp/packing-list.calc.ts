@@ -100,6 +100,22 @@ export function packingTotals(lines: PackingLineInput[], sizes: readonly string[
   return { bySize, boxes, totalQuantity: totalQty, netWeight: net, totalPackageWeight: pkg, grossWeight: gross };
 }
 
+/** A box number belongs to ONE line: box counts and weights add up line by line, so two lines
+ *  covering the same box would count it twice. Returns every overlapping pair of lines (indexes,
+ *  first < second, inclusive From/To ranges). Lines with an invalid range are skipped — line
+ *  validation reports those. Adjacent ranges (1–5, 6–9) do not overlap. */
+export function overlappingBoxRanges(lines: { startBox: unknown; endBox: unknown }[]): [number, number][] {
+  const ranges = lines.map((l) => (boxCount(l.startBox, l.endBox) > 0 ? [Math.floor(num(l.startBox)), Math.floor(num(l.endBox))] : null));
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < ranges.length; i++) {
+    for (let j = i + 1; j < ranges.length; j++) {
+      const a = ranges[i], b = ranges[j];
+      if (a && b && a[0] <= b[1] && b[0] <= a[1]) pairs.push([i, j]);
+    }
+  }
+  return pairs;
+}
+
 // ── Order-level summary (per size) ───────────────────────────────────────────────────────────
 
 /** PROVISIONAL: a Packing List counts as SHIPPED once it references an Inventory Receipt

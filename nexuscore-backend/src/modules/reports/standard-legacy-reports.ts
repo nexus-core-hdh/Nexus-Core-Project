@@ -9,6 +9,7 @@ import { DYEING_FIELDS, DYEING_REPORT_NAME, DYEING_SECTIONS, DYEING_SOURCE_KEY }
 import {
   PROCESS_FOLLOW_UP_EMPTY_FIELD, PROCESS_FOLLOW_UP_FIELDS, PROCESS_FOLLOW_UP_REPORT_NAME, PROCESS_FOLLOW_UP_SECTIONS, PROCESS_FOLLOW_UP_SOURCE_KEY,
 } from './process-follow-up.report';
+import { OM_ENTRY_FIELDS, OM_ENTRY_REPORT_NAME, OM_ENTRY_SECTIONS, OM_ENTRY_SOURCE_KEY } from './order-manufacturing-entry.report';
 import { BOM_FALLBACK_FIELD, MATERIAL_REPORT_NAMES, MATERIAL_REPORT_SECTIONS, MATERIAL_REPORT_SOURCE_KEYS, YARN_REPORT_ORDER_NO_FIELD, YARN_REPORT_WORK_ORDERS_FIELD } from './yarn-requirement.report';
 
 type Def = Omit<ReportDefinitionInput, 'filters'> & { filters?: Omit<ReportFilter, 'id'>[] };
@@ -625,6 +626,16 @@ const DOCUMENTS: Def[] = [
       // Left blank it means No — only processes with entries, as on the legacy report.
       ask(PROCESS_FOLLOW_UP_EMPTY_FIELD, 'equals'),
     ],
+  },
+  {
+    // The Order Manufacturing Entry screen as a report: the Work Order is asked each run; the
+    // Process left blank means the Work Order's own default process (as on the screen); the Report
+    // View left blank means Summary View.
+    name: OM_ENTRY_REPORT_NAME,
+    description: 'One Work Order as the Order Manufacturing Entry screen shows it: per Production Color Order, Will be Cut, Cutting, Sent, quality types, Received, Return and Balance for a Process — Summary View, or Size-Wise View with every size and the Grand Total.',
+    dataSource: OM_ENTRY_SOURCE_KEY,
+    columns: cols(...OM_ENTRY_SECTIONS.map(([key]) => key)),
+    filters: [ask(OM_ENTRY_FIELDS.workOrder, 'eq'), ask(OM_ENTRY_FIELDS.process, 'eq'), ask(OM_ENTRY_FIELDS.view, 'equals')],
   },
 ];
 

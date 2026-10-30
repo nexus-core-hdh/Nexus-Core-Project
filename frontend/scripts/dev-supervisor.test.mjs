@@ -795,3 +795,31 @@ describe("port ownership (port 3000 held after a failed restart)", () => {
     assert.doesNotMatch(src, /rmSync\([^)]*\.next[^)]*recursive/, "no cache deletion besides trim-dev-cache");
   });
 });
+
+describe("ready hook (stale-route guard's post-boot rebuild)", () => {
+  it("runs once per run, only after the run is RUNNING", async () => {
+    const seen = [];
+    let h;
+    h = harness({ onReady: (run) => seen.push([run.pid, h.sup.state]) });
+    h.sup.start();
+    await flush();
+    assert.deepEqual(seen, []); // not before the ready line
+    h.last().ready();
+    await flush();
+    h.last().ready(); // a second ready line in the same run
+    await flush();
+    assert.deepEqual(seen, [[1000, STATES.RUNNING]]);
+    h.sup.requestRestart("memory", "memory high");
+    await flush();
+    h.last().ready();
+    await flush();
+    assert.deepEqual(seen, [[1000, STATES.RUNNING], [1001, STATES.RUNNING]]);
+  });
+
+  it("a failing hook is logged and never takes the supervisor down", async () => {
+    const h = harness({ onReady: () => { throw new Error("boom"); } });
+    await h.startReady();
+    assert.ok(h.has("internal error while running the ready hook"));
+    assert.equal(h.sup.state, STATES.RUNNING);
+  });
+});

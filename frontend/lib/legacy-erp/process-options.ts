@@ -7,7 +7,7 @@ type Allowed = {
   routeProcesses: { routeProcess: { id: string; code: string; name: string }; legacy: (Proc & { id: number }) | null; problem: string | null }[];
   diagnostics: string[];
 };
-export type ProcessOption = { id: number | string; code: string | null; name: string; unavailable?: string };
+export type ProcessOption = { id: number | string; code: string | null; name: string; unavailable?: string; unavailableDetail?: string };
 
 const label = (p: Proc) => [p.code, p.name].filter(Boolean).join(" ");
 
@@ -27,11 +27,15 @@ export function processOptions(allowed: Allowed, term?: string): ProcessOption[]
   if (!allowed.restricted) return filterProcesses(allowed.processes, term).map((p) => ({ id: p.id, code: p.code, name: label(p) }));
   const q = (term ?? "").trim().toLowerCase();
   return allowed.routeProcesses
-    .filter((r) => !q || [r.routeProcess.code, r.routeProcess.name, r.legacy?.code, r.legacy?.name].some((v) => (v ?? "").toLowerCase().includes(q)))
-    .map((r, i) => r.legacy && !r.problem
+    // The position on the Route (before any search filter) keeps an unlinked option's id stable while typing.
+    .map((r, routeIndex) => ({ r, routeIndex }))
+    .filter(({ r }) => !q || [r.routeProcess.code, r.routeProcess.name, r.legacy?.code, r.legacy?.name].some((v) => (v ?? "").toLowerCase().includes(q)))
+    .map(({ r, routeIndex }) => r.legacy && !r.problem
       ? { id: r.legacy.id, code: r.legacy.code, name: label(r.legacy) }
       : {
-          id: `route:${r.routeProcess.id}:${i}`, code: r.routeProcess.code, name: `${label(r.routeProcess)} — not linked to a legacy process`,
-          unavailable: allowed.diagnostics.find((d) => d.includes(label(r.routeProcess))) ?? `${label(r.routeProcess)} cannot be recorded here yet.`,
+          // The process name once; a short reason on the row, the backend's full explanation on hover.
+          id: `route:${r.routeProcess.id}:${routeIndex}`, code: r.routeProcess.code, name: label(r.routeProcess),
+          unavailable: r.problem === "linked-process-missing" ? "Link broken" : "Not linked",
+          unavailableDetail: allowed.diagnostics.find((d) => d.includes(label(r.routeProcess))) ?? `${label(r.routeProcess)} cannot be recorded here yet.`,
         });
 }

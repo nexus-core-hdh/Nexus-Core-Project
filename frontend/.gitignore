@@ -12,6 +12,8 @@
 # next.js
 /.next/
 /out/
+# dev-supervisor's route table refresh marker (scripts/stale-route-guard.mjs)
+/app/.route-table-refresh*
 
 # production
 /build

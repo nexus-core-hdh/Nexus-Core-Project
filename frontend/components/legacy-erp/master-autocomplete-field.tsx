@@ -8,7 +8,8 @@ import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { FieldLabel, spanClass, type FormFieldSpan } from "@/components/forms/form-field";
 import { cn } from "@/lib/utils";
 
-export interface MasterOption { id: number | string; code?: string | null; name: string }
+import { MasterOptionList, commitCandidate, exactMatch, firstSelectable, stepHighlight, type MasterOption } from "./master-option-list";
+export type { MasterOption };
 
 interface Props {
   label: string;
@@ -79,13 +80,21 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
   useEffect(() => { if (!open) setQuery(displayValue ?? ""); }, [displayValue, open]);
   useEffect(() => () => { if (blurTimer.current) clearTimeout(blurTimer.current); }, []);
 
+  // Only the latest search may fill the list: a slower, older response (e.g. the open-on-focus one)
+  // must not overwrite the results for what was typed after it.
+  const searchSeq = useRef(0);
   const runSearch = async (term: string) => {
+    const seq = ++searchSeq.current;
     try {
       const r = fetchOptions ? await fetchOptions(term) : await legacyErpApi.lookupTable(masterKey as any, term);
-      setOptions(Array.isArray(r) ? (r as MasterOption[]) : []);
-      setHighlight(0);
+      if (seq !== searchSeq.current) return;
+      const list = Array.isArray(r) ? (r as MasterOption[]) : [];
+      setOptions(list);
+      // Never start on an option that cannot be chosen (Enter/Tab would otherwise "pick" it).
+      setHighlight(firstSelectable(list));
       setSearched(true);
     } catch {
+      if (seq !== searchSeq.current) return;
       setOptions([]);
       setSearched(true);
     }
@@ -109,12 +118,8 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
   // Typing the exact Name of a real record (any case) and then leaving the field — via
   // blur, Enter, or Tab — auto-binds it even if the dropdown was never touched. Runs
   // against whatever `options` the last search returned, so it only ever matches something
-  // that's actually a valid, currently Active record.
-  const tryExactMatch = (): MasterOption | undefined => {
-    const q = query.trim().toLowerCase();
-    if (!q) return undefined;
-    return options.find((o) => o.name.trim().toLowerCase() === q);
-  };
+  // that's actually a valid, currently Active record (never one marked unavailable).
+  const tryExactMatch = (): MasterOption | undefined => exactMatch(options, query);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "F2") {
@@ -129,21 +134,21 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, options.length - 1));
+      setHighlight((h) => stepHighlight(options, h, 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
+      setHighlight((h) => stepHighlight(options, h, -1));
     } else if (e.key === "Enter") {
       e.preventDefault();
       // Exact Name match wins even over whatever happens to be highlighted — e.g. the user
       // typed the full name of a record that isn't first alphabetically.
-      const picked = tryExactMatch() ?? options[highlight];
+      const picked = commitCandidate(options, highlight, query);
       if (picked) choose(picked);
       else if (onFreeTextCommit && query.trim()) onFreeTextCommit(query.trim());
     } else if (e.key === "Tab") {
       // Not preventDefault()'d — Tab should still move focus to the next field afterward,
       // this just makes sure a pending selection commits first, exactly like Enter.
-      const picked = tryExactMatch() ?? options[highlight];
+      const picked = commitCandidate(options, highlight, query);
       if (picked) choose(picked);
       else if (onFreeTextCommit && query.trim()) onFreeTextCommit(query.trim());
       setOpen(false);
@@ -198,6 +203,14 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
             if (!v.trim()) onClear?.();
           }}
           onFocus={() => { setOpen(true); runSearch(query); }}
+          // A click on the box while it already has focus (after a selection, Escape, or a refused
+          // pick) fires no focus event — reopen the list here so clicking the field always opens it.
+          onMouseDown={() => {
+            if (open || document.activeElement !== inputRef.current) return;
+            if (blurTimer.current) clearTimeout(blurTimer.current);
+            setOpen(true);
+            runSearch(query);
+          }}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
           className="text-sm"
@@ -214,23 +227,7 @@ export function MasterAutocompleteField({ label, masterKey, displayValue, onSele
       </InputGroup>
 
       {open && options.length > 0 && (
-        <div className="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover shadow-md">
-          {options.map((o, i) => (
-            <button
-              key={o.id}
-              type="button"
-              // onMouseDown (not onClick) fires before the input's onBlur close-timer, so the
-              // option is still mounted and its data still read before the dropdown closes.
-              onMouseDown={(e) => { e.preventDefault(); choose(o); }}
-              className={cn(
-                "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors",
-                i === highlight ? "bg-primary/10 text-primary" : "hover:bg-muted"
-              )}
-            >
-              {renderOption ? renderOption(o) : <span className="truncate">{o.name}</span>}
-            </button>
-          ))}
-        </div>
+        <MasterOptionList options={options} highlight={highlight} onChoose={choose} renderOption={renderOption} />
       )}
 
       {showEmpty && (

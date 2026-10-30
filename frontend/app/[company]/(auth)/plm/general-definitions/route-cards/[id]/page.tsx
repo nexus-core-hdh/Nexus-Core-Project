@@ -141,9 +141,13 @@ export default function RouteCardDetailPage() {
       // still guaranteeing repeated Save never duplicates a row: a row keeps its own `recId`
       // once persisted, so it's always routed to updateLine, never addLine, on subsequent saves).
       const stillPresent = new Set<string>();
+      // `sequence` = the row's position on this grid: the Route's process order, which the Route
+      // Card itself and Order Manufacturing Entry's Process dropdown both read (ORDER BY sequence).
+      let sequence = 0;
       for (const line of lines) {
         if (!line.processId) continue; // blank/incomplete row — same "skip, don't block Save" rule as Yarn Recipe's own blank-row handling
         const payload = {
+          sequence: sequence++,
           processId: line.processId, explanation: line.explanation || undefined,
           unitPrice: round(line.unitPrice, "unit-price"), forex: line.forex || undefined,
           forexRate: round(line.forexRate, "forex-rate"), forexUnitPrice: round(line.forexUnitPrice, "forex-unit-price"),

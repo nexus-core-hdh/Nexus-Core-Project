@@ -42,7 +42,7 @@ import { WorkOrdersLookupDialog } from "@/components/legacy-erp/work-orders-look
 import { EntityListLookupDialog } from "@/components/legacy-erp/entity-list-lookup-dialog";
 import { RECEIPT_TYPES } from "@/lib/legacy-erp/receipt-types";
 import { cn } from "@/lib/utils";
-import { SUMMARY_ROW_LABELS, lineTotals, packingTotals } from "@/lib/legacy-erp/packing-list-calc";
+import { SUMMARY_ROW_LABELS, isShippedPackingList, lineTotals, liveSizeSummary, overlappingBoxRanges, packingTotals } from "@/lib/legacy-erp/packing-list-calc";
 
 const LIST_PATH = "/legacy-erp/packing-lists-list";
 const CURRENT_ACCOUNTS_LIST_PATH = "/legacy-erp/current-accounts-list";
@@ -127,6 +127,8 @@ export default function PackingListPage() {
   const [ctx, setCtx] = useState<WorkOrderContext | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [summary, setSummary] = useState<any>(null);
+  /** The header as last saved — the server summary is for this Work Order and shipment state. */
+  const [savedHeader, setSavedHeader] = useState<{ workOrderId: number | null; inventoryReceiptId: number | null } | null>(null);
   const [style, setStyle] = useState<any>(null);
   const [loading, setLoading] = useState(!!initialId);
   const [saving, setSaving] = useState(false);
@@ -168,6 +170,7 @@ export default function PackingListPage() {
       setApprovedAt(header.approvedAt ? String(header.approvedAt) : null);
       setCtx(nextCtx);
       setLines(ls);
+      setSavedHeader({ workOrderId: f.workOrderId, inventoryReceiptId: f.inventoryReceiptId });
       setLabels({
         workOrderNo: header.workOrderNo ?? "",
         customer: header.customerName ? `${header.customerCode ?? ""} — ${header.customerName}` : "",
@@ -239,6 +242,21 @@ export default function PackingListPage() {
   const setQty = (lineUid: string, size: string, v: string) =>
     setLines((prev) => prev.map((l) => (l.uid === lineUid ? { ...l, quantities: { ...l.quantities, [size]: v } } : l)));
   const removeLine = (lineUid: string) => setLines((prev) => prev.filter((l) => l.uid !== lineUid));
+  /** Add Box from View mode switches to Edit first; an approved list must be unapproved first. */
+  const canAddBox = !!ctx && !isApproved;
+  const addBox = () => {
+    if (!canAddBox) return;
+    if (mode === "view") setMode("edit");
+    addLine();
+  };
+
+  // A box number can be on one line only (packing-list-calc.ts overlappingBoxRanges; the backend
+  // enforces the same rule on save).
+  const overlaps = useMemo(() => overlappingBoxRanges(lines), [lines]);
+  const overlapUids = useMemo(() => new Set(overlaps.flat().map((i) => lines[i].uid)), [overlaps, lines]);
+  const overlapMessage = overlaps.length
+    ? `${overlaps.map(([a, b]) => `Line ${a + 1} (boxes ${lines[a].startBox}–${lines[a].endBox}) and Line ${b + 1} (boxes ${lines[b].startBox}–${lines[b].endBox})`).join("; ")} overlap — each box number can be on one line only.`
+    : "";
 
   // ── Save / approve ────────────────────────────────────────────────────────────────────────
   const headerPayload = () => ({
@@ -255,6 +273,7 @@ export default function PackingListPage() {
 
   const save = async () => {
     if (!form.workOrderId) { toast.error("Select an Order No first."); return; }
+    if (overlapMessage) { toast.error(overlapMessage); return; }
     setSaving(true);
     try {
       let recordId = id;
@@ -311,6 +330,16 @@ export default function PackingListPage() {
   const displayColumns = gridColumns.displayColumnDefs.map((c) => columnByKey.get(c.key)).filter((c): c is NonNullable<typeof c> => !!c);
 
   const totals = useMemo(() => packingTotals(lines.map(asCalcLine), sizes), [lines, sizes]);
+  // Summary follows the lines as they are edited: the server's Order / Will Be Cut / Cut / other
+  // lists' shipments (as of the last save), re-based on this list's live Packed quantities. Only
+  // while the Work Order is the saved one — otherwise the server figures are for another Order.
+  const shownSummary = useMemo(() => {
+    if (!summary || !savedHeader || savedHeader.workOrderId !== form.workOrderId) return null;
+    return liveSizeSummary(sizes, summary, totals.bySize, {
+      wasShipped: isShippedPackingList(savedHeader), isShipped: isShippedPackingList(form),
+    });
+  }, [summary, savedHeader, form, sizes, totals]);
+  const summaryPending = !!id && !!summary && !shownSummary;
   const fmtW = (v: number) => v.toFixed(4);
   const fmtQ = (v: number) => round(v, "quantity");
 
@@ -322,8 +351,16 @@ export default function PackingListPage() {
     const t = lineTotals(asCalcLine(line), sizes);
     const ro = (v: React.ReactNode) => <span className="flex h-8 items-center justify-end px-2 font-mono text-[11.5px]">{v}</span>;
     switch (key) {
-      case "startBox": return <EditableGridInput type="number" align="right" nonNegative value={line.startBox} disabled={readOnly} onChange={(v) => updateLine(line.uid, { startBox: v })} />;
-      case "endBox": return <EditableGridInput type="number" align="right" nonNegative value={line.endBox} disabled={readOnly} onChange={(v) => updateLine(line.uid, { endBox: v })} />;
+      case "startBox":
+      case "endBox": {
+        const overlapping = overlapUids.has(line.uid);
+        return (
+          <EditableGridInput type="number" align="right" nonNegative value={line[key]} disabled={readOnly} onChange={(v) => updateLine(line.uid, { [key]: v })}
+            aria-label={key === "startBox" ? "From (Box)" : "To (Box)"} aria-invalid={overlapping || undefined}
+            title={overlapping ? "This box range overlaps another line" : undefined}
+            className={cn(overlapping && "bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive")} />
+        );
+      }
       case "orderLine": return <span className="flex h-8 items-center px-2 font-mono text-[11.5px]">{ctx?.orderLine?.itemOrderNo ?? ctx?.orderLine?.customerOrderNo ?? "—"}</span>;
       case "color":
         return (
@@ -475,9 +512,21 @@ export default function PackingListPage() {
         </p>
         <div className="flex gap-1.5">
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={gridColumns.manageColumns.openModal}><ListOrdered className="mr-1.5 h-3.5 w-3.5" />Manage Columns</Button>
-          {!readOnly && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={addLine} disabled={!ctx}><Plus className="mr-1.5 h-3.5 w-3.5" />Add Row</Button>}
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={addBox} disabled={!canAddBox}
+            title={isApproved ? "This Packing List is approved — Unapprove it to add boxes" : !ctx ? "Select an Order first" : "Add a box range"}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />Add Box
+          </Button>
         </div>
       </div>
+
+      {isApproved && (
+        <p className="rounded-md border bg-muted/40 px-3 py-1.5 text-[11.5px] text-muted-foreground">
+          This Packing List is approved, so its boxes are locked. Click <span className="font-medium text-foreground">Unapprove</span> (top right) to add, change or remove boxes.
+        </p>
+      )}
+      {overlapMessage && (
+        <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-[11.5px] text-destructive">{overlapMessage}</p>
+      )}
 
       {staleLines.length > 0 && (
         <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11.5px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
@@ -530,7 +579,7 @@ export default function PackingListPage() {
                         <EmptyHeader>
                           <EmptyMedia variant="icon"><ListX /></EmptyMedia>
                           <EmptyTitle className="text-sm">No boxes yet</EmptyTitle>
-                          <EmptyDescription>{readOnly ? "This Packing List has no lines." : 'Click "Add Row" to pack the first box range.'}</EmptyDescription>
+                          <EmptyDescription>{isApproved ? "This Packing List has no lines." : 'Click "Add Box" to pack the first box range.'}</EmptyDescription>
                         </EmptyHeader>
                       </Empty>
                     </TableCell>
@@ -547,6 +596,15 @@ export default function PackingListPage() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {lines.length > 0 && !readOnly && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={displayColumns.length + 1} className="p-0">
+                      <Button variant="ghost" size="sm" className="h-7 rounded-none px-2 text-xs text-muted-foreground hover:text-foreground" onClick={addBox} data-testid="add-box-inline">
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />Add box
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
               {lines.length > 0 && (
                 <TableFooter>
@@ -569,6 +627,7 @@ export default function PackingListPage() {
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
             Summary{!!ctx.extraCuttingPercent && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">(Will Be Cut — Extra Cutting {ctx.extraCuttingPercent}%)</span>}
             {!summary && id && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— loading…</span>}
+            {summaryPending && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— Order changed; updated after save</span>}
             {!id && <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">— available after the first save</span>}
           </p>
           <div className="overflow-x-auto rounded-md border">
@@ -583,6 +642,7 @@ export default function PackingListPage() {
               <tbody>
                 {SUMMARY_ROW_LABELS.map(([key, label]) => {
                   const pct = key === "orderMinusShipmentPercent";
+                  const summary = shownSummary as { rows: Record<string, Record<string, number>>; totals: Record<string, number> } | null;
                   const value = (v: unknown) => (summary ? (pct ? `${Number(v ?? 0).toFixed(2)}%` : fmtQ(Number(v ?? 0))) : "—");
                   const negative = (v: unknown) => summary && Number(v) < 0;
                   return (

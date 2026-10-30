@@ -17,6 +17,11 @@
 // 2 min, doubling to 10 min — it no longer exits and leaves localhost down. Ctrl+C stops it.
 // Failure counters reset only after a run has stayed healthy for 10 minutes.
 //
+// Stale routes (not a restart by default): next dev's route table can be left without nested pages
+// (see stale-route-guard.mjs). The supervisor rebuilds it once after each boot and whenever next dev
+// answers 404 for a page that exists on disk, via a marker-file event in app/; it restarts only if
+// those 404s continue after a rebuild. DEV_SUPERVISOR_ROUTE_GUARD=0 turns this off.
+//
 // The restart state machine lives in dev-supervisor-core.mjs (tested by dev-supervisor.test.mjs);
 // this file wires it to the real processes, ports and cache.
 //
@@ -47,10 +52,12 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createMemoryGuard, createSupervisor, describeExit, STATES } from "./dev-supervisor-core.mjs";
+import { attachStaleRouteGuard, removeLeftoverMarkers } from "./stale-route-guard.mjs";
 import { trimDevCache } from "./trim-dev-cache.mjs";
 
 const FRONTEND = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOG_DIR = path.join(FRONTEND, ".next", "dev-supervisor");
+const APP_DIR = path.join(FRONTEND, "app");
 const NEXT_BIN = createRequire(path.join(FRONTEND, "package.json")).resolve("next/dist/bin/next");
 const ARGS = process.argv.slice(2);
 const IS_WIN = process.platform === "win32";
@@ -393,7 +400,9 @@ const supervisor = createSupervisor({
   onOutputLine: (line) => {
     outputTail.push(line);
     if (outputTail.length > 300) outputTail.shift();
+    routeGuard.onOutputLine(line);
   },
+  onReady: (run) => routeGuard.onReady(run),
   log,
   exit: (code) => process.exit(code),
   stdout: process.stdout,
@@ -403,6 +412,16 @@ const supervisor = createSupervisor({
   healthyResetMs: HEALTHY_RESET_MS,
   maxRestarts: MAX_RESTARTS,
   restartWindowMs: RESTART_WINDOW_MS,
+});
+
+// --- stale route table ----------------------------------------------------------------------
+const routeGuard = attachStaleRouteGuard({
+  supervisor,
+  runningState: STATES.RUNNING,
+  appDir: APP_DIR,
+  log,
+  writeIncident,
+  enabled: process.env.DEV_SUPERVISOR_ROUTE_GUARD !== "0",
 });
 
 // --- memory monitor -------------------------------------------------------------------------
@@ -487,4 +506,5 @@ log(
   `watching next dev on port ${PORT}: memory limit ${fmt(MAX_TREE_BYTES)} of ${fmt(TOTAL)} RAM (low-RAM rule below ${fmt(LOW_FREE_BYTES)} free), ` +
     `${SAMPLES} samples every ${INTERVAL_MS / 1000}s; ${MAX_RESTARTS} restarts / 30 min; start-failure retries ~15s/30s/60s then every 2–10 min`,
 );
+removeLeftoverMarkers(APP_DIR);
 supervisor.start();

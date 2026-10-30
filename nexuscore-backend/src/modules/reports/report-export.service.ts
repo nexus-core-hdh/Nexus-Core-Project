@@ -3,6 +3,7 @@ import * as ExcelJS from 'exceljs';
 import type { Alignment, Content, TableCell, TDocumentDefinitions } from 'pdfmake/interfaces';
 import type { ReportResult } from './report-builder.service';
 import type { ReportSection } from './work-order-order-form.report';
+import { cellFill, textOnFill } from './document-sections';
 import { UploadService } from '../upload/upload.service';
 
 // pdfmake's server-side printer has no ES module export.
@@ -144,6 +145,11 @@ export class ReportExportService {
             const cell = line.getCell(i + 1);
             cell.alignment = { horizontal: align as 'left' | 'center' | 'right' };
             if (decimals != null && typeof cell.value === 'number') cell.numFmt = decimals ? `#,##0.${'0'.repeat(decimals)}` : '#,##0';
+            const fill = cellFill(row, c.key);
+            if (fill) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${fill.slice(1)}` } };
+              cell.font = { ...(cell.font ?? {}), bold, color: { argb: `FF${textOnFill(fill).slice(1)}` } };
+            }
             const id = c.type === 'image' && typeof row[c.key] === 'string' ? imageId(row[c.key] as string) : null;
             if (id != null) {
               line.height = 48;
@@ -295,9 +301,13 @@ export class ReportExportService {
         ...s.rows.map((row) => s.columns.map((c): TableCell => {
           const picture = c.type === 'image' ? pictures.get(String(row[c.key] ?? '')) : undefined;
           if (picture) return { image: picture, fit: [c.width ? Math.max(c.width * ptPerChar * scale - 4, 16) : 50, 40], alignment: 'center' };
-          return { text: sectionValue(s, row, c), alignment: cellSpec(s, row, c).align };
+          const fill = cellFill(row, c.key);
+          return { text: sectionValue(s, row, c), alignment: cellSpec(s, row, c).align, ...(fill ? { fillColor: fill, color: textOnFill(fill) } : {}) };
         })),
-        ...s.footerRows.map((row) => s.columns.map((c) => ({ text: sectionValue(s, row, c), bold: true, fillColor: '#F3F4F6', alignment: cellSpec(s, row, c).align }))),
+        ...s.footerRows.map((row) => s.columns.map((c) => {
+          const fill = cellFill(row, c.key);
+          return { text: sectionValue(s, row, c), bold: true, fillColor: fill ?? '#F3F4F6', ...(fill ? { color: textOnFill(fill) } : {}), alignment: cellSpec(s, row, c).align };
+        })),
       ];
       page.push({
         table: { headerRows: 1, dontBreakRows: true, widths, body },

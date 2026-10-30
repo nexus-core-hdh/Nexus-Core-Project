@@ -8,7 +8,7 @@ import { nextLegacySeqCode, previewLegacySeqCode } from './legacy-code-sequence.
 import { CuttingCardService } from './cutting-card.service';
 import { WorkOrderService } from './work-order.service';
 import {
-  PackingLineInput, isShippedPackingList, packingTotals, parseVariantKey, sizeSummary, variantKey,
+  PackingLineInput, isShippedPackingList, overlappingBoxRanges, packingTotals, parseVariantKey, sizeSummary, variantKey,
 } from './packing-list.calc';
 
 // Packing List — the legacy IM_PackagingList (header) / IM_PackagingListItem (box-range lines)
@@ -326,6 +326,11 @@ export class PackingListService {
     if (!header.workOrderId) throw new BadRequestException('Select a Work Order before adding lines');
     const ctx = await this.workOrderContext(header.workOrderId);
     const validated = lines.map((l, i) => ({ line: l, ...this.validateLine(l, i, ctx.sizes, ctx.colors) }));
+    const [overlap] = overlappingBoxRanges(validated.map((v) => ({ startBox: v.start, endBox: v.end })));
+    if (overlap) {
+      const [a, b] = overlap.map((i) => validated[i]);
+      throw new BadRequestException(`Line ${overlap[1] + 1}: boxes ${b.start}–${b.end} overlap Line ${overlap[0] + 1} (boxes ${a.start}–${a.end}) — each box number can be on one line only`);
+    }
 
     const existing = await this.listLineRows(packingListId);
     const existingIds = new Set(existing.map((l: any) => Number(l.id)));

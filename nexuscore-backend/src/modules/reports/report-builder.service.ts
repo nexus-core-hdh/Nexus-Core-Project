@@ -34,6 +34,10 @@ import {
   PROCESS_FOLLOW_UP_EMPTY_FIELD, PROCESS_FOLLOW_UP_EMPTY_YES, PROCESS_FOLLOW_UP_FIELDS, PROCESS_FOLLOW_UP_SOURCE_KEY, processFollowUpSections,
 } from './process-follow-up.report';
 import { ORDER_FORM_WORK_ORDER_FIELD, ReportSection, SectionColumnConfig, cleanSectionColumns, orderFormSections } from './work-order-order-form.report';
+import { OrderManufacturingService } from '../legacy-erp/order-manufacturing.service';
+import {
+  OM_ENTRY_FIELDS, OM_ENTRY_SOURCE_KEY, OM_ENTRY_VIEW_SIZES, OM_ENTRY_VIEW_SUMMARY, OrderManufacturingContext, orderManufacturingEntrySections,
+} from './order-manufacturing-entry.report';
 
 /** Most rows a report run or export returns; anything beyond is reported as truncated. */
 export const MAX_REPORT_ROWS = 10000;
@@ -158,6 +162,8 @@ export class ReportBuilderService {
     @Optional() private readonly dyeing?: DyeingFollowUpService,
     // Builds the Process Follow-up document source (same reason it is optional).
     @Optional() private readonly processFollowUp?: ProcessFollowUpService,
+    // Builds the Order Manufacturing Entry document source — the screen's own read model (same reason it is optional).
+    @Optional() private readonly orderManufacturing?: OrderManufacturingService,
   ) {
     this.schema = new LegacySchemaCatalog(prisma);
   }
@@ -778,6 +784,27 @@ export class ReportBuilderService {
             applied: applied.join(' · ') || 'All Work Orders',
             // 20 columns, as on the legacy report: compact print so every one fits the page.
             document: { showTitle: true, companyAddress: null, showSectionTitles: false, compactTables: true },
+          };
+        },
+      },
+      [OM_ENTRY_SOURCE_KEY]: {
+        fields: [OM_ENTRY_FIELDS.workOrder, OM_ENTRY_FIELDS.process], noun: 'Work Order', options: [OM_ENTRY_FIELDS.view],
+        build: async (values: DocumentFilterValues, _user: ReportUser, columns: ReportColumn[]) => {
+          if (!this.orderManufacturing) throw new BadRequestException('This document report is not available here');
+          // Blank Process = the Work Order's own default process, as on the screen.
+          const rawProcess = values[OM_ENTRY_FIELDS.process]?.value;
+          const processId = rawProcess === undefined || rawProcess === null || rawProcess === '' ? null : Number(rawProcess);
+          if (processId !== null && (!Number.isInteger(processId) || processId <= 0)) throw new BadRequestException('Choose a valid Process');
+          // The screen's own read model — the report prints exactly what Order Manufacturing Entry shows.
+          const data = await recordId(values, OM_ENTRY_FIELDS.workOrder, 'Work Order', (id) => this.orderManufacturing!.getContext(id, processId));
+          if (processId !== null && !data.process) throw new BadRequestException(`Process ${processId} was not found (or has been deleted)`);
+          const view = values[OM_ENTRY_FIELDS.view]?.value === OM_ENTRY_VIEW_SIZES ? OM_ENTRY_VIEW_SIZES : OM_ENTRY_VIEW_SUMMARY;
+          const process = data.process ? [data.process.code, data.process.name].filter(Boolean).join(' ') : 'no Process';
+          return {
+            sections: orderManufacturingEntrySections(data as OrderManufacturingContext, columns, view),
+            applied: [`Work Order ${data.workOrder.workOrderNo}`, `Process ${process}`, view === OM_ENTRY_VIEW_SIZES ? 'Size-Wise View' : 'Summary View'].join(' · '),
+            // Many quantity / size columns, as on the screen: compact print so every one fits the page.
+            document: { showTitle: true, companyAddress: null, compactTables: true },
           };
         },
       },

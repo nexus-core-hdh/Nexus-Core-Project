@@ -202,6 +202,6 @@ import { AuditModule } from '../audit/audit.module';
   // and paging) instead of a second query of those tables.
   // WorkOrderOrderFormService / InventoryReceiptGatePassService build the Report Builder's Order Form
   // and Inward Gate Pass document sources (reports/work-order-order-form.report.ts, inward-gate-pass.report.ts).
-  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService, InventoryReceiptService, WorkOrderOrderFormService, InventoryReceiptGatePassService, YarnRequirementReportService, DyeingFollowUpService, ProcessFollowUpService],
+  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService, InventoryReceiptService, WorkOrderOrderFormService, InventoryReceiptGatePassService, YarnRequirementReportService, DyeingFollowUpService, ProcessFollowUpService, OrderManufacturingService],
 })
 export class LegacyErpModule {}

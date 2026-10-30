@@ -643,7 +643,8 @@ async function main() {
           { title: 'General Definitions', href: '#', icon: 'Layers', items: [
             { title: 'Style Sample Types', href: '/plm/general-definitions/style-sample-types' },
             { title: 'Design Detail Types', href: '/plm/general-definitions/design-detail-types' },
-            { title: 'Fabric Type Cards', href: '/plm/general-definitions/fabric-type-cards' },
+            // No page yet (see scripts/mark-fabric-type-cards-coming.ts) — kept as "coming soon", never linked.
+            { title: 'Fabric Type Cards', href: '/plm/general-definitions/fabric-type-cards', isComing: true },
             { title: 'Measurement Definitions', href: '/plm/general-definitions/measurement-definitions' },
             { title: 'Measurement Charts', href: '/plm/general-definitions/measurement-charts' },
             { title: 'Department Cards', href: '/plm/general-definitions/department-cards' },

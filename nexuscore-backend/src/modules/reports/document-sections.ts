@@ -135,6 +135,24 @@ export function unitTotals(rows: Record<string, any>[], keys: string[], extra?: 
   }));
 }
 
+/**
+ * Optional colours of a table row (the report view, PDF and Excel draw them; CSV has none):
+ * `__fill` — the row's background (e.g. the Order Manufacturing size lines' tints);
+ * `__cellFills` — per column key, one cell's background (e.g. a material's color swatch), over the row's.
+ * Only "#RRGGBB" is used; anything else is ignored.
+ */
+export function cellFill(row: Record<string, unknown>, key: string): string | null {
+  const own = (row.__cellFills as Record<string, unknown> | undefined)?.[key];
+  const fill = typeof own === 'string' ? own : row.__fill;
+  return typeof fill === 'string' && /^#[0-9a-f]{6}$/i.test(fill) ? fill.toUpperCase() : null;
+}
+/** Black or white text on a fill (same rule as the Order Manufacturing screen's swatches). */
+export function textOnFill(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.6 ? '#111111' : '#FFFFFF';
+}
+
 /** A total row's label goes in the first visible text column (the usual label column may be hidden). */
 export function placeTotalLabels(columns: ReportSectionColumn[], footerRows: Record<string, unknown>[]) {
   const labelKey = columns.find((cl) => cl.type !== 'number')?.key ?? columns[0]?.key;

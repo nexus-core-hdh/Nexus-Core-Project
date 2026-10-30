@@ -147,6 +147,7 @@ export function createSupervisor(o) {
     stopPortOwner = async () => {},
     writeIncident = () => null,
     onOutputLine = () => {},
+    onReady = () => {},
     log,
     exit,
     stdout,
@@ -285,6 +286,11 @@ export function createSupervisor(o) {
     cancelTimer();
     setState(S.RUNNING, "ready line seen and port responding");
     log(`${label} became ready (pid ${run.pid}, port ${port} responding)`);
+    try {
+      onReady(run);
+    } catch (err) {
+      internalError("running the ready hook", err);
+    }
     if (recovering || startFailures > 0 || startupFailures > 0 || recoveryAttempts > 0) {
       log(`restart recovery successful — failure counters reset once it stays healthy for ${secs(healthyResetMs)}`);
     }

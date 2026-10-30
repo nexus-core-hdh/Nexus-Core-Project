@@ -16,7 +16,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { legacyErpApi } from "@/lib/nexuscore-api";
-import { processOptions } from "@/lib/legacy-erp/process-options";
 import { API_BASE_URL } from "@/lib/api";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceTabContext } from "@/components/layout/workspace/workspace-tab-context";
@@ -27,10 +26,12 @@ import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-
 import { cn } from "@/lib/utils";
 import { StoredImage } from "@/components/legacy-erp/stored-image";
 import {
-  SizeSummary, textOn, OM_CHANGED_EVENT, OM_ROUTE,
+  SizeSummary, OM_CHANGED_EVENT, OM_ROUTE,
   type GrandTotal, type MaterialColumn, type QualityType, type ReadRow,
 } from "./_components/size-summary";
 import { PriceContractDialog } from "./_components/price-contract-dialog";
+import { ProcessField } from "./_components/process-field";
+import { OrderMatrix } from "./_components/order-matrix";
 
 interface Context {
   workOrder: { id: number; workOrderNo: string; customerCode: string | null; customerName: string | null };
@@ -45,7 +46,6 @@ interface Context {
   grandTotal: GrandTotal;
 }
 
-const processLabel = (p: { code: string | null; name: string | null } | null) => (p ? [p.code, p.name].filter(Boolean).join(" ") : "");
 
 export default function OrderManufacturingEntryPage() {
   const router = useRouter();
@@ -107,11 +107,7 @@ export default function OrderManufacturingEntryPage() {
     : null;
 
   const pickOrder = (o: MasterOption) => { setWorkOrderId(Number(o.id)); load(Number(o.id), processId); };
-  const pickProcess = (o: MasterOption & { unavailable?: string }) => {
-    // A Route process with no legacy process: explain, keep the current selection.
-    if (o.unavailable) { toast.error(o.unavailable); return; }
-    setProcessId(Number(o.id)); load(workOrderId, Number(o.id));
-  };
+  const pickProcess = (id: number) => { setProcessId(id); load(workOrderId, id); };
 
   const openChild = (mode: "in" | "out" | "repair-sent" | "repair-received", title: string) => {
     if (!workOrderId || !ctx?.process || !selectedColor) return;
@@ -127,8 +123,6 @@ export default function OrderManufacturingEntryPage() {
   const canChild = !!workOrderId && !!ctx?.process && !!selectedColor;
   const childHint = !workOrderId ? "Select an Order No first." : !ctx?.process ? "Select a Process first." : !selectedColor ? "Select a row first." : undefined;
 
-  const th = "sticky top-0 z-10 border border-border/70 bg-slate-700 dark:bg-slate-800 px-1.5 h-8 text-[10.5px] font-semibold text-white whitespace-nowrap text-left align-bottom";
-  const tdNum = "border border-border/50 px-1.5 h-[22px] text-right font-mono text-[11px] whitespace-nowrap";
   const fieldLabel = "w-14 shrink-0 text-right text-[11.5px] text-muted-foreground";
   const roBox = "flex h-6 items-center truncate rounded-sm border border-input bg-muted/30 px-2 text-[11.5px]";
 
@@ -163,20 +157,10 @@ export default function OrderManufacturingEntryPage() {
           <div className="flex items-center gap-2">
             <span className={fieldLabel}>Process</span>
             <div className="flex-1">
-              <MasterAutocompleteField
-                label="" compact masterKey="process"
-                displayValue={processLabel(ctx?.process ?? null)}
-                // Existing 'process' master (MA_Process). The field shows "Code Name", e.g. "12 Sewing".
-                fetchOptions={async (t) => {
-                  // With an Order chosen: every process of its Style Card's Route, in route order (one
-                  // not linked to a legacy process is listed but not selectable), or every process
-                  // when it has no Route — re-read on every open, so a changed Order / Route shows at
-                  // once. Without an Order: the Process master, as before.
-                  if (workOrderId) return processOptions(await legacyErpApi.orderManufacturing.processes(workOrderId), t);
-                  const rows = (await legacyErpApi.lookupTable("process", t)) as any[];
-                  return (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, code: r.code, name: [r.code, r.name].filter(Boolean).join(" ") }));
-                }}
-                onSelect={pickProcess}
+              <ProcessField
+                workOrderId={workOrderId}
+                process={ctx?.process ?? null}
+                onPick={pickProcess}
                 onClear={() => { setProcessId(null); load(workOrderId, null); }}
               />
             </div>
@@ -188,7 +172,7 @@ export default function OrderManufacturingEntryPage() {
       {ctx?.lockReason && <p className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">{ctx.lockReason} Manufacturing entries are read-only.</p>}
 
       {/* Order matrix */}
-      <div className="min-h-[180px] flex-1 overflow-auto rounded-sm border border-border/70">
+      <div className="flex min-h-[180px] flex-1 flex-col overflow-hidden rounded-sm border border-border/70">
         {!workOrderId ? (
           <p className="p-3 text-muted-foreground">Search an Order No above to load its Production Colors, BOM materials and sizes.</p>
         ) : loading && !ctx ? (
@@ -196,54 +180,10 @@ export default function OrderManufacturingEntryPage() {
         ) : !ctx?.rows.length ? (
           <p className="p-3 text-muted-foreground">This Work Order has no Production Colors yet — enter Manufacturing Quantities on its C/S Details tab first.</p>
         ) : (
-          <table className="min-w-max border-collapse">
-            <thead>
-              <tr className="bg-slate-700 hover:bg-slate-700 dark:bg-slate-800 dark:hover:bg-slate-800 [&>th]:text-white [&>th]:border-r [&>th:last-child]:border-r-0">
-                <th className={cn(th, "left-0 z-20 w-3 min-w-3 px-0")} />
-                {ctx.materialColumns.map((m, i) => (
-                  <th key={m.key} className={cn(th, "min-w-[112px] max-w-[132px] whitespace-normal leading-tight", i === 0 && "sticky left-3 z-20")} title={`${m.lineType} — ${m.label}`}>{m.label}</th>
-                ))}
-                <th className={cn(th, "min-w-[84px] text-right")}>Order</th>
-                <th className={cn(th, "min-w-[84px] text-right")}>Will be Cut</th>
-                <th className={cn(th, "min-w-[84px] text-right")}>Cutting</th>
-                <th className={cn(th, "min-w-[84px] text-right")}>Sent</th>
-                {ctx.qualityColumns.map((q) => <th key={q.id} className={cn(th, "min-w-[84px] text-right")} title={q.code || undefined}>{q.name || q.code}</th>)}
-                <th className={cn(th, "min-w-[84px] text-right")}>Received</th>
-                <th className={cn(th, "min-w-[84px] text-right")}>Return</th>
-                <th className={cn(th, "min-w-[84px] text-right")}>Balance</th>
-              </tr>
-            </thead>
-            <tbody className="[&>tr>td]:border-r [&>tr>td:last-child]:border-r-0">
-              {ctx.rows.map((r) => {
-                const sel = r.color === selectedColor;
-                const blank = (v: number) => (v ? fmt(v) : "");
-                return (
-                  <tr key={r.color} className={cn("cursor-pointer", sel ? "bg-primary text-primary-foreground" : "odd:bg-background even:bg-muted/25 hover:bg-accent/50")} onClick={() => setSelectedColor(r.color)}>
-                    <td className={cn("sticky left-0 z-10 w-3 border border-border/50 p-0", sel ? "bg-primary" : "bg-muted")} title={r.color} />
-                    {ctx.materialColumns.map((m, i) => {
-                      const c = r.cells[m.key];
-                      const label = c?.code || c?.name || "";
-                      return (
-                        <td
-                          key={m.key} title={c?.name || c?.code || r.color}
-                          className={cn("max-w-[132px] truncate border border-border/50 px-1.5 h-[22px] whitespace-nowrap", i === 0 && "sticky left-3 z-10", !c?.hex && i === 0 && (sel ? "bg-primary" : "bg-background"))}
-                          style={c?.hex ? { backgroundColor: c.hex, color: textOn(c.hex) } : undefined}
-                        >{label}</td>
-                      );
-                    })}
-                    <td className={cn(tdNum, "font-semibold")}>{fmt(r.totals.order)}</td>
-                    <td className={tdNum}>{blank(r.totals.willBeCut)}</td>
-                    <td className={tdNum}>{blank(r.totals.cutting)}</td>
-                    <td className={tdNum}>{blank(r.totals.sent)}</td>
-                    {ctx.qualityColumns.map((q) => <td key={q.id} className={tdNum}>{blank(r.byQuality[String(q.id)] || 0)}</td>)}
-                    <td className={tdNum}>{blank(r.totals.received)}</td>
-                    <td className={tdNum}>{blank(r.totals.returned)}</td>
-                    <td className={cn(tdNum, "font-semibold")}>{blank(r.totals.balance)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <OrderMatrix
+            materialColumns={ctx.materialColumns} qualityColumns={ctx.qualityColumns} rows={ctx.rows}
+            selectedColor={selectedColor} onSelectColor={setSelectedColor} fmt={fmt}
+          />
         )}
       </div>
 
