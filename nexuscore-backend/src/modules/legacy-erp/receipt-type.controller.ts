@@ -144,6 +144,20 @@ export class ReceiptTypeController {
     return this.svc.approve(id, userId, dto?.remarks, cfg.receiptType, companyId);
   }
 
+  // Approved -> Unapproved (unlocks editing) — same approval:approve permission as Approve,
+  // exactly as the Packing List's own Unapprove.
+  @Permissions({ module: 'approval', action: 'approve' })
+  @Post(':id/unapprove')
+  unapprove(
+    @Param('receiptType') receiptType: string,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('companyId') companyId: string,
+  ) {
+    const cfg = this.resolve(receiptType);
+    return this.svc.unapprove(id, userId, cfg.receiptType, companyId);
+  }
+
   @Permissions({ module: 'approval', action: 'reject' })
   @Post(':id/reject')
   reject(

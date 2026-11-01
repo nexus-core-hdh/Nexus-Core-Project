@@ -7,6 +7,7 @@ import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { nexuscoreValidationPipe } from './common/pipes/validation.pipe';
 import { RolesGuard } from './common/guards/roles.guard';
+import { LegacyCompanyGuard, legacyScopeMiddleware } from './modules/legacy-erp/legacy-company-scope';
 import { PrismaService } from './prisma/prisma.service';
 import { BpmService } from './modules/bpm/bpm.service';
 import { RolesService } from './modules/roles/roles.service';
@@ -33,6 +34,9 @@ async function bootstrap() {
   app.set('trust proxy', trustProxySetting());
   app.disable('x-powered-by');
   // Raised from Express's 100kb default so base64-encoded image uploads (notes, feed posts) fit.
+  // Company isolation: one request-scoped store per request for the legacy ERP company
+  // (legacy-company-scope.ts) — registered first so every later handler runs inside it.
+  app.use(legacyScopeMiddleware);
   app.use(json({ limit: '10mb' }));
   app.use(urlencoded({ extended: true, limit: '10mb' }));
   app.enableCors({
@@ -48,7 +52,7 @@ async function bootstrap() {
   // RolesGuard needs PrismaService so we apply it here rather than via APP_GUARD
   const reflector = app.get(Reflector);
   const prisma = app.get(PrismaService);
-  app.useGlobalGuards(new RolesGuard(reflector, prisma));
+  app.useGlobalGuards(new RolesGuard(reflector, prisma), new LegacyCompanyGuard(prisma));
 
   // ── Swagger ─────────────────────────────────────────────────────────────────
   // Development only by default; production exposes it only when SWAGGER_ENABLED=true is set

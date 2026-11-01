@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertSameCompany, currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { ApprovalService } from '../approval/approval.service';
@@ -183,7 +184,55 @@ export class PurchaseOrderService {
   // decided": no ApprovalRequest row at all (never submitted/approval not required) OR still
   // pending_approval — matching the List filter's job of surfacing everything not yet Approved
   // or Rejected, not inventing a third "draft" bucket the UI doesn't ask for.
+  private async cid(): Promise<number> {
+    return (await currentLegacyCompany(this.prisma)).legacyCompanyId;
+  }
+
+  // Company isolation — an order (and its lines / variant lines / explanations) is reachable only
+  // by its own company; anything else is "not found".
+  private async assertOrderOwned(orderReceiptId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "IM_OrderReceipt" WHERE "RecId" = ${Number(orderReceiptId)} AND "CompanyId" = ${await this.cid()}`;
+    if (!rows.length) throw new NotFoundException('Order not found');
+  }
+  private async assertItemOwned(orderReceiptItemId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "IM_OrderReceiptItem" i JOIN "IM_OrderReceipt" o ON o."RecId" = i."OrderReceiptId"
+      WHERE i."RecId" = ${Number(orderReceiptItemId)} AND o."CompanyId" = ${await this.cid()}`;
+    if (!rows.length) throw new NotFoundException('Order line not found');
+  }
+  private async assertVariantOwned(variantLineId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "IM_OrderReceiptItemVariant" v JOIN "IM_OrderReceiptItem" i ON i."RecId" = v."OrderReceiptItemId"
+      JOIN "IM_OrderReceipt" o ON o."RecId" = i."OrderReceiptId"
+      WHERE v."RecId" = ${Number(variantLineId)} AND o."CompanyId" = ${await this.cid()}`;
+    if (!rows.length) throw new NotFoundException('Variant line not found');
+  }
+  private async assertExplanationOwned(explanationId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "IM_OrderReceiptExplanation" e JOIN "IM_OrderReceipt" o ON o."RecId" = e."OrderReceiptId"
+      WHERE e."RecId" = ${Number(explanationId)} AND o."CompanyId" = ${await this.cid()}`;
+    if (!rows.length) throw new NotFoundException('Explanation not found');
+  }
+  /** Linked records on an order header / line must be the caller's company's own. */
+  private async assertRefs(dto: Record<string, any>) {
+    const ctx = await currentLegacyCompany(this.prisma);
+    const check = (table: string, v: unknown, label: string) =>
+      v != null && v !== '' ? assertSameCompany(this.prisma, ctx, table, [Number(v)], label, { badRequest: true }) : undefined;
+    await check('FI_Account', dto.currentAccountId, 'Current Account');
+    await check('IM_Warehouse', dto.warehouseId, 'Warehouse');
+    await check('IM_Item', dto.inventoryId, 'Item');
+    await check('MA_WorkOrder', dto.manufacturingOrderId, 'Work Order');
+    if (dto.workOrderReceiptItemId != null && dto.workOrderReceiptItemId !== '') {
+      const ok = await this.prisma.$queryRaw<any[]>`
+        SELECT 1 FROM "MA_WorkOrderItem" wi JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId"
+        WHERE wi."RecId" = ${Number(dto.workOrderReceiptItemId)} AND wo."CompanyId" = ${ctx.legacyCompanyId}`;
+      if (!ok.length) throw new BadRequestException('Work Order line is not one of your company’s');
+    }
+  }
+
   async list(search?: string, approvalStatus?: 'all' | 'approved' | 'unapproved' | 'rejected', receiptType: number = RECEIPT_TYPE, paging: ListPaging | null = null) {
+    const cid = await this.cid();
     const statusFilter = !approvalStatus || approvalStatus === 'all'
       ? Prisma.sql``
       : approvalStatus === 'approved'
@@ -198,7 +247,7 @@ export class PurchaseOrderService {
       // ApprovalRequest is unique per (screenKey, transactionId): the join keeps one row per order.
       from: Prisma.sql`FROM "IM_OrderReceipt" t
       LEFT JOIN "ApprovalRequest" ar ON ar."screenKey" = ${screenKeyFor(receiptType)} AND ar."transactionId" = t."RecId"::text
-      WHERE t."IsDeleted" = 0 AND t."ReceiptType" = ${receiptType} ${searchFilter} ${statusFilter}`,
+      WHERE t."IsDeleted" = 0 AND t."ReceiptType" = ${receiptType} AND t."CompanyId" = ${cid} ${searchFilter} ${statusFilter}`,
       sortable: { receiptNo: Prisma.sql`t."ReceiptNo"`, documentNo: Prisma.sql`t."DocumentNo"`, receiptDate: Prisma.sql`t."ReceiptDate"`, approvalStatus: Prisma.sql`ar."status"` },
       defaultSortBy: 'receiptNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`t."RecId"`, legacyLimit: 50,
     }, paging, sanitizeRawRow);
@@ -206,7 +255,7 @@ export class PurchaseOrderService {
 
   async get(id: number, receiptType: number = RECEIPT_TYPE) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
+      SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} AND "CompanyId" = ${await this.cid()}
     `);
     if (!rows.length) throw new NotFoundException('Order not found');
     return sanitizeRawRow(rows[0]);
@@ -299,6 +348,7 @@ export class PurchaseOrderService {
           )
       ) recv ON true
       WHERE po."IsDeleted" = 0 AND po."ReceiptType" = ${receiptType} AND po."CurrentAccountId" = ${currentAccountId}
+        AND po."CompanyId" = ${await this.cid()}
         AND (${poOrderBaseQty} - COALESCE(recv."baseQty", 0)) > 0
         -- Same approval gate applied to the order itself: an order still pending approval or
         -- rejected shouldn't be offered for receiving yet (its lines aren't authorized to
@@ -358,12 +408,13 @@ export class PurchaseOrderService {
   // traceability implementation (ReceiptTraceabilityService) also used from the Receipt/Return/
   // Received-Connection screens (inventory-receipt.service.ts) — no duplicate SQL here.
   async listRelatedReceipts(purchaseOrderId: number) {
+    await this.assertOrderOwned(purchaseOrderId);
     return this.traceability.listForPurchaseOrder(purchaseOrderId);
   }
 
   async getByReceiptNo(receiptNo: string, receiptType: number = RECEIPT_TYPE) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
+      SELECT ${HEADER_SELECT} FROM "IM_OrderReceipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} AND "CompanyId" = ${await this.cid()}
     `);
     if (!rows.length) throw new NotFoundException('Order not found');
     return sanitizeRawRow(rows[0]);
@@ -417,6 +468,7 @@ export class PurchaseOrderService {
 
   async create(dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, numberPrefix: string = 'PO', currentUserId?: string, companyId?: string) {
     await this.assertNoDirectApprovalWrite(dto, receiptType);
+    await this.assertRefs(dto);
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
 
@@ -440,7 +492,7 @@ export class PurchaseOrderService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "IM_OrderReceipt" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         const created = sanitizeRawRow(rows[0]);
@@ -464,7 +516,7 @@ export class PurchaseOrderService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "IM_OrderReceipt" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         const created = sanitizeRawRow(rows[0]);
@@ -483,6 +535,7 @@ export class PurchaseOrderService {
   async update(id: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
     const before = await this.get(id, receiptType);
     await this.assertNoDirectApprovalWrite(dto, receiptType);
+    await this.assertRefs(dto);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) return this.get(id, receiptType);
@@ -622,6 +675,7 @@ export class PurchaseOrderService {
   // --- Detail lines (the grid) ------------------------------------------------------------
 
   async listItems(orderReceiptId: number) {
+    await this.assertOrderOwned(orderReceiptId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_SELECT} FROM "IM_OrderReceiptItem"
       WHERE "OrderReceiptId" = ${orderReceiptId} AND "IsDeleted" = 0
@@ -643,6 +697,7 @@ export class PurchaseOrderService {
   }
 
   async createItem(orderReceiptId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    await this.assertOrderOwned(orderReceiptId); await this.assertRefs(dto);
     // Required-field check branches by Type: Service lines identify by ServiceCardId, every
     // other type (Inventory, Fixed Asset) is an IM_Item row identified by InventoryId.
     if (Number(dto.itemType) === ITEM_TYPE_SERVICE) {
@@ -693,6 +748,7 @@ export class PurchaseOrderService {
   }
 
   async updateItem(itemId: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertItemOwned(itemId); await this.assertRefs(dto);
     const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_OrderReceiptItem" WHERE "RecId" = ${itemId} AND "IsDeleted" = 0`);
     if (!beforeRows.length) throw new NotFoundException('Line not found');
     const before = sanitizeRawRow(beforeRows[0]);
@@ -744,6 +800,7 @@ export class PurchaseOrderService {
   }
 
   async removeItem(itemId: number, userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertItemOwned(itemId);
     const beforeRows = currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_OrderReceiptItem" WHERE "RecId" = ${itemId} AND "IsDeleted" = 0`)
       : [];
@@ -775,6 +832,7 @@ export class PurchaseOrderService {
   // twice for readable Variant1/Variant2 labels. Empty for any item that isn't variant-
   // enabled (IM_Item.HasVariant = 0) — that's the item master's own data, not a defect here.
   async listItemVariantOptions(inventoryId: number) {
+    await assertSameCompany(this.prisma, await currentLegacyCompany(this.prisma), 'IM_Item', [Number(inventoryId)], 'Item');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT iv."RecId" as id,
         iv."Variant1Id" as "variant1Id", v1."ItemName" as "variant1Name",
@@ -789,6 +847,7 @@ export class PurchaseOrderService {
   }
 
   async listItemVariantLines(orderReceiptItemId: number) {
+    await this.assertItemOwned(orderReceiptItemId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant"
       WHERE "OrderReceiptItemId" = ${orderReceiptItemId} AND "IsDeleted" = 0
@@ -811,6 +870,7 @@ export class PurchaseOrderService {
   }
 
   async createItemVariantLine(orderReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    await this.assertItemOwned(orderReceiptItemId);
     if (!dto.inventoryVariantId) throw new BadRequestException('A variant is required');
     const toDb = await this.itemVariantToDb();
     assertAllNonNegative({ Quantity: dto.quantity, 'Net Unit Price': dto.netUnitPrice, 'Received Quantity': dto.receivedQuantity });
@@ -840,6 +900,7 @@ export class PurchaseOrderService {
   }
 
   async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertVariantOwned(variantLineId);
     const toDb = await this.itemVariantToDb();
     assertAllNonNegative({ Quantity: dto.quantity, 'Net Unit Price': dto.netUnitPrice, 'Received Quantity': dto.receivedQuantity });
     const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant" WHERE "RecId" = ${variantLineId}`);
@@ -874,6 +935,7 @@ export class PurchaseOrderService {
   }
 
   async removeItemVariantLine(variantLineId: number, userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertVariantOwned(variantLineId);
     const beforeRows = currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_OrderReceiptItemVariant" WHERE "RecId" = ${variantLineId}`)
       : [];
@@ -900,6 +962,7 @@ export class PurchaseOrderService {
   // --- Explanation tab (IM_OrderReceiptExplanation — dated free-text notes, header-level) --
 
   async listExplanations(orderReceiptId: number) {
+    await this.assertOrderOwned(orderReceiptId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id, "ExplanationDate" as "explanationDate", "ExplanationText" as "explanationText"
       FROM "IM_OrderReceiptExplanation"
@@ -910,6 +973,7 @@ export class PurchaseOrderService {
   }
 
   async createExplanation(orderReceiptId: number, dto: { explanationText: string; explanationDate?: string }, userId: number) {
+    await this.assertOrderOwned(orderReceiptId);
     const text = String(dto.explanationText ?? '').trim();
     if (!text) throw new BadRequestException('Explanation text is required');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -921,6 +985,7 @@ export class PurchaseOrderService {
   }
 
   async removeExplanation(explanationId: number, userId: number) {
+    await this.assertExplanationOwned(explanationId);
     const result = await this.prisma.$executeRaw`
       UPDATE "IM_OrderReceiptExplanation" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${explanationId}
     `;

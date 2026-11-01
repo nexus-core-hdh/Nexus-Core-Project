@@ -49,15 +49,15 @@ before(async () => {
 after(async () => { await prisma.$disconnect(); });
 
 const item = (access: string, name: string) =>
-  one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${uniq(access)}, ${name}, ${access}, 0) RETURNING "RecId" as id`);
+  one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${uniq(access)}, ${name}, ${access}, 0) RETURNING "RecId" as id`);
 
 /** A Work Order with Manufacturing Quantities, a Fabric + Trim BOM and saved Fabric / Yarn requirements. */
 async function seedWorkOrder(o: { quantities: [string, string, number][]; extraPct: number; approved: boolean; fabricQty: number; wastage: number; saved: { fabric: number[]; yarn: number[] } }) {
-  const customer = await one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${uniq('C')}, ${`Customer ${RUN}`}, 0) RETURNING "RecId" as id`);
+  const customer = await one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${uniq('C')}, ${`Customer ${RUN}`}, 0) RETURNING "RecId" as id`);
   const woNo = uniq('W/O-');
   const woId = await one(Prisma.sql`
-    INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "Quantity", "Quantity2", "CurrentAccountId", "UD_Brands", "CustomerOrderNo", "SeasonCode", "IsApproved", "Explanation", "IsDeleted")
-    VALUES (${woNo}, ${o.quantities.reduce((s, q) => s + q[2], 0)}, ${o.extraPct}, ${customer}, 'TAO', 'PO-77', 'W26', ${o.approved ? 1 : 0}, 'Handle with care', 0) RETURNING "RecId" as id`);
+    INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "Quantity", "Quantity2", "CurrentAccountId", "UD_Brands", "CustomerOrderNo", "SeasonCode", "IsApproved", "Explanation", "IsDeleted")
+    VALUES (1, ${woNo}, ${o.quantities.reduce((s, q) => s + q[2], 0)}, ${o.extraPct}, ${customer}, 'TAO', 'PO-77', 'W26', ${o.approved ? 1 : 0}, 'Handle with care', 0) RETURNING "RecId" as id`);
   const itemId = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "CustomerOrderNo", "IsDeleted") VALUES (${woId}, 1, '1035606', 0) RETURNING "RecId" as id`);
   for (const [i, [color, size, n]] of o.quantities.entries()) {
     await prisma.$executeRaw`INSERT INTO "MA_WorkOrderItemVariant" ("WorkOrderItemId", "Explanation", "Quantity", "SubNo", "IsDeleted") VALUES (${itemId}, ${`${color}‖${size}`}, ${n}, ${i + 1}, 0)`;
@@ -66,7 +66,7 @@ async function seedWorkOrder(o: { quantities: [string, string, number][]; extraP
   const trim = await item('TRIM', `Button ${RUN}`);
   const yarn = await item('YARN', `30/1 Carded ${RUN}`);
   for (const [type, inv, qty, wastage, dia] of [[1, fabric, o.fabricQty, o.wastage, '36'], [2, trim, 2, 5, null]] as const) {
-    const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (${woId}, ${type}, ${uniq('R')}, 0) RETURNING "RecId" as id`);
+    const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("CompanyId", "WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (1, ${woId}, ${type}, ${uniq('R')}, 0) RETURNING "RecId" as id`);
     await prisma.$executeRaw`INSERT INTO "MA_RecipeItem" ("RecipeId", "InventoryId", "Quantity", "Wastage", "UD_Dia", "UD_Remarks", "IsDeleted") VALUES (${recipe}, ${inv}, ${qty}, ${wastage}, ${dia}, 'Knit + Dye', 0)`;
   }
   for (const [type, inv, list] of [[1, fabric, o.saved.fabric], [2, yarn, o.saved.yarn]] as const) {
@@ -150,7 +150,7 @@ test('a missing or deleted Work Order is "not found"', async () => {
 });
 
 test('a Work Order with no quantities, BOM or requirements still builds, with empty sections', async () => {
-  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${uniq('W/O-')}, 0) RETURNING "RecId" as id`);
+  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${uniq('W/O-')}, 0) RETURNING "RecId" as id`);
   const r = await svc.build(woId, null);
   assert.equal(r.company.name, null);
   assert.deepEqual(r.colorSizeChart.colors, []);
@@ -331,7 +331,7 @@ async function seedStyleWorkOrder() {
       bomLines: { create: [{ lineType: 'ornament', fabricName: 'Teddy Embroidery', bodyColor: 'Pale Olive', printColor: 'THRED-18-5612', placement: 'Front', component: 'Body', process: 'Embroidery' }] },
     },
   });
-  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "StyleCardId", "IsDeleted") VALUES (${uniq('W/O-')}, ${style.id}, 0) RETURNING "RecId" as id`);
+  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "StyleCardId", "IsDeleted") VALUES (1, ${uniq('W/O-')}, ${style.id}, 0) RETURNING "RecId" as id`);
   return woId;
 }
 

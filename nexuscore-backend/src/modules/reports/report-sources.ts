@@ -100,6 +100,9 @@ export interface SqlReportSource extends ReportSourceBase {
   from: string;
   /** Fixed row condition, e.g. excluding soft-deleted rows. */
   where: string;
+  /** Company isolation (Legacy ERP sources): the query reads the request's legacy company from the
+   *  transaction-local setting nexus.legacy_company_id, which the report builder sets before running it. */
+  legacyCompanyScoped?: boolean;
 }
 
 /**

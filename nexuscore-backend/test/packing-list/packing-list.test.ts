@@ -40,8 +40,8 @@ after(async () => { await prisma.$disconnect(); });
 
 // ── Seed helpers (legacy tables, test database only) ──────────────────────────────────────────
 const one = async (sql: Prisma.Sql) => Number((await prisma.$queryRaw<any[]>(sql))[0].id);
-const account = (name: string) => one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${uniq('CA')}, ${name}, 0) RETURNING "RecId" as id`);
-const receipt = () => one(Prisma.sql`INSERT INTO "IM_Receipt" ("ReceiptNo", "ReceiptType", "IsDeleted") VALUES (${uniq('R')}, 120, 0) RETURNING "RecId" as id`);
+const account = (name: string) => one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${uniq('CA')}, ${name}, 0) RETURNING "RecId" as id`);
+const receipt = () => one(Prisma.sql`INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptNo", "ReceiptType", "IsDeleted") VALUES (1, ${uniq('R')}, 120, 0) RETURNING "RecId" as id`);
 
 /** A Work Order whose Manufacturing Quantities are `variants` ([color, size, qty]) in exactly this
  *  SubNo order — the order CuttingCardService.resolveSizes() reads sizes in. */
@@ -50,8 +50,8 @@ async function workOrder(variants: [string, string, number][], extraCuttingPerce
   const factory = await account('Factory');
   const no = uniq('W/O');
   const id = await one(Prisma.sql`
-    INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "CurrentAccountId", "FactoryId", "CustomerOrderNo", "Quantity2", "IsDeleted")
-    VALUES (${no}, ${customer}, ${factory}, ${uniq('CO')}, ${extraCuttingPercent}, 0) RETURNING "RecId" as id`);
+    INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "CurrentAccountId", "FactoryId", "CustomerOrderNo", "Quantity2", "IsDeleted")
+    VALUES (1, ${no}, ${customer}, ${factory}, ${uniq('CO')}, ${extraCuttingPercent}, 0) RETURNING "RecId" as id`);
   const itemId = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${id}, 1, 0) RETURNING "RecId" as id`);
   let subNo = 0;
   for (const [color, size, qty] of variants) {

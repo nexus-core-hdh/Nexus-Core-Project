@@ -12,6 +12,7 @@ import { ReceiptTraceabilityService } from './receipt-traceability.service';
 import { RELATED_IMPORT_SOURCE_TYPES, getReceiptTypeConfig } from './receipt-types.config';
 import { getOrderTypeConfig } from './order-types.config';
 import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
+import { assertSameCompany, companyIs, currentLegacyCompany } from './legacy-company-scope';
 
 // General Settings -> Approval Configuration screenKey for this module — matches this screen's
 // real MenuItem.href exactly (the existing screen/module registry), so it lines up with
@@ -247,6 +248,7 @@ export class InventoryReceiptService {
     );
     return Prisma.sql`
       SELECT ${qualifiedHeaderSelect},
+        "IM_Receipt"."ApprovedAt" as "approvedAt",
         st."SubcontractTypeName" as "subcontractTypeName",
         sr."SubcontractReceiptName" as "subcontractReceiptName",
         sc."ReceiptNo" as "scriptReceiptNo"
@@ -291,6 +293,8 @@ export class InventoryReceiptService {
     const subcontractTypeFilter = subcontractTypeId !== undefined
       ? Prisma.sql`AND "IM_Receipt"."SubcontractTypeId" = ${subcontractTypeId}`
       : Prisma.sql``;
+    // Company isolation: only the current company's receipts.
+    const ctx = await currentLegacyCompany(this.prisma);
     // Every join below yields at most one row per receipt (FK lookups + a single-row LATERAL
     // aggregate), so the count over the same FROM/WHERE is exact.
     return runLegacyList(this.prisma, {
@@ -309,7 +313,7 @@ export class InventoryReceiptService {
         FROM "IM_ReceiptItem" ri
         WHERE ri."InventoryReceiptId" = "IM_Receipt"."RecId" AND ri."IsDeleted" = 0
       ) tot ON true
-      WHERE "IM_Receipt"."IsDeleted" = 0 AND ${typeFilter} ${searchFilter} ${subcontractTypeFilter}`,
+      WHERE "IM_Receipt"."IsDeleted" = 0 AND ${companyIs('IM_Receipt', ctx)} AND ${typeFilter} ${searchFilter} ${subcontractTypeFilter}`,
       sortable: {
         receiptNo: Prisma.sql`"IM_Receipt"."ReceiptNo"`, documentNo: Prisma.sql`"IM_Receipt"."DocumentNo"`,
         receiptType: Prisma.sql`"IM_Receipt"."ReceiptType"`,
@@ -322,17 +326,19 @@ export class InventoryReceiptService {
   }
 
   async get(id: number, receiptType: number = RECEIPT_TYPE) {
+    const ctx = await currentLegacyCompany(this.prisma);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       ${this.subcontractJoinedSelect()}
-      WHERE "IM_Receipt"."RecId" = ${id} AND "IM_Receipt"."IsDeleted" = 0 AND "IM_Receipt"."ReceiptType" = ${receiptType}
+      WHERE "IM_Receipt"."RecId" = ${id} AND "IM_Receipt"."IsDeleted" = 0 AND "IM_Receipt"."ReceiptType" = ${receiptType} AND ${companyIs('IM_Receipt', ctx)}
     `);
     if (!rows.length) throw new NotFoundException('Inventory receipt not found');
     return sanitizeRawRow(rows[0]);
   }
 
   async getByReceiptNo(receiptNo: string, receiptType: number = RECEIPT_TYPE) {
+    const ctx = await currentLegacyCompany(this.prisma);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "IM_Receipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
+      SELECT ${HEADER_SELECT} FROM "IM_Receipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} AND "CompanyId" = ${ctx.legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Inventory receipt not found');
     return sanitizeRawRow(rows[0]);
@@ -376,13 +382,18 @@ export class InventoryReceiptService {
   // Subcontract Type/Receipt — an id belonging to a Purchase Order (ReceiptType=1) or any other
   // order type is rejected, not silently accepted.
   private async assertValidScript(scriptId: number) {
+    const ctx = await currentLegacyCompany(this.prisma);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT 1 FROM "IM_OrderReceipt" WHERE "RecId" = ${scriptId} AND "ReceiptType" = 3 AND "IsDeleted" = 0
+      SELECT 1 FROM "IM_OrderReceipt" WHERE "RecId" = ${scriptId} AND "ReceiptType" = 3 AND "IsDeleted" = 0 AND "CompanyId" = ${ctx.legacyCompanyId}
     `);
     if (!rows.length) throw new BadRequestException('Invalid Script selected.');
   }
 
   private async assertValidSubcontractRefs(dto: Record<string, any>) {
+    // Company isolation: the header's Current Account and Warehouse must be this company's.
+    const ctx = await currentLegacyCompany(this.prisma);
+    await assertSameCompany(this.prisma, ctx, 'FI_Account', [dto.currentAccountId], 'Current Account', { badRequest: true });
+    await assertSameCompany(this.prisma, ctx, 'IM_Warehouse', [dto.inWarehouseId], 'Warehouse', { badRequest: true });
     if (dto.subcontractTypeId !== undefined && dto.subcontractTypeId !== null) {
       await this.assertValidMasterRef('MD_SubcontractType', Number(dto.subcontractTypeId), 'Subcontract Type');
     }
@@ -405,18 +416,46 @@ export class InventoryReceiptService {
 
   private static readonly MAX_CODE_RETRIES = 5;
 
-  // General Settings -> Approval Configuration is OFF for this screen -> the record must land
-  // Approved immediately, with zero manual action, by reusing approve() itself (the same
-  // IsApproved/UpdatedAt/UpdatedBy write it always made, inside the same transaction it always
-  // used) rather than a second copy of that write here. approve() already no-ops the
-  // ApprovalRequest/AuditLog side when approval isn't required (see its own comment), so this
-  // adds no new behavior for the ON case — it only ever runs the branch that already existed.
-  // Idempotent by construction: it's a flag UPDATE (IsApproved=1), not a stock/quantity mutation
-  // — stock itself is computed live from IM_ReceiptItem (see inventory-card.service.ts), so
-  // calling this on every not-required create/update can never inflate it.
-  private async autoApproveIfNotRequired(id: number, userId: number, receiptType: number) {
-    if (await this.approvalSvc.isApprovalRequired(screenKeyFor(receiptType))) return this.get(id, receiptType);
-    return this.approve(id, String(userId), undefined, receiptType);
+  // --- Approval lock (same workflow as the Packing List) -----------------------------------
+  // Saving never approves: a receipt stays Unapproved until someone with approval:approve uses
+  // Approve (which used to happen automatically on every Save while Approval Configuration was
+  // OFF). An approved receipt is LOCKED — its header, detail lines and variant lines can't be
+  // changed or deleted, and the receipt itself can't be deleted — until it is unapproved.
+  // Enforced here, on every write a controller exposes, so a direct API call can't bypass the
+  // screen. IsApproved is a display/lock flag only: stock is gated on ApprovalRequest rows, never
+  // on IsApproved (inventory-card.service.ts stockApprovalGateSql), so locking moves no stock.
+  // Is Approved itself is server-controlled — only approve() / unapprove() change it.
+
+  // A receipt linked to an APPROVED invoice (IM_Receipt.InvoiceId -> IM_Invoice, the Receipt
+  // Invoice screens — invoice.service.ts) is locked the same way: the invoice's totals are its lines.
+  // Company isolation: also the ownership check for every write path that goes through here
+  // (header update / delete / resubmit, lines, variant lines) — a receipt (or a line / variant of
+  // one) belonging to another company, or that doesn't exist, is "not found".
+  private async assertUnlocked(receiptIdSql: Prisma.Sql) {
+    const ctx = await currentLegacyCompany(this.prisma);
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT r."ReceiptNo" as "receiptNo", COALESCE(r."IsApproved", 0)::int AS approved, v."ReceiptNo" as "invoiceNo"
+      FROM "IM_Receipt" r
+      LEFT JOIN "IM_Invoice" v ON v."RecId" = r."InvoiceId" AND COALESCE(v."IsDeleted", 0) = 0 AND COALESCE(v."IsApproved", 0) <> 0
+      WHERE r."RecId" = (${receiptIdSql}) AND ${companyIs('r', ctx)}
+    `);
+    if (!rows.length) throw new NotFoundException('Inventory receipt not found');
+    if (rows[0]?.approved) {
+      throw new ConflictException(`Receipt ${rows[0].receiptNo ?? ''} is approved — unapprove it before changing it.`);
+    }
+    if (rows[0]?.invoiceNo) {
+      throw new ConflictException(`Receipt ${rows[0].receiptNo ?? ''} is on approved invoice ${rows[0].invoiceNo} — unapprove the invoice before changing it.`);
+    }
+  }
+  private assertReceiptUnlocked(receiptId: number) {
+    return this.assertUnlocked(Prisma.sql`SELECT ${receiptId}::int`);
+  }
+  private assertItemUnlocked(itemId: number) {
+    return this.assertUnlocked(Prisma.sql`SELECT "InventoryReceiptId" FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId}`);
+  }
+  private assertVariantLineUnlocked(variantLineId: number) {
+    return this.assertUnlocked(Prisma.sql`
+      SELECT i."InventoryReceiptId" FROM "IM_ReceiptItemVariant" v JOIN "IM_ReceiptItem" i ON i."RecId" = v."InventoryReceiptItemId" WHERE v."RecId" = ${variantLineId}`);
   }
 
   async create(
@@ -427,12 +466,14 @@ export class InventoryReceiptService {
     currentUserId?: string,
     companyId?: string,
   ) {
-    // Same bypass guard as update() below — a direct API call can't create a record already
-    // marked approved when this screen requires approval. No-op (unchanged) otherwise.
-    if (dto.isApproved !== undefined && await this.approvalSvc.isApprovalRequired(screenKeyFor(receiptType))) {
-      throw new ForbiddenException('This screen requires approval — Is Approved cannot be set directly.');
+    // Is Approved is server-controlled (see the approval lock above): a direct API call can't
+    // create a record already marked approved, whatever this screen's Approval Configuration.
+    if (dto.isApproved !== undefined) {
+      throw new ForbiddenException('Is Approved cannot be set directly — save the receipt, then use Approve.');
     }
     await this.assertValidSubcontractRefs(dto);
+    // Company isolation: stamped with the request's legacy company + workplace (never client input).
+    const ctx = await currentLegacyCompany(this.prisma);
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
 
@@ -445,10 +486,10 @@ export class InventoryReceiptService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "IM_Receipt" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${ctx.legacyCompanyId}, ${ctx.workplaceId}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        const result = await this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
+        const result = await this.get(rows[0].id, receiptType);
         if (currentUserId && companyId) {
           // Audited via the same joined get() the DELETE snapshot already uses (not the bare,
           // unjoined `result` — approve()'s HEADER_SELECT has no Subcontract Type/Receipt/Script
@@ -484,10 +525,10 @@ export class InventoryReceiptService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "IM_Receipt" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${ctx.legacyCompanyId}, ${ctx.workplaceId}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
-        const result = await this.autoApproveIfNotRequired(rows[0].id, userId, receiptType);
+        const result = await this.get(rows[0].id, receiptType);
         if (currentUserId && companyId) {
           const snapshotHeader = await this.get(rows[0].id, receiptType).catch(() => result);
           const enriched = await enrichDisplayRefs(snapshotHeader, this.displayResolvers());
@@ -528,29 +569,24 @@ export class InventoryReceiptService {
     companyId?: string,
   ) {
     const before = await this.get(id, receiptType);
-    // Approval Configuration — when approval is required for this screen, IsApproved can only
-    // be set via the dedicated approve() flow below (permission-checked, pending-state-checked,
-    // self-approval-checked). Closes the exact bypass this framework exists to close: a plain
-    // PUT could previously set IsApproved=true unconditionally. When approval isn't required
-    // (the default), this is a no-op and update() behaves byte-for-byte as before.
-    if (dto.isApproved !== undefined && await this.approvalSvc.isApprovalRequired(screenKeyFor(receiptType))) {
-      throw new ForbiddenException('This screen requires approval — use the Approve action instead of setting Is Approved directly.');
+    // Is Approved changes only through approve() / unapprove() (permission-checked, and on a
+    // configured screen also pending-state- and self-approval-checked) — never through a PUT.
+    if (dto.isApproved !== undefined) {
+      throw new ForbiddenException('Is Approved cannot be set directly — use Approve or Unapprove.');
     }
+    await this.assertReceiptUnlocked(id);
     await this.assertValidSubcontractRefs(dto);
     const toDb = await this.headerToDb();
-    const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && toDb(c, dto[camel(c)]) !== undefined);
-    if (!cols.length) return this.autoApproveIfNotRequired(id, userId, receiptType);
+    const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && c !== 'IsApproved' && toDb(c, dto[camel(c)]) !== undefined);
+    if (!cols.length) return before;
     const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
     await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE "IM_Receipt" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
       WHERE "RecId" = ${id}
       RETURNING ${HEADER_SELECT}
     `);
-    // Same "approval OFF -> always land Approved, zero manual action" rule as create() above —
-    // see autoApproveIfNotRequired's own comment. Saving/updating an already-Approved record
-    // just re-flips the same IsApproved=1 it already had, so this is safe to run unconditionally
-    // on every header Save while approval isn't required.
-    const result = await this.autoApproveIfNotRequired(id, userId, receiptType);
+    // Saving no longer approves (see the approval lock above) — the receipt keeps its status.
+    const result = await this.get(id, receiptType);
     // Only log UPDATE when a submitted header value actually differs from what was already
     // persisted — see hasRealChanges' own comment (a no-op Save must never fabricate an Updated
     // history entry; confirmed live as the root cause of "CREATE produces Created + Updated" — a
@@ -570,11 +606,7 @@ export class InventoryReceiptService {
         [`${label} Details (IM_ReceiptItem)`]: enrichedItems.map(({ variants: _v, ...rest }: any) => rest),
         [`${label} Variants (IM_ReceiptItemVariant)`]: variants,
       };
-      // `result` (from autoApproveIfNotRequired) may come from approve()'s unjoined HEADER_SELECT
-      // — re-fetch via the same joined get() `before` already used so Subcontract Type/Receipt/
-      // Script names are present on both sides, same "already-proven receipt snapshot mechanism"
-      // as CREATE/DELETE.
-      const afterHeader = await this.get(id, receiptType).catch(() => result);
+      const afterHeader = result;
       const enrichedBefore = await enrichDisplayRefs(before, resolvers);
       const enrichedAfter = await enrichDisplayRefs(afterHeader, resolvers);
       await this.audit.recordSafe({
@@ -595,6 +627,14 @@ export class InventoryReceiptService {
   // Same bug/fix as update() above — remove() also self-checks existence via this.get(id).
   async remove(id: number, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
     await this.get(id, receiptType);
+    await this.assertReceiptUnlocked(id);
+    // A receipt on a live invoice (IM_Invoice.InventoryReceiptId, or IM_Receipt.InvoiceId for every
+    // receipt of a consolidated invoice) can't be deleted — that would leave the invoice without its
+    // lines. Delete or relink the invoice first.
+    const [onInvoice] = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT "ReceiptNo" as "invoiceNo" FROM "IM_Invoice" WHERE COALESCE("IsDeleted", 0) = 0
+        AND ("InventoryReceiptId" = ${id} OR "RecId" = (SELECT "InvoiceId" FROM "IM_Receipt" WHERE "RecId" = ${id})) LIMIT 1`);
+    if (onInvoice) throw new ConflictException(`This receipt is on invoice ${onInvoice.invoiceNo} — delete or relink that invoice first.`);
     // Full document snapshot (header + items + variants) captured BEFORE the soft-delete, per
     // Section 3/4's "DELETE -> last valid state before deletion" requirement — this is the exact
     // reference-screenshot proof case (Inventory Receipt / Details / Variants as separate
@@ -631,16 +671,22 @@ export class InventoryReceiptService {
 
   async submitForApproval(id: number, userId: string, receiptType: number = RECEIPT_TYPE, companyId?: string) {
     const header = await this.get(id, receiptType);
+    // An approved (locked) receipt isn't resubmitted — Unapprove reopens it.
+    await this.assertReceiptUnlocked(id);
     return this.approvalSvc.submit(screenKeyFor(receiptType), String(id), userId, undefined, this.approvalCtx(header, receiptType, companyId));
   }
 
   async approve(id: number, userId: string, remarks: string | undefined, receiptType: number = RECEIPT_TYPE, companyId?: string) {
     const header = await this.get(id, receiptType);
+    if (Number(header.isApproved)) return header;
+    // Same validation as approving a Packing List: nothing to lock without a detail line.
+    const [{ lines }] = await this.prisma.$queryRaw<{ lines: number }[]>`
+      SELECT count(*)::int AS lines FROM "IM_ReceiptItem" WHERE "InventoryReceiptId" = ${id} AND COALESCE("IsDeleted", 0) = 0`;
+    if (!lines) throw new BadRequestException('Add at least one line before approving.');
     const screenKey = screenKeyFor(receiptType);
-    // "When approval is NOT required, existing workflow remains completely unchanged" — this
-    // screen's original Approval row-action was an unrestricted direct write, so it stays
-    // exactly that (no permission/state/self-approval gate, no ApprovalRequest involved) unless
-    // the screen is actually configured to require it.
+    // Without an Approval Configuration for this screen, Approve is a direct flip (still behind
+    // the approval:approve permission on the route). With one, the ApprovalService decision
+    // (pending-state + self-approval checks) must succeed first.
     const approvalRequired = await this.approvalSvc.isApprovalRequired(screenKey);
     // Both writes (the ApprovalRequest decision + AuditLog row, and this screen's own
     // IsApproved flip) happen in ONE atomic transaction — if the ApprovalRequest update fails
@@ -648,19 +694,55 @@ export class InventoryReceiptService {
     // IsApproved UPDATE fails, the ApprovalRequest decision rolls back too, so the two can never
     // observably diverge (approval-required transaction can never sit "approved" with stock
     // still gated, or "not approved" with stock already counting it).
-    const rows = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       if (approvalRequired) {
         await this.approvalSvc.approve(screenKey, String(id), userId, remarks, tx, this.approvalCtx(header, receiptType, companyId));
       }
       // Number(userId)||1 matches this file's own existing UpdatedBy convention everywhere else
-      // (the legacy column is a small numeric id with no real mapping to NexusCore's uuid users).
-      return tx.$queryRaw<any[]>(Prisma.sql`
-        UPDATE "IM_Receipt" SET "IsApproved" = 1, "UpdatedAt" = now(), "UpdatedBy" = ${Number(userId) || 1}
+      // (the legacy column is a small numeric id with no real mapping to NexusCore's uuid users);
+      // the real approver is in the AuditLog row below / the ApprovalRequest decision.
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "IM_Receipt" SET "IsApproved" = 1, "ApprovedAt" = now(), "ApprovedBy" = ${Number(userId) || 1},
+          "UpdatedAt" = now(), "UpdatedBy" = ${Number(userId) || 1}
         WHERE "RecId" = ${id}
-        RETURNING ${HEADER_SELECT}
       `);
     });
-    return sanitizeRawRow(rows[0]);
+    if (!approvalRequired) await this.recordApprovalAudit(header, receiptType, userId, companyId, AUDIT_ACTIONS.APPROVE, 'Approved');
+    return this.get(id, receiptType);
+  }
+
+  /** Approved -> Unapproved: unlocks the receipt for editing. On a screen with an Approval
+   *  Configuration it also goes back to Pending Approval (ApprovalService.submit — a configured
+   *  approver must approve it again; for Purchase Receipt / Return that also takes it out of stock
+   *  until then, exactly like any pending receipt). Same approval:approve permission as Approve. */
+  async unapprove(id: number, userId: string, receiptType: number = RECEIPT_TYPE, companyId?: string) {
+    const header = await this.get(id, receiptType);
+    if (!Number(header.isApproved)) return header;
+    const screenKey = screenKeyFor(receiptType);
+    const approvalRequired = await this.approvalSvc.isApprovalRequired(screenKey);
+    await this.prisma.$transaction(async (tx) => {
+      if (approvalRequired) {
+        await this.approvalSvc.submit(screenKey, String(id), userId, tx, this.approvalCtx(header, receiptType, companyId));
+      }
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "IM_Receipt" SET "IsApproved" = 0, "ApprovedAt" = NULL, "ApprovedBy" = NULL,
+          "UpdatedAt" = now(), "UpdatedBy" = ${Number(userId) || 1}
+        WHERE "RecId" = ${id}
+      `);
+    });
+    if (!approvalRequired) await this.recordApprovalAudit(header, receiptType, userId, companyId, 'unapprove', 'Unapproved');
+    return this.get(id, receiptType);
+  }
+
+  /** Log Tracking row for an Approve / Unapprove made without an Approval Configuration (with one,
+   *  ApprovalService writes its own transition rows). Records the real NexusCore user. */
+  private async recordApprovalAudit(header: any, receiptType: number, userId: string, companyId: string | undefined, action: string, status: string) {
+    if (!companyId) return;
+    await this.audit.recordSafe({
+      userId, companyId, screenKey: screenKeyFor(receiptType), entityType: 'IM_Receipt', entityId: String(header.id),
+      action, documentNo: header.receiptNo,
+      before: { Status: Number(header.isApproved) ? 'Approved' : 'Unapproved' }, after: { Status: status },
+    });
   }
 
   async reject(id: number, userId: string, remarks: string, receiptType: number = RECEIPT_TYPE, companyId?: string) {
@@ -679,6 +761,7 @@ export class InventoryReceiptService {
   }
 
   async getApprovalStatus(id: number, receiptType: number = RECEIPT_TYPE) {
+    await this.get(id, receiptType); // company isolation: another company's receipt is "not found"
     return this.approvalSvc.getStatus(screenKeyFor(receiptType), String(id));
   }
 
@@ -688,6 +771,7 @@ export class InventoryReceiptService {
   // to the originating Purchase Order (if any) and returns that PO's whole receipt family minus
   // this record itself; a receipt never linked to a PO legitimately returns [].
   async listRelatedReceipts(id: number, receiptType: number = RECEIPT_TYPE) {
+    await this.get(id, receiptType); // company isolation
     return this.traceability.listForReceipt(id, receiptType);
   }
 
@@ -710,6 +794,7 @@ export class InventoryReceiptService {
   // source lines here can come from either type — a source receipt still pending_approval or
   // rejected isn't offered (nothing "received" yet to import from).
   async listRelatedImportable(currentAccountId: number) {
+    const ctx = await currentLegacyCompany(this.prisma);
     const srcInvId = Prisma.sql`ri."InventoryId"`;
     const srcUnitId = Prisma.sql`ri."UnitId"`;
     const srcReceivedBaseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, srcInvId, srcUnitId, 'src');
@@ -777,6 +862,7 @@ export class InventoryReceiptService {
       WHERE ri."IsDeleted" = 0
         AND rec."ReceiptType" IN (${Prisma.join(RELATED_IMPORT_SOURCE_TYPES)})
         AND rec."CurrentAccountId" = ${currentAccountId}
+        AND ${companyIs('rec', ctx)}
         AND (${srcReceivedBaseQty} - COALESCE(consumed."baseQty", 0)) > 0
         AND NOT EXISTS (
           SELECT 1 FROM "ApprovalRequest" ar
@@ -819,6 +905,10 @@ export class InventoryReceiptService {
   // --- Detail lines (the grid) ------------------------------------------------------------
 
   async listItems(inventoryReceiptId: number) {
+    // Company isolation: lines of another company's receipt are "not found".
+    const ctx = await currentLegacyCompany(this.prisma);
+    const owned = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT 1 FROM "IM_Receipt" r WHERE r."RecId" = ${inventoryReceiptId} AND ${companyIs('r', ctx)}`);
+    if (!owned.length) throw new NotFoundException('Inventory receipt not found');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_SELECT} FROM "IM_ReceiptItem"
       WHERE "InventoryReceiptId" = ${inventoryReceiptId} AND "IsDeleted" = 0
@@ -982,6 +1072,7 @@ export class InventoryReceiptService {
       FROM "IM_OrderReceiptItem" source_oi
       JOIN "IM_OrderReceipt" source_po ON source_po."RecId" = source_oi."OrderReceiptId"
       WHERE source_oi."RecId" = ${orderReceiptItemId} AND source_oi."IsDeleted" = 0
+        AND source_po."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new BadRequestException('The originating order line was not found.');
     const { targetAccountId, sourceAccountId, sourceOrderType } = rows[0];
@@ -1075,6 +1166,7 @@ export class InventoryReceiptService {
       FROM "IM_ReceiptItem" source_ri
       JOIN "IM_Receipt" source_rec ON source_rec."RecId" = source_ri."InventoryReceiptId"
       WHERE source_ri."RecId" = ${purchaseReceiptItemId} AND source_ri."IsDeleted" = 0
+        AND source_rec."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new BadRequestException('The originating receipt line was not found.');
     const { targetAccountId, targetReceiptType, sourceAccountId, sourceReceiptType } = rows[0];
@@ -1106,7 +1198,9 @@ export class InventoryReceiptService {
   }
 
   async createItem(inventoryReceiptId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    await this.assertReceiptUnlocked(inventoryReceiptId);
     if (!dto.inventoryId) throw new BadRequestException('An inventory item is required');
+    await this.assertLineRefs(dto);
     const toDb = await this.itemToDb();
     const effective: Record<string, any> = { ...dto, receiptType };
     if (effective.colorCardId != null) await this.assertValidColorCard(String(effective.colorCardId));
@@ -1185,6 +1279,8 @@ export class InventoryReceiptService {
   // both controllers (Purchase Receipt's dedicated route and the generic 16-type route) now pass
   // it, so the check is active everywhere in practice.
   async updateItem(itemId: number, dto: Record<string, any>, userId: number, inventoryReceiptId?: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    await this.assertItemUnlocked(itemId);
+    await this.assertLineRefs(dto);
     const beforeForAudit = currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId}`).then((r) => (r.length ? sanitizeRawRow(r[0]) : null))
       : null;
@@ -1320,6 +1416,7 @@ export class InventoryReceiptService {
 
   // Same bug/fix as updateItem() above.
   async removeItem(itemId: number, userId: number, inventoryReceiptId?: number, currentUserId?: string, companyId?: string) {
+    await this.assertItemUnlocked(itemId);
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
     const beforeForAudit = currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT}, "ReceiptType" as "receiptType" FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId} ${owner}`).then((r) => (r.length ? sanitizeRawRow(r[0]) : null))
@@ -1354,6 +1451,7 @@ export class InventoryReceiptService {
   // master data, not a defect here either.
 
   async listItemVariantOptions(inventoryId: number) {
+    await assertSameCompany(this.prisma, await currentLegacyCompany(this.prisma), 'IM_Item', [inventoryId], 'Inventory item');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT iv."RecId" as id,
         iv."Variant1Id" as "variant1Id", v1."ItemName" as "variant1Name",
@@ -1368,6 +1466,11 @@ export class InventoryReceiptService {
   }
 
   async listItemVariantLines(inventoryReceiptItemId: number) {
+    // Company isolation: only a line of one of the current company's receipts.
+    const ctx = await currentLegacyCompany(this.prisma);
+    const owned = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "IM_ReceiptItem" i JOIN "IM_Receipt" r ON r."RecId" = i."InventoryReceiptId" WHERE i."RecId" = ${inventoryReceiptItemId} AND ${companyIs('r', ctx)}`);
+    if (!owned.length) throw new NotFoundException('Receipt line not found');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_VARIANT_SELECT} FROM "IM_ReceiptItemVariant"
       WHERE "InventoryReceiptItemId" = ${inventoryReceiptItemId} AND "IsDeleted" = 0
@@ -1381,8 +1484,24 @@ export class InventoryReceiptService {
   // ColorCardId ITEM_COLUMNS comment above), so an invalid id would otherwise write silently and
   // just fail to resolve a display name later. Reject unless it's a real ColorCard row.
   private async assertValidColorCard(colorCardId: string) {
-    const card = await this.prisma.colorCard.findUnique({ where: { id: colorCardId }, select: { id: true } });
-    if (!card) throw new BadRequestException('Selected color does not exist');
+    // Company isolation: the colour must be one of the current company's (ColorCard -> Branch -> Company).
+    const ctx = await currentLegacyCompany(this.prisma);
+    const card = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "ColorCard" cc JOIN "Branch" b ON b."id" = cc."branchId" WHERE cc."id" = ${colorCardId} AND b."companyId" = ${ctx.companyId}`);
+    if (!card.length) throw new BadRequestException('Selected color does not exist');
+  }
+
+  /** Company isolation: a line's item and Work Order line must be the current company's. (Order
+   *  and source-receipt links are checked in assertPendingSource / assertRelatedImportSource.) */
+  private async assertLineRefs(dto: Record<string, any>) {
+    const ctx = await currentLegacyCompany(this.prisma);
+    await assertSameCompany(this.prisma, ctx, 'IM_Item', [dto.inventoryId], 'Inventory item', { badRequest: true });
+    if (dto.workOrderReceiptItemId != null && dto.workOrderReceiptItemId !== '') {
+      const ok = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT 1 FROM "MA_WorkOrderItem" wi JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId"
+        WHERE wi."RecId" = ${Number(dto.workOrderReceiptItemId)} AND wo."CompanyId" = ${ctx.legacyCompanyId}`);
+      if (!ok.length) throw new BadRequestException(`Work Order line ${dto.workOrderReceiptItemId} not found`);
+    }
   }
 
   // Color + Variant1 enhancement — backend validation (spec section 7): a submitted
@@ -1400,6 +1519,7 @@ export class InventoryReceiptService {
   }
 
   async createItemVariantLine(inventoryReceiptItemId: number, dto: Record<string, any>, userId: number, receiptType: number = RECEIPT_TYPE, currentUserId?: string, companyId?: string) {
+    await this.assertItemUnlocked(inventoryReceiptItemId);
     if (!dto.inventoryVariantId) throw new BadRequestException('A variant is required');
     await this.assertVariantBelongsToLineItem(inventoryReceiptItemId, Number(dto.inventoryVariantId));
     const toDb = await this.itemVariantToDb();
@@ -1429,6 +1549,7 @@ export class InventoryReceiptService {
   }
 
   async updateItemVariantLine(variantLineId: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertVariantLineUnlocked(variantLineId);
     if (dto.inventoryVariantId !== undefined && dto.inventoryVariantId !== null) {
       const lineRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
         SELECT "InventoryReceiptItemId" as id FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId} AND "IsDeleted" = 0
@@ -1469,6 +1590,7 @@ export class InventoryReceiptService {
   }
 
   async removeItemVariantLine(variantLineId: number, userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertVariantLineUnlocked(variantLineId);
     const beforeRows = currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_VARIANT_SELECT} FROM "IM_ReceiptItemVariant" WHERE "RecId" = ${variantLineId}`)
       : [];

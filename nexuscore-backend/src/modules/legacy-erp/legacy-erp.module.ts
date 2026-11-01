@@ -71,6 +71,10 @@ import { DyeingFollowUpService } from './dyeing-follow-up.service';
 import { ProcessFollowUpService } from './process-follow-up.service';
 import { PackingListController } from './packing-list.controller';
 import { PackingListService } from './packing-list.service';
+import { InvoiceController } from './invoice.controller';
+import { InvoiceService } from './invoice.service';
+import { InvoiceAttachmentsService } from './invoice-attachments.service';
+import { LegacyCompanyContextService } from './legacy-company-context.service';
 import { OrderManufacturingController } from './order-manufacturing.controller';
 import { OrderManufacturingService } from './order-manufacturing.service';
 import { DeleteDependencyService } from './delete-dependency.service';
@@ -108,6 +112,7 @@ import { AuditModule } from '../audit/audit.module';
     AccountController,
     TrimCardController,
     PackingListController,
+    InvoiceController,
     UnitSetController,
     LookupController,
     YarnCardController,
@@ -182,6 +187,9 @@ import { AuditModule } from '../audit/audit.module';
     DyeingFollowUpService,
     ProcessFollowUpService,
     PackingListService,
+    InvoiceService,
+    InvoiceAttachmentsService,
+    LegacyCompanyContextService,
     OrderManufacturingService,
     DeleteDependencyService,
     ReceiptTraceabilityService,
@@ -202,6 +210,6 @@ import { AuditModule } from '../audit/audit.module';
   // and paging) instead of a second query of those tables.
   // WorkOrderOrderFormService / InventoryReceiptGatePassService build the Report Builder's Order Form
   // and Inward Gate Pass document sources (reports/work-order-order-form.report.ts, inward-gate-pass.report.ts).
-  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService, InventoryReceiptService, WorkOrderOrderFormService, InventoryReceiptGatePassService, YarnRequirementReportService, DyeingFollowUpService, ProcessFollowUpService, OrderManufacturingService],
+  exports: [LegacyMasterLookupService, PurchaseOrderService, FiReceiptService, InventoryReceiptService, WorkOrderOrderFormService, InventoryReceiptGatePassService, YarnRequirementReportService, DyeingFollowUpService, ProcessFollowUpService, OrderManufacturingService, LegacyCompanyContextService],
 })
 export class LegacyErpModule {}

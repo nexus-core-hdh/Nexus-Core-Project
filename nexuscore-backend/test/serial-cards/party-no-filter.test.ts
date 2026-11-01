@@ -27,7 +27,7 @@ after(async () => { await prisma.$disconnect(); });
 
 /** One receipt line with cards carrying the given Party Nos (null = no Party No). */
 async function lineWithCards(partyNos: (string | null)[], opts: { deleted?: boolean } = {}) {
-  const inv = await one(`INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES ($1,'f','FABRIC',0) RETURNING "RecId" AS id`, uniq('FAB'));
+  const inv = await one(`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES (1, $1,'f','FABRIC',0) RETURNING "RecId" AS id`, uniq('FAB'));
   const receiptId = await one(`INSERT INTO "IM_Receipt" ("ReceiptType","ReceiptNo","ReceiptDate","CompanyId","WorkplaceId","IsDeleted") VALUES (2,$1,'2026-05-01'::date,1,1,0) RETURNING "RecId" AS id`, uniq('IR-'));
   const lineId = await one(`INSERT INTO "IM_ReceiptItem" ("InventoryReceiptId","ReceiptType","InventoryId","Quantity","IsDeleted") VALUES ($1,2,$2,10,0) RETURNING "RecId" AS id`, receiptId, inv);
   for (const p of partyNos) {

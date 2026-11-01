@@ -42,4 +42,9 @@ export function useTestDatabase() {
     process.env.NEXUSCORE_DATABASE_URL_ORIGINAL = process.env.NEXUSCORE_DATABASE_URL;
   }
   process.env.NEXUSCORE_DATABASE_URL = TEST_DATABASE_URL;
+  // Company isolation: outside an HTTP request there is no legacy company. The stand-in legacy rows
+  // are legacy company 1 (their CompanyId default), so the suite runs as that company — set
+  // explicitly here, never in the application.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('../../src/modules/legacy-erp/legacy-company-scope').setNonHttpLegacyCompanyDefault({ companyId: 'test-default', legacyCompanyId: 1, workplaceId: 1 });
 }

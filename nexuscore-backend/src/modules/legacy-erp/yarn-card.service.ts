@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { withStockValuation } from './inventory-card.service';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
@@ -92,7 +93,7 @@ export class YarnCardService {
     // Stock In Hand / Stock Value for the rows of this page — one valuation query (inventory-card.service.ts).
     return withStockValuation(this.prisma, await runLegacyList(this.prisma, {
       select: HEADER_SELECT,
-      from: Prisma.sql`FROM "IM_Item" WHERE "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE} ${searchFilter}`,
+      from: Prisma.sql`FROM "IM_Item" WHERE "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} ${searchFilter}`,
       sortable: { inventoryCode: Prisma.sql`"InventoryCode"`, inventoryName: Prisma.sql`"InventoryName"`, specialCode: Prisma.sql`"SpecialCode"` },
       defaultSortBy: 'inventoryCode', defaultSortDir: 'asc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
     }, paging, sanitizeRawRow));
@@ -100,7 +101,7 @@ export class YarnCardService {
 
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "IM_Item" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE}
+      SELECT ${HEADER_SELECT} FROM "IM_Item" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Yarn card not found');
     return sanitizeRawRow(rows[0]);
@@ -118,7 +119,7 @@ export class YarnCardService {
 
   async getByCode(code: string) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "IM_Item" WHERE "InventoryCode" = ${code} AND "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE}
+      SELECT ${HEADER_SELECT} FROM "IM_Item" WHERE "InventoryCode" = ${code} AND "IsDeleted" = 0 AND "AccessCode" = ${ACCESS_CODE} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Yarn card not found');
     return sanitizeRawRow(rows[0]);
@@ -156,7 +157,7 @@ export class YarnCardService {
     const exclude = excludeId ? Prisma.sql`AND "RecId" != ${excludeId}` : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "InventoryCode" as code, "InventoryName" as name FROM "IM_Item"
-      WHERE "AccessCode" = ${ACCESS_CODE} AND "IsDeleted" = 0
+      WHERE "AccessCode" = ${ACCESS_CODE} AND "IsDeleted" = 0 AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
         AND (LOWER("InventoryCode") = LOWER(${code}) OR LOWER("InventoryName") = LOWER(${name}))
         ${exclude}
     `);
@@ -196,7 +197,7 @@ export class YarnCardService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "IM_Item" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, ${insertedByUserId ?? null}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         const created = sanitizeRawRow(rows[0]);
@@ -234,7 +235,7 @@ export class YarnCardService {
     const assignments = Prisma.join(cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE "IM_Item" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
-      WHERE "RecId" = ${id}
+      WHERE "RecId" = ${id} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       RETURNING ${HEADER_SELECT}
     `);
     const updated = sanitizeRawRow(rows[0]);
@@ -256,7 +257,7 @@ export class YarnCardService {
     await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('IM_Item', id, tx);
       await tx.$executeRaw`
-        UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+        UPDATE "IM_Item" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       `;
     });
     if (currentUserId && companyId) {

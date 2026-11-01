@@ -49,18 +49,18 @@ interface LineSeed { name: string; unit: string; gross: number | null; qty: numb
 
 /** One receipt with its supplier, warehouse and lines; returns its id and the line ids. */
 async function seedReceipt(o: { type: number; supplier: string; warehouse: string; driver?: string; vehicle?: string; ogp?: string; lines: LineSeed[] }) {
-  const supplier = await one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${uniq('S')}, ${o.supplier}, 0) RETURNING "RecId" as id`);
-  const warehouse = await one(Prisma.sql`INSERT INTO "IM_Warehouse" ("WarehouseCode", "WarehouseName", "IsDeleted") VALUES (${uniq('W')}, ${o.warehouse}, 0) RETURNING "RecId" as id`);
+  const supplier = await one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${uniq('S')}, ${o.supplier}, 0) RETURNING "RecId" as id`);
+  const warehouse = await one(Prisma.sql`INSERT INTO "IM_Warehouse" ("CompanyId", "WarehouseCode", "WarehouseName", "IsDeleted") VALUES (1, ${uniq('W')}, ${o.warehouse}, 0) RETURNING "RecId" as id`);
   const receiptNo = uniq('IGP-');
   const receiptId = await one(Prisma.sql`
-    INSERT INTO "IM_Receipt" ("ReceiptNo", "ReceiptType", "ReceiptDate", "CurrentAccountId", "InWarehouseId", "DriverName", "PlateNumber", "DocumentNo", "IsDeleted")
-    VALUES (${receiptNo}, ${o.type}, ${'2026-10-23'}::timestamp, ${supplier}, ${warehouse}, ${o.driver ?? null}, ${o.vehicle ?? null}, ${o.ogp ?? null}, 0) RETURNING "RecId" as id`);
+    INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptNo", "ReceiptType", "ReceiptDate", "CurrentAccountId", "InWarehouseId", "DriverName", "PlateNumber", "DocumentNo", "IsDeleted")
+    VALUES (1, ${receiptNo}, ${o.type}, ${'2026-10-23'}::timestamp, ${supplier}, ${warehouse}, ${o.driver ?? null}, ${o.vehicle ?? null}, ${o.ogp ?? null}, 0) RETURNING "RecId" as id`);
   for (const [i, l] of o.lines.entries()) {
-    const item = await one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${uniq('F')}, ${l.name}, 'FABRIC', 0) RETURNING "RecId" as id`);
+    const item = await one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${uniq('F')}, ${l.name}, 'FABRIC', 0) RETURNING "RecId" as id`);
     const unit = await one(Prisma.sql`INSERT INTO "MD_UnitSetItem" ("UnitCode", "UnitName", "IsDeleted") VALUES (${l.unit}, ${l.unit}, 0) RETURNING "RecId" as id`);
     let woItem: number | null = null;
     if (l.wo) {
-      const wo = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${l.wo}, 0) RETURNING "RecId" as id`);
+      const wo = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${l.wo}, 0) RETURNING "RecId" as id`);
       woItem = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${wo}, 1, 0) RETURNING "RecId" as id`);
     }
     const shade = l.shade ? (await prisma.colorCard.create({ data: { code: uniq('CC'), name: l.shade, color: '#888888', branchId } })).id : null;

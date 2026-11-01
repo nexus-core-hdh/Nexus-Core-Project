@@ -40,4 +40,9 @@ export function useTestDatabase() {
     process.env.NEXUSCORE_DATABASE_URL_ORIGINAL = process.env.NEXUSCORE_DATABASE_URL;
   }
   process.env.NEXUSCORE_DATABASE_URL = TEST_DATABASE_URL;
+  // Company isolation: services resolve the legacy company per request. Test suites call services
+  // directly (no request), so on the throwaway test database they default to legacy company 1 —
+  // explicitly here, never in the application. Cross-company tests switch with runAsLegacyCompany().
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('../../src/modules/legacy-erp/legacy-company-scope').setNonHttpLegacyCompanyDefault({ companyId: 'test-default', legacyCompanyId: 1, workplaceId: 1 });
 }

@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedChild, assertOwnedRow, currentLegacyCompany } from './legacy-company-scope';
 import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
 import { WORK_ORDER_SCREEN_KEY } from './work-order.service';
 import { screenKeyFor } from './inventory-receipt.service';
@@ -82,6 +83,7 @@ export class ItemAllocationService {
   // common/general stock and stays allocatable to any colour. Available = received − approved
   // Purchase Returns linked to that line (PurchaseReceiptItemId) − live allocations on that line.
   async listAvailableReceipts(workOrderId: number, inventoryId: number, colorCardId?: string | null) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const woRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "CompanyId" as "companyId" FROM "MA_WorkOrder" WHERE "RecId" = ${workOrderId} AND "IsDeleted" = 0
     `);
@@ -177,6 +179,7 @@ export class ItemAllocationService {
   // Real, already-persisted allocations for this exact Planning scope — lets the dialog show what
   // already exists (to edit/delete) instead of only ever creating new rows.
   async listAllocations(workOrderId: number, inventoryId: number, colorCardId?: string | null) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const itemIds = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId}
     `);
@@ -208,6 +211,7 @@ export class ItemAllocationService {
   // "Created By" is resolved from the allocation's own create AuditLog row (InsertedBy is only the
   // legacy numeric id and cannot be mapped to a User).
   async getReceiptItemAllocations(receiptItemId: number) {
+    await assertOwnedChild(this.prisma, 'IM_ReceiptItem', 'InventoryReceiptId', 'IM_Receipt', receiptItemId, 'Receipt line'); // company isolation
     const heads = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ri."RecId" as id, ri."InventoryReceiptId" as "receiptId", r."ReceiptNo" as "receiptNo", r."DocumentNo" as "documentNo",
              r."ReceiptDate" as "receiptDate", r."ReceiptType" as "receiptType", st."SubcontractTypeName" as subcontractor,
@@ -285,6 +289,7 @@ export class ItemAllocationService {
   // stale "available" figure and jointly over-allocating (Section "prevent race-condition
   // over-allocation").
   async saveAllocation(dto: SaveAllocationDto, userId: string, companyId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', Number(dto.workOrderId), 'Work order'); // company isolation
     if (!(dto.quantity > 0)) throw new BadRequestException('Allocation Qty must be greater than zero.');
 
     return this.prisma.$transaction(async (tx) => {
@@ -316,7 +321,7 @@ export class ItemAllocationService {
       if (!workOrderItemId) throw new NotFoundException('This Work Order has no resolvable line to allocate against.');
 
       const existingRows = dto.id
-        ? await tx.$queryRaw<any[]>(Prisma.sql`SELECT * FROM "IM_ItemAllocation" WHERE "RecId" = ${dto.id} AND "IsDeleted" = 0`)
+        ? await tx.$queryRaw<any[]>(Prisma.sql`SELECT * FROM "IM_ItemAllocation" WHERE "RecId" = ${dto.id} AND "IsDeleted" = 0 AND "WorkOrderItemId" = ${workOrderItemId}`)
         : await tx.$queryRaw<any[]>(Prisma.sql`
             SELECT * FROM "IM_ItemAllocation"
             WHERE "InventoryReceiptItemId" = ${dto.inventoryReceiptItemId} AND "WorkOrderItemId" = ${workOrderItemId}
@@ -451,7 +456,17 @@ export class ItemAllocationService {
     });
   }
 
+  /** An allocation is reachable only through a Work Order of the caller's company. */
+  private async assertAllocationOwned(id: number) {
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 1 FROM "IM_ItemAllocation" a JOIN "MA_WorkOrderItem" wi ON wi."RecId" = a."WorkOrderItemId"
+      JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId"
+      WHERE a."RecId" = ${Number(id)} AND wo."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}`);
+    if (!rows.length) throw new NotFoundException('Allocation not found.');
+  }
+
   async deleteAllocation(id: number, userId: string, companyId: string) {
+    await this.assertAllocationOwned(id); // company isolation
     return this.prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<any[]>(Prisma.sql`SELECT * FROM "IM_ItemAllocation" WHERE "RecId" = ${id} AND "IsDeleted" = 0 FOR UPDATE`);
       const before = rows[0];

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { InventoryReceiptService } from './inventory-receipt.service';
@@ -37,7 +38,7 @@ export class InventoryReceiptGatePassService {
       FROM "IM_Receipt" r
       LEFT JOIN "FI_Account" a ON a."RecId" = r."CurrentAccountId"
       LEFT JOIN "IM_Warehouse" w ON w."RecId" = r."InWarehouseId"
-      WHERE r."RecId" = ${receiptId} AND r."IsDeleted" = 0
+      WHERE r."RecId" = ${receiptId} AND r."IsDeleted" = 0 AND r."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     const header = sanitizeRawRow(headerRows)[0];
     if (!header) throw new NotFoundException('Inventory receipt not found');

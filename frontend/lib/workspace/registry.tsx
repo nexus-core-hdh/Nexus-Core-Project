@@ -74,6 +74,10 @@ const RECORD_ID_PARAM = "id";
 // — one independently-open tab per distinct value — for screens whose identity isn't a record id.
 const MULTI_KEY_ROUTES: Record<string, string> = {
   "/legacy-erp/fabric-yarn-requirements": "type",
+  // Receipt Invoice (invoice-style entry screen) — one screen per receipt type, each its own tab.
+  "/legacy-erp/receipt-invoices": "receiptType",
+  // Its list (Legacy ERP → Invoices) — one list tab per invoice type.
+  "/legacy-erp/receipt-invoices-list": "receiptType",
   // Each Production Color gets its own open Cutting Entry tab, matching "each color must have its
   // own independent Cutting context". The Cutting Card MAIN screen (search + color matrix, no color
   // param yet) carries no such param — one shared tab reused across whichever Work Order is searched.

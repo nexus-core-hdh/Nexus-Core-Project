@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedRow } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { WorkOrderService, calculatedBomConsumption } from './work-order.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
@@ -39,6 +40,7 @@ export class WorkOrderOrderFormService {
   ) {}
 
   async build(workOrderId: number, companyId?: string | null) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const header: any = await this.workOrderSvc.get(workOrderId); // 404s for a missing / deleted Work Order
     const [extraRows, items, chart, fabricLines, trimLines, ownOrnaments, fabricReq, yarnReq, trimReq, company] = await Promise.all([
       this.prisma.$queryRaw<any[]>(Prisma.sql`

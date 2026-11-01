@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { WorkOrderService } from './work-order.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
@@ -71,7 +72,8 @@ export class FabricPlanningService {
   // always fabric-sourced, so they both keep the exact byte-for-byte default (1) and neither call
   // site below changed. Trim Planning is the first caller to pass 2.
   async findCandidateWorkOrderIds(search?: { orderNo?: string; styleQuery?: string; customerQuery?: string }, limit = 60, recipeType = 1): Promise<number[]> {
-    const filters: Prisma.Sql[] = [Prisma.sql`wo."IsDeleted" = 0`];
+    // Company isolation: only the caller's company's Work Orders are planning candidates.
+    const filters: Prisma.Sql[] = [Prisma.sql`wo."IsDeleted" = 0`, Prisma.sql`wo."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}`];
     if (search?.orderNo) filters.push(Prisma.sql`wo."WorkOrderNo" ILIKE ${`%${search.orderNo}%`}`);
     if (search?.customerQuery) {
       filters.push(Prisma.sql`EXISTS (SELECT 1 FROM "FI_Account" acc WHERE acc."RecId" = wo."CurrentAccountId" AND (acc."CurrentAccountCode" ILIKE ${`%${search.customerQuery}%`} OR acc."CurrentAccountName" ILIKE ${`%${search.customerQuery}%`}))`);
@@ -121,7 +123,7 @@ export class FabricPlanningService {
       FROM "MA_WorkOrder" wo
       LEFT JOIN "FI_Account" acc ON acc."RecId" = wo."CurrentAccountId"
       LEFT JOIN "StyleCard" sc ON sc.id = wo."StyleCardId"
-      WHERE wo."RecId" IN (${Prisma.join(workOrderIds)})
+      WHERE wo."RecId" IN (${Prisma.join(workOrderIds)}) AND wo."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     return new Map(sanitizeRawRow(rows).map((r: any) => [r.id, r]));
   }
@@ -140,6 +142,7 @@ export class FabricPlanningService {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT poi."ManufacturingOrderId" as "workOrderId", poi."InventoryId" as "inventoryId", SUM(poi."Quantity") as qty
       FROM "IM_OrderReceiptItem" poi
+      JOIN "IM_OrderReceipt" po ON po."RecId" = poi."OrderReceiptId" AND po."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       WHERE poi."IsDeleted" = 0 AND poi."ReceiptType" = 1
         AND poi."ManufacturingOrderId" IN (${Prisma.join(workOrderIds)})
         AND poi."InventoryId" IN (${Prisma.join(inventoryIds)})
@@ -175,7 +178,7 @@ export class FabricPlanningService {
         SUM(CASE WHEN r."ReceiptType" = 2 THEN ri."Quantity" ELSE 0 END) as received,
         SUM(CASE WHEN r."ReceiptType" = 140 THEN ri."Quantity" ELSE 0 END) as "manufacturingSend"
       FROM "IM_ReceiptItem" ri
-      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
+      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0 AND r."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
       WHERE ri."IsDeleted" = 0
         AND wi."WorkOrderId" IN (${Prisma.join(workOrderIds)})
@@ -230,7 +233,7 @@ export class FabricPlanningService {
         SUM(CASE WHEN r."ReceiptType" = 134 THEN ri."Quantity" ELSE 0 END) as send,
         SUM(CASE WHEN r."ReceiptType" = 11 THEN ri."Quantity" ELSE 0 END) as receive
       FROM "IM_ReceiptItem" ri
-      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
+      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0 AND r."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       JOIN "MA_WorkOrderItem" wi ON wi."RecId" = ri."WorkOrderReceiptItemId" AND wi."IsDeleted" = 0
       WHERE ri."IsDeleted" = 0
         AND wi."WorkOrderId" IN (${Prisma.join(workOrderIds)})

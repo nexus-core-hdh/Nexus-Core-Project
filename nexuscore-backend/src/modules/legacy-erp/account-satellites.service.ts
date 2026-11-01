@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedChild, assertOwnedRow } from './legacy-company-scope';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 
 interface SatelliteConfig {
@@ -62,6 +63,7 @@ export class AccountSatellitesService {
   }
 
   async list(tab: string, accountId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account'); // company isolation
     const cfg = this.config(tab);
     const select = Prisma.raw(['"RecId" as id', ...cfg.columns.map((c) => `"${c}" as "${camel(c)}"`)].join(', '));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -73,6 +75,7 @@ export class AccountSatellitesService {
   }
 
   async create(tab: string, accountId: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account');
     const cfg = this.config(tab);
     const toDb = await this.toDb(cfg.table);
     const cols = cfg.columns.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
@@ -88,6 +91,7 @@ export class AccountSatellitesService {
   }
 
   async remove(tab: string, lineId: number, userId: number) {
+    await assertOwnedChild(this.prisma, this.config(tab).table, this.config(tab).fkColumn, 'FI_Account', lineId, 'Row');
     const cfg = this.config(tab);
     const result = await this.prisma.$executeRaw`
       UPDATE ${Prisma.raw(`"${cfg.table}"`)} SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}
@@ -99,6 +103,7 @@ export class AccountSatellitesService {
 
   // Monthly / Forex Balance Breakdowns tabs — read-only aggregate view of FI_AccountTotal
   async totals(accountId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id, "FiscalYear" as "fiscalYear", "ForexId" as "forexId",
         "Debit01"::float as "debit01", "Debit02"::float as "debit02", "Debit03"::float as "debit03", "Debit04"::float as "debit04",

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
 import { FabricPlanningService } from './fabric-planning.service';
@@ -72,7 +73,7 @@ export class YarnRequirementReportService {
 
   /** The selected Work Orders (non-deleted), newest Order No first — both filters must match. */
   private async selectWorkOrders(sel: YarnReportSelection): Promise<number[]> {
-    const where: Prisma.Sql[] = [Prisma.sql`wo."IsDeleted" = 0`];
+    const where: Prisma.Sql[] = [Prisma.sql`wo."IsDeleted" = 0`, Prisma.sql`wo."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}`]; // company isolation
     if (sel.workOrderIds) where.push(sel.workOrderIds.length ? Prisma.sql`wo."RecId" IN (${Prisma.join(sel.workOrderIds)})` : Prisma.sql`FALSE`);
     if (sel.workOrderNo) {
       const v = sel.workOrderNo.value.trim();
@@ -98,7 +99,7 @@ export class YarnRequirementReportService {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT DISTINCT poi."ManufacturingOrderId" as "workOrderId", poi."InventoryId" as "inventoryId", acc."CurrentAccountName" as name
       FROM "IM_OrderReceiptItem" poi
-      JOIN "IM_OrderReceipt" po ON po."RecId" = poi."OrderReceiptId" AND po."IsDeleted" = 0
+      JOIN "IM_OrderReceipt" po ON po."RecId" = poi."OrderReceiptId" AND po."IsDeleted" = 0 AND po."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       JOIN "FI_Account" acc ON acc."RecId" = po."CurrentAccountId"
       WHERE poi."IsDeleted" = 0 AND poi."ReceiptType" = 1
         AND poi."ManufacturingOrderId" IN (${Prisma.join(workOrderIds)})

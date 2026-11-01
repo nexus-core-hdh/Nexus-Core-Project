@@ -32,9 +32,9 @@ after(async () => { await prisma.$disconnect(); });
 
 // --- seed helpers ----------------------------------------------------------------------------
 const unitSetItem = (name: string) => one(`INSERT INTO "MD_UnitSetItem" ("UnitCode","UnitName","IsDeleted") VALUES ($1,$2,0) RETURNING "RecId" AS id`, uniq(name).slice(0, 20), name);
-const account = (name: string) => one(`INSERT INTO "FI_Account" ("CurrentAccountCode","CurrentAccountName","IsDeleted") VALUES ($1,$2,0) RETURNING "RecId" AS id`, uniq('ACC'), name);
+const account = (name: string) => one(`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode","CurrentAccountName","IsDeleted") VALUES (1, $1,$2,0) RETURNING "RecId" AS id`, uniq('ACC'), name);
 const item = (accessCode: string, currentAccountId: number | null = null) =>
-  one(`INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","CurrentAccountId","IsDeleted") VALUES ($1,$2,$3,$4,0) RETURNING "RecId" AS id`, uniq(accessCode), `${accessCode} item`, accessCode, currentAccountId);
+  one(`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","CurrentAccountId","IsDeleted") VALUES (1, $1,$2,$3,$4,0) RETURNING "RecId" AS id`, uniq(accessCode), `${accessCode} item`, accessCode, currentAccountId);
 /** Unit tab row: 1 <unit> = factor/divisor... in the conversion's terms (base qty = qty * divisor / factor). */
 const itemUnit = (inventoryId: number, unitItemId: number, factor: number, divisor: number, main: boolean) =>
   prisma.$executeRawUnsafe(`INSERT INTO "IM_ItemUnitItemSize" ("InventoryId","UnitItemId","UnitFactor","UnitDivisor","IsMainUnit","IsDeleted") VALUES ($1,$2,$3,$4,$5,0)`, inventoryId, unitItemId, factor, divisor, main ? 1 : 0);

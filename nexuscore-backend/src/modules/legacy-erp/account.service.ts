@@ -3,6 +3,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
 import { AuditService, AUDIT_ACTIONS, hasRealChanges, enrichDisplayRefs, FkResolver } from '../audit/audit.service';
@@ -146,9 +147,10 @@ export class AccountService {
     // definition anywhere in the migrated schema/procedures (same situation as
     // CurrentAccountType earlier) — shown as the same Debit-minus-Credit balance until a real
     // definition is supplied.
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId; // company isolation
     const where = search
-      ? Prisma.sql`WHERE a."IsDeleted" = 0 AND (a."CurrentAccountCode" ILIKE ${`%${search}%`} OR a."CurrentAccountName" ILIKE ${`%${search}%`})`
-      : Prisma.sql`WHERE a."IsDeleted" = 0`;
+      ? Prisma.sql`WHERE a."IsDeleted" = 0 AND a."CompanyId" = ${cid} AND (a."CurrentAccountCode" ILIKE ${`%${search}%`} OR a."CurrentAccountName" ILIKE ${`%${search}%`})`
+      : Prisma.sql`WHERE a."IsDeleted" = 0 AND a."CompanyId" = ${cid}`;
     const debit = Prisma.sql`COALESCE(SUM(t."Debit01"+t."Debit02"+t."Debit03"+t."Debit04"+t."Debit05"+t."Debit06"+t."Debit07"+t."Debit08"+t."Debit09"+t."Debit10"+t."Debit11"+t."Debit12"), 0)::float`;
     const credit = Prisma.sql`COALESCE(SUM(t."Credit01"+t."Credit02"+t."Credit03"+t."Credit04"+t."Credit05"+t."Credit06"+t."Credit07"+t."Credit08"+t."Credit09"+t."Credit10"+t."Credit11"+t."Credit12"), 0)::float`;
     return runLegacyList(this.prisma, {
@@ -176,6 +178,7 @@ export class AccountService {
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${HEADER_SELECT} FROM "FI_Account" WHERE "RecId" = ${id} AND "IsDeleted" = 0
+        AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Current account not found');
     return sanitizeRawRow(rows[0]);
@@ -184,6 +187,7 @@ export class AccountService {
   async getByCode(code: string) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${HEADER_SELECT} FROM "FI_Account" WHERE "CurrentAccountCode" = ${code} AND "IsDeleted" = 0
+        AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Current account not found');
     return sanitizeRawRow(rows[0]);
@@ -207,12 +211,13 @@ export class AccountService {
     // couldn't foresee (e.g. a legacy-imported code that doesn't match the "PREFIX-NNN" pattern
     // the seed-scan regex expects).
     const MAX_CODE_RETRIES = 5;
+    const ctx = await currentLegacyCompany(this.prisma); // the creating company owns the account
     for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
       const currentAccountCode = await this.generateCode(dto.currentAccountType);
       const cols = HEADER_COLUMNS.filter((c) => c === 'CurrentAccountCode' || toDb(c, dto[camel(c)]) !== undefined);
       const colList = Prisma.raw(['"CompanyId"', '"WorkplaceId"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
       const values = cols.map((c) => (c === 'CurrentAccountCode' ? currentAccountCode : toDb(c, dto[camel(c)])));
-      const valuesSql = Prisma.join([1, 1, ...values]);
+      const valuesSql = Prisma.join([ctx.legacyCompanyId, ctx.workplaceId, ...values]);
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "FI_Account" (${colList})
@@ -257,7 +262,7 @@ export class AccountService {
     );
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE "FI_Account" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
-      WHERE "RecId" = ${id}
+      WHERE "RecId" = ${id} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       RETURNING ${HEADER_SELECT}
     `);
     const updated = sanitizeRawRow(rows[0]);
@@ -278,6 +283,7 @@ export class AccountService {
     const before = await this.get(id);
     await this.prisma.$executeRaw`
       UPDATE "FI_Account" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+        AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `;
     if (currentUserId && companyId) {
       const enriched = await enrichDisplayRefs(before, this.displayResolvers());

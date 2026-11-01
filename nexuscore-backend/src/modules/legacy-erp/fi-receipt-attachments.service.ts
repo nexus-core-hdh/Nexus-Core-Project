@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedRow } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 
 // Mirrors inventory-receipt-attachments.service.ts exactly, against FI_ReceiptAttachment
@@ -43,6 +44,7 @@ export class FiReceiptAttachmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(fiReceiptId: number, kind: 'document' | 'picture') {
+    await assertOwnedRow(this.prisma, 'FI_Receipt', fiReceiptId, 'Receipt'); // company isolation
     const type = kind === 'document' ? TYPE_DOCUMENT : TYPE_PICTURE;
     const rows = kind === 'picture'
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -61,6 +63,7 @@ export class FiReceiptAttachmentsService {
   }
 
   async upload(fiReceiptId: number, dto: UploadDto, userId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Receipt', fiReceiptId, 'Receipt'); // company isolation
     if (!dto.fileName || !dto.dataUrl) throw new BadRequestException('fileName and dataUrl are required');
     const ext = extOf(dto.fileName);
 
@@ -85,6 +88,7 @@ export class FiReceiptAttachmentsService {
   }
 
   async content(fiReceiptId: number, attachmentId: number): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    await assertOwnedRow(this.prisma, 'FI_Receipt', fiReceiptId, 'Receipt'); // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "FileName" as "fileName", "Attachment" as "attachment"
       FROM "FI_ReceiptAttachment" WHERE "RecId" = ${attachmentId} AND "ReceiptId" = ${fiReceiptId} AND "IsDeleted" = 0
@@ -94,6 +98,7 @@ export class FiReceiptAttachmentsService {
   }
 
   async remove(fiReceiptId: number, attachmentId: number, userId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Receipt', fiReceiptId, 'Receipt'); // company isolation
     const result = await this.prisma.$executeRaw`
       UPDATE "FI_ReceiptAttachment" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}
       WHERE "RecId" = ${attachmentId} AND "ReceiptId" = ${fiReceiptId}

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { companyScopeSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 
 // MD_Parameter is a generic (PrmGroup, PrmId, PrmValue) lookup table already in the migrated
@@ -22,15 +23,16 @@ export class ParameterLookupService {
 
   async search(group: ParameterGroupKey, search?: string) {
     const prmGroup = PARAMETER_GROUPS[group];
+    const scope = await companyScopeSql(this.prisma, 'MD_Parameter'); // company isolation (own or shared)
     const rows = search
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT "RecId" as id, "PrmId" as "prmId", "PrmValue" as "value"
-          FROM "MD_Parameter" WHERE "PrmGroup" = ${prmGroup} AND "IsDeleted" = 0 AND "PrmValue" ILIKE ${`%${search}%`}
+          FROM "MD_Parameter" WHERE "PrmGroup" = ${prmGroup} AND "IsDeleted" = 0 ${scope} AND "PrmValue" ILIKE ${`%${search}%`}
           ORDER BY "PrmValue" LIMIT 50
         `)
       : await this.prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT "RecId" as id, "PrmId" as "prmId", "PrmValue" as "value"
-          FROM "MD_Parameter" WHERE "PrmGroup" = ${prmGroup} AND "IsDeleted" = 0
+          FROM "MD_Parameter" WHERE "PrmGroup" = ${prmGroup} AND "IsDeleted" = 0 ${scope}
           ORDER BY "PrmValue" LIMIT 50
         `);
     return sanitizeRawRow(rows);

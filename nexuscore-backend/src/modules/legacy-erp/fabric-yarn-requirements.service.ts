@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedRow, currentLegacyCompany } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { WorkOrderService } from './work-order.service';
@@ -216,6 +217,7 @@ export class FabricYarnRequirementsService {
   // same totals resolveApplicableQuantity's callers already compute, just reshaped for display
   // (Map -> array) instead of a second query.
   async getManufacturingQuantitySummary(workOrderId: number) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const { byColor, total, hasAny, extraCuttingPercent } = await this.getManufacturingQuantityTotals(workOrderId);
     return {
       hasAny,
@@ -494,6 +496,7 @@ export class FabricYarnRequirementsService {
   // markerLength/m2Weight that getMaterialRequirements' own mapped shape below doesn't carry) so
   // the Cutting Entry screen's Fabric list can never diverge from what Requirements itself sees.
   async resolveBomLines(workOrderId: number, lineType: DirectBomTab): Promise<any[]> {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const ownLines = await this.workOrderSvc.listBom(workOrderId, lineType);
     if (ownLines.length) return ownLines;
     const wo = await this.workOrderSvc.get(workOrderId).catch(() => null);
@@ -529,6 +532,7 @@ export class FabricYarnRequirementsService {
   // Style Card's current BOM, so nothing that changes the result is hidden. Yarn is exploded from
   // the Fabric BOM, so it reports Fabric's.
   async getBomSource(workOrderId: number, tab: RequirementTab) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const lineType: DirectBomTab = tab === 'yarn' ? 'fabric' : tab;
     const [effective, wo] = await Promise.all([
       this.workOrderSvc.resolveEffectiveBom(workOrderId, lineType),
@@ -580,6 +584,7 @@ export class FabricYarnRequirementsService {
   // Refused while the affected Requirement is locked, like every other edit on this screen.
   // Returns the refreshed getBomSource() so the caller can confirm it is back in sync.
   async refreshBomFromStyleCard(workOrderId: number, tab: RequirementTab, userId: number, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const lineType: DirectBomTab = tab === 'yarn' ? 'fabric' : tab;
     await this.assertMutationAllowed(workOrderId, lineType, currentUserId);
     if (tab !== lineType) await this.assertMutationAllowed(workOrderId, tab, currentUserId);
@@ -651,6 +656,7 @@ export class FabricYarnRequirementsService {
   // `requirements: true` — the Work Order Requirements screen (grid, Calculate, Save, Total): BOM lines
   // come through resolveRequirementBomLines. Other callers (Fabric/Trim Planning) keep every line.
   async getMaterialRequirements(workOrderId: number, lineType: DirectBomTab, opts: { requirements?: boolean } = {}) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const [lines, mfgQty] = await Promise.all([
       opts.requirements ? this.resolveRequirementBomLines(workOrderId, lineType) : this.resolveBomLines(workOrderId, lineType),
       this.getManufacturingQuantityTotals(workOrderId),
@@ -832,6 +838,7 @@ export class FabricYarnRequirementsService {
   // has no color of its own, it inherits sourceColorCardId from the Fabric line it was exploded
   // from, so editing it here would have nothing real to write to).
   async setMaterialColorForLine(workOrderId: number, lineType: DirectBomTab, lineId: string, colorCardId: string | null, userId: number, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     return this.updateRequirementLine(workOrderId, lineType, lineId, { colorCardId }, userId, currentUserId);
   }
 
@@ -840,6 +847,7 @@ export class FabricYarnRequirementsService {
   // only — Yarn's own Consumption is derived by exploding the Fabric line's own Quantity through
   // its Yarn Recipe %, not a field of its own to edit (see getYarnRequirements).
   async setConsumptionForLine(workOrderId: number, lineType: DirectBomTab, lineId: string, quantity: number, userId: number, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     assertNonNegative(quantity, 'Consumption');
     // Requirements ignores a Work Order Consumption on a "Use Fix Quantity" line, so it is never
     // written from here; that quantity is changed on the Style Card BOM.
@@ -911,6 +919,7 @@ export class FabricYarnRequirementsService {
   // so the frontend can show a warning banner before/alongside Calculate without risking any
   // existing caller of getMaterialRequirements/getYarnRequirements/getTotalRequirements.
   async getMappingWarnings(workOrderId: number, tab: RequirementTab): Promise<string[]> {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const mfgQty = await this.getManufacturingQuantityTotals(workOrderId);
     if (tab === 'yarn') {
       const fabricLines = await this.resolveRequirementBomLines(workOrderId, 'fabric');
@@ -941,6 +950,7 @@ export class FabricYarnRequirementsService {
   // automatically, with no separate Yarn-specific fallback logic needed.
   // `requirements: true` — see getMaterialRequirements. Yarn Planning keeps every Fabric line.
   async getYarnRequirements(workOrderId: number, opts: { requirements?: boolean } = {}) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const [fabricLines, mfgQty] = await Promise.all([
       opts.requirements ? this.resolveRequirementBomLines(workOrderId, 'fabric') : this.resolveBomLines(workOrderId, 'fabric'),
       this.getManufacturingQuantityTotals(workOrderId),
@@ -1189,6 +1199,7 @@ export class FabricYarnRequirementsService {
   // color-wise calculation the Requirements screen shows before its first Save — `source` says
   // which. Saved quantities are printed as stored, never recomputed. Read-only.
   async getRequirementDetail(workOrderId: number, tab: RequirementTab) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const requirementType = REQUIREMENT_TYPE[tab];
     const [savedRaw, live] = await Promise.all([
       this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -1289,6 +1300,7 @@ export class FabricYarnRequirementsService {
   // interleaving that same per-color detail (plus a separate "Cumulative Total" row) into itself,
   // which the legacy screen never does; this is the one difference this fix corrects.
   async getTotalRequirements(workOrderId: number, tab: RequirementTab) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const colorWiseRows = await this.getColorWiseRequirements(workOrderId, tab);
     const byItem = new Map<string, {
       id: string; inventoryId: any; inventoryCode: any; inventoryName: any; quantity: number;
@@ -1349,6 +1361,7 @@ export class FabricYarnRequirementsService {
   // lockedBy is resolved from the stored user id back to a real {id, name} via the same Prisma
   // User table auth already uses (request.user, via JwtStrategy), not a second user directory.
   async getLockStatus(workOrderId: number, tab: RequirementTab, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     await this.workOrderSvc.get(workOrderId);
     const c = this.lockColumns(tab);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -1379,6 +1392,7 @@ export class FabricYarnRequirementsService {
   // current state (not any frontend-supplied assumption), satisfying "check is not already
   // locked" and the multi-user-safety requirement in one place.
   async lockRequirement(workOrderId: number, tab: RequirementTab, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const status = await this.getLockStatus(workOrderId, tab, currentUserId);
     if (status.isLocked) {
       throw new ConflictException(`${this.tabLabel(tab)} Requirement is already locked${status.lockedBy ? ` by ${status.lockedBy.name}` : ''}.`);
@@ -1396,6 +1410,7 @@ export class FabricYarnRequirementsService {
   // check below is kept too so unlockRequirement() stays safe to call even if a future second
   // route ever reached it without going through the guard.
   async unlockRequirement(workOrderId: number, tab: RequirementTab, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const allowed = await this.userHasPermission(currentUserId, 'requirements', 'unlock');
     if (!allowed) throw new ForbiddenException('You do not have permission to unlock Requirements.');
     const status = await this.getLockStatus(workOrderId, tab, currentUserId);
@@ -1433,6 +1448,7 @@ export class FabricYarnRequirementsService {
   // actually writes MA_Requirement. Matches the reference screen's own two-step Calculate-then-
   // Save workflow.
   async calculate(workOrderId: number, tab: RequirementTab, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
     return this.getTotalRequirements(workOrderId, tab);
   }
@@ -1447,6 +1463,7 @@ export class FabricYarnRequirementsService {
   // exactly the "Delete" action was wired to a misleading "delete everything, not just the
   // selected row" confirmation and endpoint; fixed by giving Delete a real target instead.
   async deleteRequirement(workOrderId: number, tab: RequirementTab, recordId: number, currentUserId: string, companyId?: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const workOrder = await this.workOrderSvc.get(workOrderId);
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
     const requirementType = REQUIREMENT_TYPE[tab];
@@ -1498,6 +1515,7 @@ export class FabricYarnRequirementsService {
   // (assertMutationAllowed — the same helper every other mutation on this tab already uses), so
   // Fabric Delete All is no longer blocked by Trim or Yarn being locked, and vice versa.
   async deleteAllRequirements(workOrderId: number, tab: RequirementTab, currentUserId: string, companyId?: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const workOrder = await this.workOrderSvc.get(workOrderId);
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
     const requirementType = REQUIREMENT_TYPE[tab];
@@ -1560,6 +1578,7 @@ export class FabricYarnRequirementsService {
   // one, the same (Work Order, Item, Material Color) scope its receipt columns are summed over
   // (fabric-planning.service.ts). Off by default: no Material Color means every color, as before.
   async getTransactionDetails(workOrderId: number, inventoryId?: number, colorCardId?: string, exactColor = false) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const itemIds = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0
     `);
@@ -1591,6 +1610,7 @@ export class FabricYarnRequirementsService {
         ri."Quantity" as "receiptQuantity"
       FROM "IM_ReceiptItem" ri
       JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
+        AND r."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
       LEFT JOIN "MD_SubcontractType" st ON st."RecId" = r."SubcontractTypeId"
       LEFT JOIN "FI_Account" acc ON acc."RecId" = r."CurrentAccountId"
       LEFT JOIN "IM_Warehouse" wh ON wh."RecId" = r."InWarehouseId"
@@ -1617,6 +1637,7 @@ export class FabricYarnRequirementsService {
   // triggered ONLY by an explicit user action — save() no longer touches these columns at all,
   // it only respects them via assertMutationAllowed() just below.
   async save(workOrderId: number, tab: RequirementTab, userId: number, currentUserId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     await this.workOrderSvc.get(workOrderId);
     await this.assertMutationAllowed(workOrderId, tab, currentUserId);
     // Persists at Color-Wise Requirement granularity (getColorWiseRequirements — one real record
@@ -1701,6 +1722,7 @@ export class FabricYarnRequirementsService {
   // a single page-level "is this whole grid saved" boolean) to decide which specific rows are
   // deletable/editable.
   async getSavedRequirements(workOrderId: number, tab: RequirementTab) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const requirementType = REQUIREMENT_TYPE[tab];
     const savedRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT req."RecId" as id, req."RequirementGroup" as "requirementGroup"
@@ -1755,6 +1777,7 @@ export class FabricYarnRequirementsService {
   // regenerating them — only an explicit Calculate (which also re-Saves, see this screen's own
   // calculate()) is allowed to repopulate them again.
   async hasSavedHistory(workOrderId: number, tab: RequirementTab): Promise<boolean> {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const requirementType = REQUIREMENT_TYPE[tab];
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT 1 FROM "MA_Requirement"

@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertSameCompany, currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { assertAllNonNegative } from './numeric-guards.util';
@@ -229,14 +230,47 @@ export class WorkOrderService {
   // Work Order(s) associated with that Style Card"), reusing this same list() rather than a
   // second method/route. Omitted entirely, existing callers (work-orders-list/page.tsx's own
   // search box) are byte-for-byte unaffected.
+  /** The caller's legacy company id (company isolation: Work Orders are always one company's own). */
+  private async cid(): Promise<number> {
+    return (await currentLegacyCompany(this.prisma)).legacyCompanyId;
+  }
+
+  /** A Work Order of the caller's company, else 404 — guards every child read/write by Work Order id. */
+  async assertOwned(workOrderId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "MA_WorkOrder" WHERE "RecId" = ${Number(workOrderId)} AND "IsDeleted" = 0 AND "CompanyId" = ${await this.cid()}`;
+    if (!rows.length) throw new NotFoundException('Work order not found');
+  }
+
+  /** The Work Order owning a Style Info line must be the caller's company's own, else 404. */
+  private async assertItemOwned(workOrderItemId: number) {
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "MA_WorkOrderItem" wi JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId"
+      WHERE wi."RecId" = ${Number(workOrderItemId)} AND wo."CompanyId" = ${await this.cid()}`;
+    if (!rows.length) throw new NotFoundException('Work order line not found');
+  }
+
+  /** Linked records on a Work Order header / its lines must be the caller's company's own. */
+  private async assertHeaderRefs(dto: Record<string, any>) {
+    const ctx = await currentLegacyCompany(this.prisma);
+    if (dto.currentAccountId != null) await assertSameCompany(this.prisma, ctx, 'FI_Account', [Number(dto.currentAccountId)], 'Current Account', { badRequest: true });
+    if (dto.warehouseId != null) await assertSameCompany(this.prisma, ctx, 'IM_Warehouse', [Number(dto.warehouseId)], 'Warehouse', { badRequest: true });
+    if (dto.styleCardId != null && dto.styleCardId !== '') {
+      const ok = await this.prisma.$queryRaw<any[]>`
+        SELECT 1 FROM "StyleCard" s JOIN "Branch" b ON b.id = s."branchId" WHERE s.id = ${String(dto.styleCardId)} AND b."companyId" = ${ctx.companyId}`;
+      if (!ok.length) throw new BadRequestException("Style Card is not one of your company's Style Cards");
+    }
+  }
+
   async list(search?: string, styleCardId?: string, paging: ListPaging | null = null) {
+    const cid = await this.cid();
     const searchFilter = search ? Prisma.sql`AND "WorkOrderNo" ILIKE ${`%${search}%`}` : Prisma.sql``;
     const styleFilter = styleCardId ? Prisma.sql`AND "StyleCardId" = ${styleCardId}` : Prisma.sql``;
     return runLegacyList(this.prisma, {
       // currentAccountName: display value for a Customized Worklist's "Current Account" column
       // (the raw currentAccountId stays on the row).
       select: Prisma.sql`${HEADER_SELECT}, (SELECT a."CurrentAccountName" FROM "FI_Account" a WHERE a."RecId" = "MA_WorkOrder"."CurrentAccountId") as "currentAccountName"`,
-      from: Prisma.sql`FROM "MA_WorkOrder" WHERE "IsDeleted" = 0 ${searchFilter} ${styleFilter}`,
+      from: Prisma.sql`FROM "MA_WorkOrder" WHERE "IsDeleted" = 0 AND "CompanyId" = ${cid} ${searchFilter} ${styleFilter}`,
       sortable: {
         workOrderNo: Prisma.sql`"WorkOrderNo"`, workOrderDate: Prisma.sql`"WorkOrderDate"`,
         documentNo: Prisma.sql`"DocumentNo"`, status: Prisma.sql`"Status"`,
@@ -247,7 +281,7 @@ export class WorkOrderService {
 
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "MA_WorkOrder" WHERE "RecId" = ${id} AND "IsDeleted" = 0
+      SELECT ${HEADER_SELECT} FROM "MA_WorkOrder" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "CompanyId" = ${await this.cid()}
     `);
     if (!rows.length) throw new NotFoundException('Work order not found');
     return sanitizeRawRow(rows[0]);
@@ -287,6 +321,7 @@ export class WorkOrderService {
 
   async create(dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     this.assertHeaderQuantitiesNonNegative(dto);
+    await this.assertHeaderRefs(dto);
     const toDb = await this.headerToDb();
     const manualNo = String(dto.workOrderNo ?? '').trim();
     const workOrderNo = manualNo || (await this.nextWorkOrderNo());
@@ -301,7 +336,7 @@ export class WorkOrderService {
     try {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
         INSERT INTO "MA_WorkOrder" (${colList})
-        VALUES (1, 1, ${workOrderNo}, ${valuesMiddle}now(), ${userId}, 0, gen_random_uuid())
+        VALUES (${await legacyStampSql(this.prisma)}, ${workOrderNo}, ${valuesMiddle}now(), ${userId}, 0, gen_random_uuid())
         RETURNING ${HEADER_SELECT}
       `);
       const created = sanitizeRawRow(rows[0]);
@@ -327,6 +362,7 @@ export class WorkOrderService {
   async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     const before = await this.get(id);
     this.assertHeaderQuantitiesNonNegative(dto);
+    await this.assertHeaderRefs(dto);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'WorkOrderNo' && toDb(c, dto[camel(c)]) !== undefined);
     // WorkOrderNo ("Edit Code") is handled separately from the generic column loop above — it's
@@ -342,7 +378,7 @@ export class WorkOrderService {
     const assignments = Prisma.join([...codeAssignment, ...cols.map((c) => Prisma.sql`"${Prisma.raw(c)}" = ${toDb(c, dto[camel(c)])}`)]);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE "MA_WorkOrder" SET ${assignments}, "UpdatedAt" = now(), "UpdatedBy" = ${userId}
-      WHERE "RecId" = ${id}
+      WHERE "RecId" = ${id} AND "CompanyId" = ${await this.cid()}
       RETURNING ${HEADER_SELECT}
     `);
     const updated = sanitizeRawRow(rows[0]);
@@ -365,7 +401,7 @@ export class WorkOrderService {
   async remove(id: number, userId: number, currentUserId?: string, companyId?: string) {
     const before = await this.get(id);
     await this.prisma.$executeRaw`
-      UPDATE "MA_WorkOrder" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
+      UPDATE "MA_WorkOrder" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id} AND "CompanyId" = ${await this.cid()}
     `;
     if (currentUserId && companyId) {
       const enriched = await enrichDisplayRefs(before, this.displayResolvers());
@@ -381,6 +417,7 @@ export class WorkOrderService {
   // Style Info lines (MA_WorkOrderItem) — replace-all per save, same pattern
   // style-extras.service.ts's own upsertBomLines already uses for StyleBomLine.
   async listItems(workOrderId: number) {
+    await this.assertOwned(workOrderId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_SELECT} FROM "MA_WorkOrderItem" WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0 ORDER BY "ItemOrderNo", "RecId"
     `);
@@ -392,6 +429,8 @@ export class WorkOrderService {
   // so resubmitting an unchanged set writes nothing (matches every other update()'s no-op guard).
   async upsertItems(workOrderId: number, lines: any[], userId: number, currentUserId?: string, companyId?: string) {
     const header = await this.get(workOrderId);
+    const inventoryIds = (lines || []).map((l) => l?.inventoryId).filter((v) => v != null).map(Number);
+    if (inventoryIds.length) await assertSameCompany(this.prisma, await currentLegacyCompany(this.prisma), 'IM_Item', inventoryIds, 'Item', { badRequest: true });
     const before = currentUserId && companyId ? await this.listItems(workOrderId) : null;
     const toDb = await this.itemToDb();
     await this.prisma.$executeRaw`UPDATE "MA_WorkOrderItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "WorkOrderId" = ${workOrderId} AND "IsDeleted" = 0`;
@@ -421,6 +460,7 @@ export class WorkOrderService {
   // Manufacturing Quantities (MA_WorkOrderItemVariant) — child of the primary Style Info line
   // (workOrderItemId). Same replace-all pattern as items above.
   async listItemVariants(workOrderItemId: number) {
+    await this.assertItemOwned(workOrderItemId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_VARIANT_SELECT} FROM "MA_WorkOrderItemVariant" WHERE "WorkOrderItemId" = ${workOrderItemId} AND "IsDeleted" = 0 ORDER BY "SubNo", "RecId"
     `);
@@ -441,6 +481,7 @@ export class WorkOrderService {
   }
 
   async upsertItemVariants(workOrderItemId: number, lines: any[], userId: number, currentUserId?: string, companyId?: string) {
+    await this.assertItemOwned(workOrderItemId);
     const before = currentUserId && companyId ? await this.listItemVariants(workOrderItemId) : null;
     const toDb = await this.itemVariantToDb();
     await this.prisma.$executeRaw`UPDATE "MA_WorkOrderItemVariant" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "WorkOrderItemId" = ${workOrderItemId} AND "IsDeleted" = 0`;
@@ -496,7 +537,7 @@ export class WorkOrderService {
     const recipeCode = `WO${workOrderId}-${lineType.toUpperCase()}`;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO "MA_Recipe" ("CompanyId", "WorkplaceId", "WorkOrderId", "RecipeType", "RecipeCode", "InsertedAt", "InsertedBy", "IsDeleted", "UUID")
-      VALUES (1, 1, ${workOrderId}, ${recipeType}, ${recipeCode}, now(), ${userId}, 0, gen_random_uuid())
+      VALUES (${await legacyStampSql(this.prisma)}, ${workOrderId}, ${recipeType}, ${recipeCode}, now(), ${userId}, 0, gen_random_uuid())
       RETURNING "RecId" as id
     `);
     return rows[0].id as number;
@@ -512,6 +553,7 @@ export class WorkOrderService {
 
   // The rows physically stored in MA_RecipeItem, with no Style Card inheritance applied.
   async listStoredBom(workOrderId: number, lineType: BomLineType) {
+    await this.assertOwned(workOrderId);
     const recipeId = await this.findRecipeHeader(workOrderId, lineType);
     if (!recipeId) return [];
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`

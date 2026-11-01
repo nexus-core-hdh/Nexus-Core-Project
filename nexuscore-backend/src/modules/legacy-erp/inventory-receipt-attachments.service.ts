@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { companyIs, currentLegacyCompany } from './legacy-company-scope';
 
 // Mirrors purchase-order-attachments.service.ts exactly, against IM_ReceiptAttachment
 // (InventoryReceiptId FK) instead of IM_OrderReceiptAttachment — both are purpose-built
@@ -42,7 +43,15 @@ interface UploadDto {
 export class InventoryReceiptAttachmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Company isolation: the receipt must be one of the current company's ("not found" otherwise). */
+  private async assertOwned(inventoryReceiptId: number) {
+    const ctx = await currentLegacyCompany(this.prisma);
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT 1 FROM "IM_Receipt" r WHERE r."RecId" = ${inventoryReceiptId} AND ${companyIs('r', ctx)}`);
+    if (!rows.length) throw new NotFoundException('Inventory receipt not found');
+  }
+
   async list(inventoryReceiptId: number, kind: 'document' | 'picture') {
+    await this.assertOwned(inventoryReceiptId);
     const type = kind === 'document' ? TYPE_DOCUMENT : TYPE_PICTURE;
     const rows = kind === 'picture'
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -61,6 +70,7 @@ export class InventoryReceiptAttachmentsService {
   }
 
   async upload(inventoryReceiptId: number, dto: UploadDto, userId: number) {
+    await this.assertOwned(inventoryReceiptId);
     if (!dto.fileName || !dto.dataUrl) throw new BadRequestException('fileName and dataUrl are required');
     const ext = extOf(dto.fileName);
 
@@ -85,6 +95,7 @@ export class InventoryReceiptAttachmentsService {
   }
 
   async content(inventoryReceiptId: number, attachmentId: number): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    await this.assertOwned(inventoryReceiptId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "FileName" as "fileName", "Attachment" as "attachment"
       FROM "IM_ReceiptAttachment" WHERE "RecId" = ${attachmentId} AND "InventoryReceiptId" = ${inventoryReceiptId} AND "IsDeleted" = 0
@@ -94,6 +105,7 @@ export class InventoryReceiptAttachmentsService {
   }
 
   async remove(inventoryReceiptId: number, attachmentId: number, userId: number) {
+    await this.assertOwned(inventoryReceiptId);
     const result = await this.prisma.$executeRaw`
       UPDATE "IM_ReceiptAttachment" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}
       WHERE "RecId" = ${attachmentId} AND "InventoryReceiptId" = ${inventoryReceiptId}

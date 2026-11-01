@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedRow } from './legacy-company-scope';
 import { ContractService } from './contract.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 
@@ -67,6 +68,7 @@ export class ContractAttachmentsService {
   }
 
   async list(contractReceiptId: number, kind: 'document' | 'picture') {
+    await assertOwnedRow(this.prisma, 'SM_Contract', contractReceiptId, 'Contract'); // company isolation
     const type = kind === 'document' ? TYPE_DOCUMENT : TYPE_PICTURE;
     const rows = kind === 'picture'
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -85,6 +87,7 @@ export class ContractAttachmentsService {
   }
 
   async upload(contractReceiptId: number, dto: UploadDto, userId: number, receiptType?: number, currentUserId?: string, companyId?: string) {
+    await assertOwnedRow(this.prisma, 'SM_Contract', contractReceiptId, 'Contract'); // company isolation
     if (!dto.fileName || !dto.dataUrl) throw new BadRequestException('fileName and dataUrl are required');
     const ext = extOf(dto.fileName);
 
@@ -113,6 +116,7 @@ export class ContractAttachmentsService {
   }
 
   async content(contractReceiptId: number, attachmentId: number): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    await assertOwnedRow(this.prisma, 'SM_Contract', contractReceiptId, 'Contract'); // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "FileName" as "fileName", "Attachment" as "attachment"
       FROM "SM_ContractAttachment" WHERE "RecId" = ${attachmentId} AND "ContractReceiptId" = ${contractReceiptId} AND "IsDeleted" = 0
@@ -122,6 +126,7 @@ export class ContractAttachmentsService {
   }
 
   async remove(contractReceiptId: number, attachmentId: number, userId: number, receiptType?: number, currentUserId?: string, companyId?: string) {
+    await assertOwnedRow(this.prisma, 'SM_Contract', contractReceiptId, 'Contract'); // company isolation
     const beforeRows = receiptType !== undefined && currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT "RecId" as id, "FileName" as "fileName", "Type" as "type" FROM "SM_ContractAttachment"

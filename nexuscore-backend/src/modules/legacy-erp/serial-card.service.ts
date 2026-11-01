@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertSameCompany, currentLegacyCompany } from './legacy-company-scope';
 import { AuditService, AUDIT_ACTIONS, hasRealChanges } from '../audit/audit.service';
 import { screenKeyFor } from './inventory-receipt.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
@@ -171,7 +172,19 @@ export class SerialCardService {
 
   // Resolves the dialog's "General" section straight from the DB — every field is read fresh
   // from the persisted receipt line, never trusted from client state ("do not invent values").
+  /** The caller's legacy company — serial cards and their receipts are always that company's own. */
+  private async cid(): Promise<number> {
+    return (await currentLegacyCompany(this.prisma)).legacyCompanyId;
+  }
+
+  /** The Current Account on a card must be the caller's company's own. */
+  private async assertCardRefs(dtos: { currentAccountId?: number | null }[]) {
+    const ids = dtos.map((d) => d.currentAccountId).filter((v): v is number => v != null);
+    if (ids.length) await assertSameCompany(this.prisma, await currentLegacyCompany(this.prisma), 'FI_Account', ids, 'Current Account', { badRequest: true });
+  }
+
   async getContext(inventoryReceiptId: number, inventoryReceiptItemId: number) {
+    const cid = await this.cid();
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
         ri."RecId" as "receiptItemId", ri."InventoryReceiptId" as "receiptId",
@@ -190,6 +203,7 @@ export class SerialCardService {
       LEFT JOIN "MA_WorkOrder" wo ON wo."RecId" = wi."WorkOrderId" AND wo."IsDeleted" = 0
       LEFT JOIN "ColorCard" cc ON cc.id = ri."ColorCardId"
       WHERE ri."RecId" = ${inventoryReceiptItemId} AND ri."InventoryReceiptId" = ${inventoryReceiptId} AND ri."IsDeleted" = 0
+        AND r."CompanyId" = ${cid}
     `);
     const row = rows[0];
     if (!row) throw new NotFoundException('Receipt line not found.');
@@ -240,6 +254,7 @@ export class SerialCardService {
   // already existed and worked; only its SELECT gained more real columns, nothing about its
   // WHERE/JOIN base or its callers' contract changed.
   async list(inventoryReceiptItemId: number) {
+    const cid = await this.cid();
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT sc.*,
         it."InventoryCode" as "inventoryCode", it."InventoryName" as "inventoryName",
@@ -276,6 +291,7 @@ export class SerialCardService {
         FROM "IM_SerialTransaction" st2 WHERE st2."SerialCardId" = sc."RecId"
       ) txn ON true
       WHERE st."ReceiptItemId" = ${inventoryReceiptItemId} AND st."TransactionType" = ${SERIAL_TXN_TYPE_RECEIPT}
+        AND sc."CompanyId" = ${cid}
       ORDER BY sc."RecId" ASC
     `);
     return sanitizeRawRow(rows);
@@ -316,7 +332,7 @@ export class SerialCardService {
     const skip = params.skip ?? 0;
     const take = Math.min(params.take ?? 100, 500);
 
-    const filters: Prisma.Sql[] = [Prisma.sql`sc."IsDeleted" = 0`];
+    const filters: Prisma.Sql[] = [Prisma.sql`sc."IsDeleted" = 0`, Prisma.sql`sc."CompanyId" = ${await this.cid()}`];
     if (params.id != null) filters.push(Prisma.sql`sc."RecId" = ${params.id}`);
     if (params.ids) filters.push(params.ids.length ? Prisma.sql`sc."RecId" IN (${Prisma.join(params.ids)})` : Prisma.sql`false`);
     if (params.serialCodeEquals != null) filters.push(Prisma.sql`sc."SerialCode" = ${params.serialCodeEquals}`);
@@ -452,7 +468,7 @@ export class SerialCardService {
     let { rows } = await this.listAll({ serialCodeEquals: value, take: 2 });
     if (!rows.length) {
       const ci = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-        SELECT "RecId" as id FROM "IM_SerialCard" WHERE "IsDeleted" = 0 AND UPPER("SerialCode") = UPPER(${value}) LIMIT 2
+        SELECT "RecId" as id FROM "IM_SerialCard" WHERE "IsDeleted" = 0 AND "CompanyId" = ${await this.cid()} AND UPPER("SerialCode") = UPPER(${value}) LIMIT 2
       `);
       if (ci.length === 1) rows = (await this.listAll({ id: Number(ci[0].id), take: 1 })).rows;
     }
@@ -512,8 +528,9 @@ export class SerialCardService {
   }
 
   async remove(id: number, userId: string, companyId: string) {
+    const cid = await this.cid();
     return this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<any[]>(Prisma.sql`SELECT * FROM "IM_SerialCard" WHERE "RecId" = ${id} AND "IsDeleted" = 0 FOR UPDATE`);
+      const rows = await tx.$queryRaw<any[]>(Prisma.sql`SELECT * FROM "IM_SerialCard" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "CompanyId" = ${cid} FOR UPDATE`);
       const before = rows[0];
       if (!before) throw new NotFoundException('Serial Card not found.');
 
@@ -616,6 +633,8 @@ export class SerialCardService {
     if (dto.count > 500) {
       throw new BadRequestException('Serials Count is too large for a single batch (max 500).');
     }
+    const cid = await this.cid();
+    await this.assertCardRefs([dto]);
 
     return this.prisma.$transaction(async (tx) => {
       const lineRows = await tx.$queryRaw<any[]>(Prisma.sql`
@@ -623,6 +642,7 @@ export class SerialCardService {
           ri."WorkOrderReceiptItemId" as "workOrderReceiptItemId", ri."Quantity" as "lineQuantity"
         FROM "IM_ReceiptItem" ri
         JOIN "IM_Item" it ON it."RecId" = ri."InventoryId"
+        JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."CompanyId" = ${cid}
         WHERE ri."RecId" = ${inventoryReceiptItemId} AND ri."InventoryReceiptId" = ${inventoryReceiptId} AND ri."IsDeleted" = 0
         FOR UPDATE OF ri
       `);
@@ -670,7 +690,7 @@ export class SerialCardService {
             "WeightM2", "WeightMt", "Pus", "Fine", "PieceCount",
             "InsertedAt", "InsertedBy", "IsDeleted", "UUID"
           ) VALUES (
-            1, ${code}, ${line.inventoryId}, ${inventoryVariantId},
+            ${cid}, ${code}, ${line.inventoryId}, ${inventoryVariantId},
             ${line.workOrderReceiptItemId ?? null}, 1,
             ${dto.explanation ?? null}, ${dto.partyNo ?? null}, ${dto.qualityTypeId ?? null}, ${dto.resourceId ?? null}, ${dto.employeeId ?? null}, ${dto.currentAccountId ?? null},
             ${dto.producerSerialCode ?? null}, ${calendarDate(dto.manufacturingDate)}::timestamp, ${calendarDate(dto.expirationDate)}::timestamp, ${dto.shelfLife ?? null},
@@ -727,6 +747,7 @@ export class SerialCardService {
     const unique = [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
     if (!unique.length) throw new BadRequestException('Select at least one serial card.');
     if (unique.length > 500) throw new BadRequestException('Too many serial cards selected (max 500).');
+    const cid = await this.cid();
 
     return this.prisma.$transaction(async (tx) => {
       const cards = await tx.$queryRaw<any[]>(Prisma.sql`
@@ -736,6 +757,7 @@ export class SerialCardService {
           ORDER BY st."RecId" ASC LIMIT 1
         ) as "receiptItemId"
         FROM "IM_SerialCard" sc WHERE sc."RecId" IN (${Prisma.join(unique)}) AND sc."IsDeleted" = 0
+          AND sc."CompanyId" = ${cid}
         ORDER BY sc."RecId" ASC
         FOR UPDATE OF sc
       `);
@@ -812,12 +834,14 @@ export class SerialCardService {
 
   async update(items: UpdateSerialCardDto[], userId: string, companyId: string) {
     if (!items.length) return [];
+    const cid = await this.cid();
+    await this.assertCardRefs(items);
 
     return this.prisma.$transaction(async (tx) => {
       const results: any[] = [];
       for (const dto of items) {
         const beforeRows = await tx.$queryRaw<any[]>(Prisma.sql`
-          SELECT * FROM "IM_SerialCard" WHERE "RecId" = ${dto.id} AND "IsDeleted" = 0 FOR UPDATE
+          SELECT * FROM "IM_SerialCard" WHERE "RecId" = ${dto.id} AND "IsDeleted" = 0 AND "CompanyId" = ${cid} FOR UPDATE
         `);
         const before = beforeRows[0];
         if (!before) throw new NotFoundException(`Serial Card ${dto.id} not found.`);

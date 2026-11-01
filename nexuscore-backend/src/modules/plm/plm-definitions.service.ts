@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { legacyCompanyOrNull } from '../legacy-erp/legacy-company-scope';
 
 // Translates a Prisma unique-constraint violation (P2002) into a clean, user-facing message
 // instead of letting the raw Prisma error object (full stack trace, internal file paths) reach
@@ -185,7 +186,8 @@ export class PlmDefinitionsService {
     if (raw === '' || raw === null || raw === undefined) return { ...dto, legacyProcessId: null };
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) throw new BadRequestException('Choose a valid Legacy Process.');
-    const found = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`SELECT "RecId" as id FROM "MA_Process" WHERE "RecId" = ${id} AND COALESCE("IsDeleted", 0) = 0`);
+    const found = await this.prisma.$queryRaw<{ id: number }[]>(Prisma.sql`SELECT "RecId" as id FROM "MA_Process" WHERE "RecId" = ${id} AND COALESCE("IsDeleted", 0) = 0
+      AND ("CompanyId" IS NULL OR "CompanyId" = ${(await legacyCompanyOrNull(this.prisma))?.legacyCompanyId ?? -1})`);
     if (!found.length) throw new BadRequestException('The chosen Legacy Process does not exist (or has been deleted).');
     const taken = await this.prisma.processCard.findFirst({ where: { legacyProcessId: id, ...(selfId ? { NOT: { id: selfId } } : {}) }, select: { code: true, name: true } });
     if (taken) throw new BadRequestException(`That Legacy Process is already linked to Process ${taken.code} ${taken.name}.`);

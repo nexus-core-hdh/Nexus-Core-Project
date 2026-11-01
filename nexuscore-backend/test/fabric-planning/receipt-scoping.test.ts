@@ -49,14 +49,14 @@ after(async () => { await prisma.$disconnect(); });
 
 // --- seed helpers ----------------------------------------------------------------------------
 const fabricItem = (code: string) =>
-  one(`INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES ($1,'3TH TERRY CROSS','FABRIC',0) RETURNING "RecId" AS id`, code);
+  one(`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES (1, $1,'3TH TERRY CROSS','FABRIC',0) RETURNING "RecId" AS id`, code);
 const color = async (name: string) => (await prisma.colorCard.create({ data: { code: uniq('C'), name, color: '#123456', branchId } })).id;
 
 /** A Work Order (Order No prefixed with this run, so filtering by RUN isolates it) and its line. */
 async function workOrder() {
   const style = await prisma.styleCard.create({ data: { styleNumber: uniq('SC-'), title: 'new test', branchId, createdBy: 'u1' } });
   const workOrderNo = `W/O-${RUN}-${++seq}`.toUpperCase(); // UdtCode: at most 25 characters
-  const id = await one(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","StyleCardId","IsDeleted") VALUES ($1,$2,0) RETURNING "RecId" AS id`, workOrderNo, style.id);
+  const id = await one(`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo","StyleCardId","IsDeleted") VALUES (1, $1,$2,0) RETURNING "RecId" AS id`, workOrderNo, style.id);
   const itemId = await one(`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId","ItemOrderNo","IsDeleted") VALUES ($1,1,0) RETURNING "RecId" AS id`, id);
   return { id, itemId, workOrderNo };
 }

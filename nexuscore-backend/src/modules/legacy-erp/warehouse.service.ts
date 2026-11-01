@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { CreateWarehouseDto, UpdateWarehouseDto } from './dto/warehouse.dto';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { sanitizeRawRow } from './raw-row.util';
@@ -52,14 +53,15 @@ export class WarehouseService {
   }
 
   async list(search?: string) {
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId; // company isolation
     const rows = search
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT ${Prisma.raw(ROW_SELECT)} FROM "IM_Warehouse"
-          WHERE "IsDeleted" = 0 AND ("WarehouseCode" ILIKE ${`%${search}%`} OR "WarehouseName" ILIKE ${`%${search}%`})
+          WHERE "IsDeleted" = 0 AND "CompanyId" = ${cid} AND ("WarehouseCode" ILIKE ${`%${search}%`} OR "WarehouseName" ILIKE ${`%${search}%`})
           ORDER BY "WarehouseCode"
         `)
       : await this.prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT ${Prisma.raw(ROW_SELECT)} FROM "IM_Warehouse" WHERE "IsDeleted" = 0 ORDER BY "WarehouseCode"
+          SELECT ${Prisma.raw(ROW_SELECT)} FROM "IM_Warehouse" WHERE "IsDeleted" = 0 AND "CompanyId" = ${cid} ORDER BY "WarehouseCode"
         `);
     return sanitizeRawRow(rows);
   }
@@ -67,6 +69,7 @@ export class WarehouseService {
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${Prisma.raw(ROW_SELECT)} FROM "IM_Warehouse" WHERE "RecId" = ${id} AND "IsDeleted" = 0
+        AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Warehouse not found');
     return sanitizeRawRow(rows[0]);
@@ -78,6 +81,8 @@ export class WarehouseService {
 
   async create(dto: CreateWarehouseDto, userId: number) {
     const toDb = await this.toDb();
+    const ctx = await currentLegacyCompany(this.prisma);
+    const workplaceId = await this.ownWorkplace(toDb('WorkplaceId', dto.workplaceId) ?? ctx.workplaceId);
     const warehouseCode = await nextLegacySeqCode(this.prisma, CODE_ENTITY, CODE_PREFIX, TABLE, 'WarehouseCode');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO "IM_Warehouse" (
@@ -86,7 +91,7 @@ export class WarehouseService {
         "IsDefaultMain", "IsDefaultShipment", "IsVirtual", "IsWarehouseDeclaration", "IsShowRoom", "IsSwatchCard",
         "InUse", "InsertedAt", "InsertedBy", "IsDeleted", "UUID"
       ) VALUES (
-        1, ${toDb('WorkplaceId', dto.workplaceId) ?? 1}, ${warehouseCode}, ${dto.warehouseName},
+        ${ctx.legacyCompanyId}, ${workplaceId}, ${warehouseCode}, ${dto.warehouseName},
         ${toDb('AccessCode', dto.accessCode) ?? null}, ${toDb('SpecialCode', dto.specialCode) ?? null},
         ${toDb('StartDate', dto.startDate) ?? null}, ${toDb('EndDate', dto.endDate) ?? null},
         ${toDb('ControlType', dto.controlType) ?? 0}, ${toDb('MControlType', dto.mControlType) ?? 0},
@@ -102,6 +107,8 @@ export class WarehouseService {
   async update(id: number, dto: UpdateWarehouseDto, userId: number) {
     await this.get(id);
     const toDb = await this.toDb();
+    const newWorkplace = toDb('WorkplaceId', dto.workplaceId);
+    if (newWorkplace != null) await this.ownWorkplace(newWorkplace);
     // WarehouseCode is immutable after creation — never editable via update, regardless of
     // what the client sends (deliberately omitted from the SET list below).
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -126,6 +133,15 @@ export class WarehouseService {
       RETURNING ${Prisma.raw(ROW_SELECT)}
     `);
     return sanitizeRawRow(rows[0]);
+  }
+
+  /** A warehouse's workplace must be one of the caller's company's own (never another company's). */
+  private async ownWorkplace(workplaceId: unknown): Promise<number> {
+    const ctx = await currentLegacyCompany(this.prisma);
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT 1 FROM "MD_Workplace" WHERE "RecId" = ${Number(workplaceId)} AND "CompanyId" = ${ctx.legacyCompanyId} AND COALESCE("IsDeleted", 0) = 0`;
+    if (!rows.length) throw new BadRequestException("Workplace is not one of your company's workplaces");
+    return Number(workplaceId);
   }
 
   async remove(id: number, userId: number) {

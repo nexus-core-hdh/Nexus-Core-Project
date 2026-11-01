@@ -5,6 +5,7 @@ import { sanitizeRawRow } from './raw-row.util';
 import { getReceiptTypeConfig, directionClassOf } from './receipt-types.config';
 import { InventoryCardService, stockApprovalGateSql } from './inventory-card.service';
 import { baseQuantitySql, baseQuantityJoinSql, unitConversionIssueSql } from './unit-conversion.util';
+import { currentLegacyCompany } from './legacy-company-scope';
 
 // Item Statement / Stock Control Ledger — still a read-only view over the exact same IM_Item /
 // IM_Receipt / IM_ReceiptItem rows every *-card.service.ts and inventory-receipt.service.ts
@@ -165,9 +166,10 @@ export class ItemStatementService {
   // Item header — same "IM_Item scoped to a real AccessCode" shape as every *-card.service.ts's
   // own get(id). Unchanged from before this pass.
   private async getItemSummary(itemId: number) {
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId; // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT i."RecId" as id, i."InventoryCode" as "inventoryCode", i."InventoryName" as "inventoryName", i."AccessCode" as "accessCode"
-      FROM "IM_Item" i WHERE i."RecId" = ${itemId} AND i."IsDeleted" = 0
+      FROM "IM_Item" i WHERE i."RecId" = ${itemId} AND i."IsDeleted" = 0 AND i."CompanyId" = ${cid}
     `);
     if (!rows.length) throw new NotFoundException('Inventory item not found');
     const item = sanitizeRawRow(rows[0]);
@@ -196,6 +198,8 @@ export class ItemStatementService {
   // only to what's actually displayed/summed for the CURRENT view, never to the rows an opening
   // balance is computed from.
   private async fetchMovementRows(itemId: number | null, filters: ItemStatementFilters): Promise<RawMovementRow[]> {
+    // Company isolation: only the current company's receipts (lines inherit their receipt's company).
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId;
     const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
 
     const itemSql = itemId != null ? Prisma.sql`AND ri."InventoryId" = ${itemId}` : Prisma.sql``;
@@ -224,7 +228,7 @@ export class ItemStatementService {
         ri."InWarehouseId" as "inWarehouseId", inwh."WarehouseCode" as "inWarehouseCode", inwh."WarehouseName" as "inWarehouseName",
         ri."OutWarehouseId" as "outWarehouseId", outwh."WarehouseCode" as "outWarehouseCode", outwh."WarehouseName" as "outWarehouseName"
       FROM "IM_ReceiptItem" ri
-      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0
+      JOIN "IM_Receipt" r ON r."RecId" = ri."InventoryReceiptId" AND r."IsDeleted" = 0 AND r."CompanyId" = ${cid}
       JOIN "IM_Item" i ON i."RecId" = ri."InventoryId" AND i."IsDeleted" = 0
       LEFT JOIN "MD_UnitSetItem" usi ON usi."RecId" = ri."UnitId"
       LEFT JOIN "ColorCard" cc ON cc."id" = ri."ColorCardId"

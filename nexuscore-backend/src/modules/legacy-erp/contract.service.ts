@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedChild, assertOwnedRow, assertRefsSameCompany, currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { LegacyMasterLookupService } from './legacy-master-lookup.service';
@@ -126,7 +127,7 @@ export class ContractService {
       : Prisma.sql``;
     return runLegacyList(this.prisma, {
       select: HEADER_SELECT,
-      from: Prisma.sql`FROM "SM_Contract" WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} ${searchFilter}`,
+      from: Prisma.sql`FROM "SM_Contract" WHERE "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} ${searchFilter}`,
       sortable: { receiptNo: Prisma.sql`"ReceiptNo"`, documentNo: Prisma.sql`"DocumentNo"`, receiptDate: Prisma.sql`"ReceiptDate"` },
       defaultSortBy: 'receiptNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
     }, paging, sanitizeRawRow);
@@ -134,7 +135,7 @@ export class ContractService {
 
   async get(id: number, receiptType: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "SM_Contract" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
+      SELECT ${HEADER_SELECT} FROM "SM_Contract" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Contract not found');
     return sanitizeRawRow(rows[0]);
@@ -142,7 +143,7 @@ export class ContractService {
 
   async getByReceiptNo(receiptNo: string, receiptType: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "SM_Contract" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}
+      SELECT ${HEADER_SELECT} FROM "SM_Contract" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Contract not found');
     return sanitizeRawRow(rows[0]);
@@ -171,6 +172,7 @@ export class ContractService {
   private static readonly MAX_CODE_RETRIES = 5;
 
   async create(dto: Record<string, any>, userId: number, receiptType: number, numberPrefix: string, currentUserId?: string, companyId?: string) {
+    await assertRefsSameCompany(this.prisma, [['FI_Account', dto.currentAccountId, 'Current Account'], ['IM_Warehouse', dto.warehouseId, 'Warehouse']]);
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
 
@@ -183,7 +185,7 @@ export class ContractService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "SM_Contract" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         const created = sanitizeRawRow(rows[0]);
@@ -205,7 +207,7 @@ export class ContractService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "SM_Contract" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         const created = sanitizeRawRow(rows[0]);
@@ -222,6 +224,7 @@ export class ContractService {
   }
 
   async update(id: number, dto: Record<string, any>, userId: number, receiptType: number, currentUserId?: string, companyId?: string) {
+    await assertRefsSameCompany(this.prisma, [['FI_Account', dto.currentAccountId, 'Current Account'], ['IM_Warehouse', dto.warehouseId, 'Warehouse']]);
     const before = await this.get(id, receiptType);
     const toDb = await this.headerToDb();
     const cols = HEADER_COLUMNS.filter((c) => c !== 'ReceiptNo' && c !== 'ReceiptType' && toDb(c, dto[camel(c)]) !== undefined);
@@ -269,6 +272,7 @@ export class ContractService {
   // --- Detail lines (the grid) ------------------------------------------------------------
 
   async listItems(receiptId: number) {
+    await assertOwnedRow(this.prisma, 'SM_Contract', receiptId, 'Contract');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_SELECT} FROM "SM_ContractItem"
       WHERE "ReceiptId" = ${receiptId} AND "IsDeleted" = 0
@@ -278,6 +282,7 @@ export class ContractService {
   }
 
   async createItem(receiptId: number, dto: Record<string, any>, userId: number, receiptType: number, currentUserId?: string, companyId?: string) {
+    await assertOwnedRow(this.prisma, 'SM_Contract', receiptId, 'Contract'); await assertRefsSameCompany(this.prisma, [['IM_Item', dto.inventoryId, 'Item']]);
     if (Number(dto.itemType) === ITEM_TYPE_SERVICE) {
       if (!dto.serviceCardId) throw new BadRequestException('A service is required');
     } else if (!dto.inventoryId) {
@@ -308,6 +313,7 @@ export class ContractService {
   }
 
   async updateItem(itemId: number, dto: Record<string, any>, userId: number, receiptType: number, currentUserId?: string, companyId?: string) {
+    await assertOwnedChild(this.prisma, 'SM_ContractItem', 'ReceiptId', 'SM_Contract', itemId, 'Line'); await assertRefsSameCompany(this.prisma, [['IM_Item', dto.inventoryId, 'Item']]);
     const toDb = await this.itemToDb();
     const beforeRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "SM_ContractItem" WHERE "RecId" = ${itemId} AND "IsDeleted" = 0`);
     if (!beforeRows.length) throw new NotFoundException('Line not found');
@@ -339,6 +345,7 @@ export class ContractService {
   }
 
   async removeItem(itemId: number, userId: number, receiptType: number, currentUserId?: string, companyId?: string) {
+    await assertOwnedChild(this.prisma, 'SM_ContractItem', 'ReceiptId', 'SM_Contract', itemId, 'Line');
     const beforeRows = currentUserId && companyId
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT ${ITEM_SELECT} FROM "SM_ContractItem" WHERE "RecId" = ${itemId} AND "IsDeleted" = 0`)
       : [];

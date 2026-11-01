@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedRow } from './legacy-company-scope';
 import { FabricCardService } from './fabric-card.service';
 import { YarnCardService } from './yarn-card.service';
 import { assertAllNonNegative } from './numeric-guards.util';
@@ -25,6 +26,7 @@ export class FabricYarnRecipeService {
   // Color-Specific-then-Common priority. Used directly by the dialog (which always knows exactly
   // which bucket it's editing) and internally by resolveEffectiveRecipe.
   async getRecipe(fabricInventoryId: number, colorCardId?: string | null) {
+    await assertOwnedRow(this.prisma, 'IM_Item', fabricInventoryId, 'Fabric'); // company isolation
     return this.prisma.fabricYarnRecipeLine.findMany({
       where: { fabricInventoryId, colorCardId: colorCardId ?? null },
       orderBy: { sortOrder: 'asc' },
@@ -41,6 +43,7 @@ export class FabricYarnRecipeService {
   // the Yarn math itself (percentage x Fabric Requirement, wastage, unit conversion) is completely
   // untouched and lives entirely in the caller.
   async resolveEffectiveRecipe(fabricInventoryId: number, colorCardId: string | null | undefined) {
+    await assertOwnedRow(this.prisma, 'IM_Item', fabricInventoryId, 'Fabric'); // company isolation
     if (colorCardId) {
       const colorSpecific = await this.getRecipe(fabricInventoryId, colorCardId);
       if (colorSpecific.length) return colorSpecific;
@@ -68,6 +71,7 @@ export class FabricYarnRecipeService {
   // it must never feed back into "is this color even selectable," or a stale/orphaned override
   // (BOM since changed) would keep offering a color with no real BOM connection at all.
   async listAvailableColors(fabricInventoryId: number) {
+    await assertOwnedRow(this.prisma, 'IM_Item', fabricInventoryId, 'Fabric'); // company isolation
     await this.fabricCardSvc.get(fabricInventoryId);
     const rows = await this.prisma.$queryRaw<{ colorCardId: string }[]>`
       SELECT DISTINCT "colorCardId" FROM "StyleBomLine" WHERE "fabricInventoryId" = ${fabricInventoryId} AND "colorCardId" IS NOT NULL
@@ -90,6 +94,7 @@ export class FabricYarnRecipeService {
   // each bucket's own rows — the same total-percentage figure the dialog itself computes, and the
   // most recent write among that bucket's rows (Prisma's own @updatedAt on this model).
   async listRecipeSummaries(fabricInventoryId: number) {
+    await assertOwnedRow(this.prisma, 'IM_Item', fabricInventoryId, 'Fabric'); // company isolation
     const rows = await this.prisma.fabricYarnRecipeLine.findMany({
       where: { fabricInventoryId },
       orderBy: { sortOrder: 'asc' },
@@ -140,6 +145,7 @@ export class FabricYarnRecipeService {
   }
 
   async upsertRecipe(fabricInventoryId: number, lines: any[], colorCardId?: string | null) {
+    await assertOwnedRow(this.prisma, 'IM_Item', fabricInventoryId, 'Fabric'); // company isolation
     // Reuses FabricCardService.get's own existence check (AccessCode='FABRIC', not deleted) —
     // throws NotFoundException itself, nothing to duplicate here.
     await this.fabricCardSvc.get(fabricInventoryId);

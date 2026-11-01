@@ -44,14 +44,14 @@ after(async () => { await prisma.$disconnect(); });
 
 /** A Work Order with Manufacturing Quantities RED: S 10, M 20 · BLUE: S 5, M 0 and Extra Cutting 10%. */
 async function workOrder(opts: { colorBased?: number; quantities?: [string, string, number][]; bom?: boolean } = {}) {
-  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "Quantity2", "ProductionColorCumulativeType", "IsDeleted") VALUES (${uniq('W/O-')}, 10, ${opts.colorBased ?? 0}, 0) RETURNING "RecId" as id`);
+  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "Quantity2", "ProductionColorCumulativeType", "IsDeleted") VALUES (1, ${uniq('W/O-')}, 10, ${opts.colorBased ?? 0}, 0) RETURNING "RecId" as id`);
   const itemId = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${woId}, 1, 0) RETURNING "RecId" as id`);
   const qty = opts.quantities ?? [['RED', 'S', 10], ['RED', 'M', 20], ['BLUE', 'S', 5], ['BLUE', 'M', 0]];
   for (const [i, [color, size, n]] of qty.entries()) {
     await prisma.$executeRaw`INSERT INTO "MA_WorkOrderItemVariant" ("WorkOrderItemId", "Explanation", "Quantity", "SubNo", "IsDeleted") VALUES (${itemId}, ${`${color}‖${size}`}, ${n}, ${i + 1}, 0)`;
   }
   if (opts.bom !== false) {
-    const fab = await one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${uniq('FAB')}, 'Jersey', 'FABRIC', 0) RETURNING "RecId" as id`);
+    const fab = await one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${uniq('FAB')}, 'Jersey', 'FABRIC', 0) RETURNING "RecId" as id`);
     bomByWorkOrder.set(woId, [
       { inventoryId: fab, variant1: 'MAIN FAB', variant2: null, colorCardId: null, wastage: 0 },
       { inventoryId: fab, variant1: 'RIB', variant2: 'RED', colorCardId: null, wastage: 0 },

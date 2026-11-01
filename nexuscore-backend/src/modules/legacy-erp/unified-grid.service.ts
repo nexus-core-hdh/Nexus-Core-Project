@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { companyRowScopeSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 
 export interface UnifiedGridConfig {
@@ -88,6 +89,7 @@ export class UnifiedGridService {
     const cfg = this.config(key);
     const table = Prisma.raw(`"${cfg.table}"`);
     const extraWhere = cfg.extraWhere ?? Prisma.sql``;
+    const companyScope = await companyRowScopeSql(this.prisma, cfg.table, 'u'); // company isolation
     const whereSearch = search
       ? Prisma.sql`AND (${Prisma.join(cfg.searchColumns.map((c) => Prisma.sql`"${Prisma.raw(c)}" ILIKE ${`%${search}%`}`), ' OR ')})`
       : Prisma.sql``;
@@ -96,8 +98,8 @@ export class UnifiedGridService {
       [...new Set([cfg.orderBy, ...cfg.searchColumns])].map((c) => [c, Prisma.sql`${Prisma.raw(`"${c}"`)}`]),
     );
     return runLegacyList(this.prisma, {
-      select: Prisma.sql`*`,
-      from: Prisma.sql`FROM ${table} WHERE "IsDeleted" = 0 ${extraWhere} ${whereSearch}`,
+      select: Prisma.sql`u.*`,
+      from: Prisma.sql`FROM ${table} u WHERE u."IsDeleted" = 0 ${extraWhere} ${whereSearch} ${companyScope}`,
       sortable,
       defaultSortBy: cfg.orderBy,
       defaultSortDir: cfg.orderDir === 'DESC' ? 'desc' : 'asc',

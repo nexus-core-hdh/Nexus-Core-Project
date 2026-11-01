@@ -410,6 +410,11 @@ model Company {
   /// trial or subscription limit itself. Exactly one company has this set (see prisma/seed.ts).
   isPlatformOwner          Boolean            @default(false)
   accountType              CompanyAccountType @default(Standard)
+  // Legacy ERP company (MD_Company.RecId) this company's users work in — company isolation.
+  // Server-side only: resolved from the token's company (legacy-company-context.service.ts), never
+  // client input, not in UpdateCompanyDto. FK to MD_Company is in the migration (legacy tables are
+  // not Prisma models). Null = no legacy ERP access (fail closed).
+  legacyCompanyId          Int?               @unique
   customFieldsSectionTitle String?            @default("Custom Fields")
   metaAppId                String?
   metaAppSecret            String?

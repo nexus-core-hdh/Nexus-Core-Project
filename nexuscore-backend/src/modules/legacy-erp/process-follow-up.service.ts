@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 
 // Process Follow-up Report — the data of the Report Builder's Process Follow-up document source
@@ -143,6 +144,7 @@ export class ProcessFollowUpService {
     // Like Order Manufacturing Entry's own totals: an entry counts while it and its Work Order are not
     // deleted — also when the Work Order item it was booked on has since been replaced (deleted).
     const where: Prisma.Sql[] = [
+      Prisma.sql`wo."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}`, // company isolation
       Prisma.sql`p."IsDeleted" = 0`, Prisma.sql`COALESCE(wo."IsDeleted", 0) = 0`,
       Prisma.sql`p."ProductionType" = ${PRODUCTION_TYPE_MANUFACTURING}`,
     ];
@@ -278,7 +280,7 @@ export class ProcessFollowUpService {
       workOrder: Prisma.sql`SELECT "RecId" as id, "WorkOrderNo" as name FROM "MA_WorkOrder"`,
       process: Prisma.sql`SELECT "RecId" as id, "ProcessName" as name FROM "MA_Process"`,
     }[table];
-    const rows = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`${q} WHERE "RecId" IN (${Prisma.join(ids)})`));
+    const rows = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`${q} WHERE "RecId" IN (${Prisma.join(ids)}) AND ("CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} OR "CompanyId" IS NULL)`));
     const byId = new Map(rows.map((r: any) => [Number(r.id), String(r.name ?? '')]));
     return ids.map((id) => byId.get(id) || `#${id}`);
   }

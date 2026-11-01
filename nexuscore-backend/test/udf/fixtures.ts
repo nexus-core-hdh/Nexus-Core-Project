@@ -103,13 +103,13 @@ export async function createWorld(): Promise<World> {
     (await prisma.styleCard.create({ data: { styleNumber: `UDF-ST-${tag}-${i}`, title: 'UDF test style', branchId, createdBy: users.adminA1.id } })).id;
 
   const records = {
-    purchaseReceipt: await legacy(`INSERT INTO "IM_Receipt" ("ReceiptType","ReceiptNo") VALUES (2,'IR-1') RETURNING "RecId" AS id`),
-    purchaseReturn: await legacy(`INSERT INTO "IM_Receipt" ("ReceiptType","ReceiptNo") VALUES (122,'PRN-1') RETURNING "RecId" AS id`),
-    deletedReceipt: await legacy(`INSERT INTO "IM_Receipt" ("ReceiptType","ReceiptNo","IsDeleted") VALUES (2,'IR-DEL',1) RETURNING "RecId" AS id`),
-    unknownTypeReceipt: await legacy(`INSERT INTO "IM_Receipt" ("ReceiptType","ReceiptNo") VALUES (9,'X-1') RETURNING "RecId" AS id`),
-    fiReceipt: await legacy(`INSERT INTO "FI_Receipt" ("ReceiptType","ReceiptNo") VALUES (1,'FR-1') RETURNING "RecId" AS id`),
-    yarnCard: await legacy(`INSERT INTO "IM_Item" ("AccessCode","InventoryCode") VALUES ('YARN','YARN-1') RETURNING "RecId" AS id`),
-    nonYarnItem: await legacy(`INSERT INTO "IM_Item" ("AccessCode","InventoryCode") VALUES ('FABRIC','FAB-1') RETURNING "RecId" AS id`),
+    purchaseReceipt: await legacy(`INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 2,'IR-1') RETURNING "RecId" AS id`),
+    purchaseReturn: await legacy(`INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 122,'PRN-1') RETURNING "RecId" AS id`),
+    deletedReceipt: await legacy(`INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptType","ReceiptNo","IsDeleted") VALUES (1, 2,'IR-DEL',1) RETURNING "RecId" AS id`),
+    unknownTypeReceipt: await legacy(`INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 9,'X-1') RETURNING "RecId" AS id`),
+    fiReceipt: await legacy(`INSERT INTO "FI_Receipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 1,'FR-1') RETURNING "RecId" AS id`),
+    yarnCard: await legacy(`INSERT INTO "IM_Item" ("CompanyId", "AccessCode","InventoryCode") VALUES (1, 'YARN','YARN-1') RETURNING "RecId" AS id`),
+    nonYarnItem: await legacy(`INSERT INTO "IM_Item" ("CompanyId", "AccessCode","InventoryCode") VALUES (1, 'FABRIC','FAB-1') RETURNING "RecId" AS id`),
     styleCardA1: await styleCard(a1.id, 1),
     styleCardA2: await styleCard(a2.id, 2),
     styleCardB1: await styleCard(b1.id, 3),
@@ -119,15 +119,15 @@ export async function createWorld(): Promise<World> {
   };
 
   Object.assign(records, {
-    workOrder: await legacy(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","Quantity") VALUES ('WO-1',100) RETURNING "RecId" AS id`),
-    deletedWorkOrder: await legacy(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","IsDeleted") VALUES ('WO-DEL',1) RETURNING "RecId" AS id`),
-    purchaseOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (1,'PO-1') RETURNING "RecId" AS id`),
-    purchaseOrder2: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (1,'PO-2') RETURNING "RecId" AS id`),
-    subcontractOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (3,'SC-1') RETURNING "RecId" AS id`),
-    otherTypeOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("ReceiptType","ReceiptNo") VALUES (2,'X-1') RETURNING "RecId" AS id`),
-    purchaseContract: await legacy(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (1,'PC-1') RETURNING "RecId" AS id`),
-    saleContract: await legacy(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (2,'SLC-1') RETURNING "RecId" AS id`),
-    unknownTypeContract: await legacy(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (9,'C-9') RETURNING "RecId" AS id`),
+    workOrder: await legacy(`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo","Quantity") VALUES (1, 'WO-1',100) RETURNING "RecId" AS id`),
+    deletedWorkOrder: await legacy(`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo","IsDeleted") VALUES (1, 'WO-DEL',1) RETURNING "RecId" AS id`),
+    purchaseOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 1,'PO-1') RETURNING "RecId" AS id`),
+    purchaseOrder2: await legacy(`INSERT INTO "IM_OrderReceipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 1,'PO-2') RETURNING "RecId" AS id`),
+    subcontractOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 3,'SC-1') RETURNING "RecId" AS id`),
+    otherTypeOrder: await legacy(`INSERT INTO "IM_OrderReceipt" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 2,'X-1') RETURNING "RecId" AS id`),
+    purchaseContract: await legacy(`INSERT INTO "SM_Contract" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 1,'PC-1') RETURNING "RecId" AS id`),
+    saleContract: await legacy(`INSERT INTO "SM_Contract" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 2,'SLC-1') RETURNING "RecId" AS id`),
+    unknownTypeContract: await legacy(`INSERT INTO "SM_Contract" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 9,'C-9') RETURNING "RecId" AS id`),
   });
   const r = records as World['records'];
   const lineRows = async (table: string, parentColumn: string, parentId: string, n: number, deleted = 0) => {

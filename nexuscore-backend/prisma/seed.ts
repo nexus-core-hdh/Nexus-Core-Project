@@ -192,6 +192,13 @@ async function main() {
       `SELECT setval(pg_get_serial_sequence('"${table}"', 'RecId'), GREATEST((SELECT MAX("RecId") FROM "${table}"), 1))`,
     );
   }
+  // Company isolation: the seed company works in legacy company 1 (C001, created just above) —
+  // Company.legacyCompanyId, resolved by legacy-company-context.service.ts. Only when the seed company
+  // has no mapping yet and no other company already holds legacy company 1; never changes a mapping.
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Company" SET "legacyCompanyId" = 1
+    WHERE "id" = $1 AND "legacyCompanyId" IS NULL
+      AND NOT EXISTS (SELECT 1 FROM "Company" WHERE "legacyCompanyId" = 1)`, company.id);
   console.log('✓ Legacy ERP company/workplace (RecId 1)');
 
   // ── BPM Processes ─────────────────────────────────────────────────────────────
@@ -775,6 +782,29 @@ async function main() {
             { title: '139 - Service Purchase Return Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=139' },
             { title: '120 - Wholesale Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=120' },
             { title: '3 - Return Wholesale Receipt', href: '/legacy-erp/inventory-receipts-list?receiptType=3' },
+          ]},
+          // Invoices — the legacy IM_Invoice header linked to an Inventory Receipt (invoice.service.ts),
+          // one invoice list per receipt type (opening the invoice-style screen); separate from the Inventory Receipts above.
+          // Existing databases: scripts/seed-invoice-menu-items.ts.
+          { title: 'Invoices', href: '#', icon: 'Receipt', isNew: true, items: [
+            { title: '2 - Purchase Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=2' },
+            { title: '122 - Purchase Return Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=122' },
+            { title: '16 - Counting Stock Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=16' },
+            { title: '101 - Counting Stockovers Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=101' },
+            { title: '17 - Warehouse Transfer Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=17' },
+            { title: '11 - Outside Process Receive Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=11' },
+            { title: '12 - Outside Process Return Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=12' },
+            { title: '134 - Outside Process Sent Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=134' },
+            { title: '133 - Outside Process Sent Return Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=133' },
+            { title: '140 - Manufacture Send Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=140' },
+            { title: '40 - Manufacture Return Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=40' },
+            { title: '10 - Outside Manufacture Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=10' },
+            { title: '132 - Special Purpose (Outflow) Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=132' },
+            { title: '18 - Special Purpose (Inflow) Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=18' },
+            { title: '22 - Service Purchase Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=22' },
+            { title: '139 - Service Purchase Return Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=139' },
+            { title: '120 - Wholesale Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=120' },
+            { title: '3 - Return Wholesale Receipt Invoice', href: '/legacy-erp/receipt-invoices-list?receiptType=3' },
           ]},
           { title: '1 - Purchase Contract', href: '/legacy-erp/contracts-list', icon: 'FileSignature', isNew: true },
           { title: '2 - Sale Contract', href: '/legacy-erp/contracts-list?receiptType=2', icon: 'FileText', isNew: true },

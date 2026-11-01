@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { currentLegacyCompany } from './legacy-company-scope';
 
 // Recipe Usage ("Where Used") — ONE generic resolver shared by Fabric Cards, Yarn Cards, Trim
 // Cards and Inventory Cards (fabric-card.service.ts / yarn-card.service.ts /
@@ -75,7 +76,9 @@ export class RecipeUsageService {
   // unit as "quantity of yarn", and FabricYarnRecipeLine.percentage is a composition ratio, not a
   // quantity, so neither is shown as one (Section 5's own "do not confuse percentage with
   // quantity" / "never invent" rules) rather than a computed, unstored blend of the two.
-  private rawUsageCte(inventoryId: number, branchId?: string): Prisma.Sql {
+  // `cid`: the caller's legacy company — the Fabric / Order branches only reach that company's own
+  // items and Work Orders (company isolation); Style / Sample stay scoped by branch as before.
+  private rawUsageCte(inventoryId: number, branchId: string | undefined, cid: number): Prisma.Sql {
     const branchFilterStyle = branchId ? Prisma.sql`AND sc."branchId" = ${branchId}` : Prisma.sql``;
     const branchFilterSample = branchId ? Prisma.sql`AND sam."branchId" = ${branchId}` : Prisma.sql``;
     return Prisma.sql`
@@ -123,7 +126,7 @@ export class RecipeUsageService {
           NULL::text as "documentNo", fab."RecId"::text as "sourceId", NULL::numeric as quantity
         FROM "FabricYarnRecipeLine" fyl
         JOIN "IM_Item" fab ON fab."RecId" = fyl."fabricInventoryId"
-        WHERE fyl."yarnInventoryId" = ${inventoryId} AND fab."IsDeleted" = 0
+        WHERE fyl."yarnInventoryId" = ${inventoryId} AND fab."IsDeleted" = 0 AND fab."CompanyId" = ${cid}
 
         UNION ALL
 
@@ -132,7 +135,7 @@ export class RecipeUsageService {
           wo."WorkOrderNo" as "documentNo", wo."RecId"::text as "sourceId", ri."Quantity" as quantity
         FROM "MA_RecipeItem" ri
         JOIN "MA_Recipe" rec ON rec."RecId" = ri."RecipeId" AND rec."IsDeleted" = 0
-        JOIN "MA_WorkOrder" wo ON wo."RecId" = rec."WorkOrderId" AND wo."IsDeleted" = 0
+        JOIN "MA_WorkOrder" wo ON wo."RecId" = rec."WorkOrderId" AND wo."IsDeleted" = 0 AND wo."CompanyId" = ${cid}
         WHERE ri."InventoryId" = ${inventoryId} AND ri."IsDeleted" = 0
 
         UNION ALL
@@ -142,7 +145,7 @@ export class RecipeUsageService {
           wo."WorkOrderNo" as "documentNo", wo."RecId"::text as "sourceId", NULL::numeric as quantity
         FROM "MA_RecipeItem" ri
         JOIN "MA_Recipe" rec ON rec."RecId" = ri."RecipeId" AND rec."IsDeleted" = 0
-        JOIN "MA_WorkOrder" wo ON wo."RecId" = rec."WorkOrderId" AND wo."IsDeleted" = 0
+        JOIN "MA_WorkOrder" wo ON wo."RecId" = rec."WorkOrderId" AND wo."IsDeleted" = 0 AND wo."CompanyId" = ${cid}
         JOIN "FabricYarnRecipeLine" fyl ON fyl."fabricInventoryId" = ri."InventoryId"
         WHERE ri."IsDeleted" = 0 AND ri."InventoryId" IS NOT NULL AND fyl."yarnInventoryId" = ${inventoryId}
       )
@@ -155,9 +158,9 @@ export class RecipeUsageService {
   // still reporting a real total: SUM(quantity) over that document's own matching lines (NULLs from
   // the transitive/percentage branches contribute nothing, so a document reachable only
   // transitively still correctly shows a blank quantity rather than a fabricated 0).
-  private usageCte(inventoryId: number, branchId?: string): Prisma.Sql {
+  private usageCte(inventoryId: number, branchId: string | undefined, cid: number): Prisma.Sql {
     return Prisma.sql`
-      ${this.rawUsageCte(inventoryId, branchId)},
+      ${this.rawUsageCte(inventoryId, branchId, cid)},
       usage AS (
         SELECT type, code, name, "documentNo", "sourceId", SUM(quantity) as quantity
         FROM raw_usage
@@ -169,7 +172,7 @@ export class RecipeUsageService {
   async list(params: RecipeUsageListParams): Promise<{ rows: RecipeUsageRow[]; total: number; skip: number; take: number }> {
     const skip = Math.max(params.skip ?? 0, 0);
     const take = Math.min(Math.max(params.take ?? 50, 1), 200);
-    const cte = this.usageCte(params.inventoryId, params.branchId);
+    const cte = this.usageCte(params.inventoryId, params.branchId, (await currentLegacyCompany(this.prisma)).legacyCompanyId);
     const typeFilter = params.type && ALL_TYPES.includes(params.type) ? Prisma.sql`AND type = ${params.type}` : Prisma.sql``;
     const term = params.search?.trim();
     const searchFilter = term

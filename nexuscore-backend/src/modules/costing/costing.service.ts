@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { itemUnitNameLateral } from '../legacy-erp/inventory-card.service';
+import { legacyCompanyOrNull } from '../legacy-erp/legacy-company-scope';
 import { LegacyMasterLookupService } from '../legacy-erp/legacy-master-lookup.service';
 import { resolveLineUnitId, assertValidItemUnit } from '../legacy-erp/unit-conversion.util';
 
@@ -175,7 +176,7 @@ export class CostingService {
       SELECT i."RecId"::int AS id, i."InventoryCode" AS code, i."InventoryName" AS name, unit_lookup."unitName" AS unit
       FROM "IM_Item" i
       ${itemUnitNameLateral('i')}
-      WHERE i."RecId" IN (${Prisma.join(unique)}) AND i."IsDeleted" = 0
+      WHERE i."RecId" IN (${Prisma.join(unique)}) AND i."IsDeleted" = 0 AND i."CompanyId" = ${(await legacyCompanyOrNull(this.prisma))?.legacyCompanyId ?? -1}
     `);
     return new Map(rows.map((r) => [Number(r.id), { code: r.code ?? '', name: r.name ?? '', unit: r.unit ?? '' }]));
   }
@@ -191,7 +192,7 @@ export class CostingService {
     if (legacyCodes.length) {
       const rows = await this.prisma.$queryRaw<{ code: string; id: number; n: number }[]>(Prisma.sql`
         SELECT "InventoryCode" AS code, min("RecId")::int AS id, count(*)::int AS n
-        FROM "IM_Item" WHERE "InventoryCode" IN (${Prisma.join(legacyCodes)}) AND "IsDeleted" = 0
+        FROM "IM_Item" WHERE "InventoryCode" IN (${Prisma.join(legacyCodes)}) AND "IsDeleted" = 0 AND "CompanyId" = ${(await legacyCompanyOrNull(this.prisma))?.legacyCompanyId ?? -1}
         GROUP BY "InventoryCode"
       `);
       for (const r of rows) if (r.n === 1) byCode.set(r.code, Number(r.id));

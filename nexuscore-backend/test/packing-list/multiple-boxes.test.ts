@@ -37,7 +37,7 @@ after(async () => { await prisma.$disconnect(); });
 const one = async (sql: Prisma.Sql) => Number((await prisma.$queryRaw<any[]>(sql))[0].id);
 /** A Work Order with RED and NAVY in S / M / L (Order quantities per color and size). */
 async function workOrder() {
-  const id = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${uniq('W/O')}, 0) RETURNING "RecId" as id`);
+  const id = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${uniq('W/O')}, 0) RETURNING "RecId" as id`);
   const itemId = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${id}, 1, 0) RETURNING "RecId" as id`);
   let subNo = 0;
   for (const color of ['RED', 'NAVY']) {

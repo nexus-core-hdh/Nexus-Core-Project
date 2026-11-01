@@ -73,7 +73,7 @@ before(async () => {
 
   const style = async (n: string, routeId: string | null) => (await prisma.styleCard.create({ data: { styleNumber: `SC-${RUN}-${n}`, title: n, branchId, createdBy: 'u1', bomRouteCardId: routeId } })).id;
   const workOrder = async (n: string, styleId: string | null) => {
-    const id = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "StyleCardId", "IsDeleted") VALUES (${`W/O-${n}${RUN}`.slice(0, 25)}, ${styleId}, 0) RETURNING "RecId" as id`);
+    const id = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "StyleCardId", "IsDeleted") VALUES (1, ${`W/O-${n}${RUN}`.slice(0, 25)}, ${styleId}, 0) RETURNING "RecId" as id`);
     const item = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${id}, 1, 0) RETURNING "RecId" as id`);
     await prisma.$executeRaw`INSERT INTO "MA_WorkOrderItemVariant" ("WorkOrderItemId", "Explanation", "IsDeleted") VALUES (${item}, ${'RED‖S'}, 0)`;
     return id;
@@ -85,7 +85,7 @@ before(async () => {
     ids[`style${k}`] = await style(k, r);
     ids[`wo${k}`] = await workOrder(`${k[0]}${k[1]}`, ids[`style${k}`]);
   }
-  ids.factory = await one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${`F${RUN}`}, 'Factory', 0) RETURNING "RecId" as id`);
+  ids.factory = await one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${`F${RUN}`}, 'Factory', 0) RETURNING "RecId" as id`);
 });
 after(async () => { await prisma.$disconnect(); });
 

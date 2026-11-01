@@ -64,7 +64,7 @@ before(async () => {
   companyId = company.id;
   const branchId = (await prisma.branch.create({ data: { name: 'PF', companyId } })).id;
 
-  const account = (name: string) => one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${uniq('A')}, ${name}, 0) RETURNING "RecId" as id`);
+  const account = (name: string) => one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${uniq('A')}, ${name}, 0) RETURNING "RecId" as id`);
   ids.tap = await account(`Tap E Oeil ${RUN}`);
   ids.prime = await account(`Prime Source ${RUN}`);
   ids.f1 = await account(`Alpha Finishing ${RUN}`);
@@ -84,7 +84,7 @@ before(async () => {
   styleNumber = uniq('CA-');
   const style = await prisma.styleCard.create({ data: { styleNumber, title: `SWEAT BA NINON ${RUN}`, branchId, createdBy: 'u1', attachments: [{ type: 'image/png', url: PICTURE, name: 'front.png' }] } });
   const workOrder = async (no: string, customer: number, styleId: string | null, deleted = false) => {
-    const id = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "CurrentAccountId", "StyleCardId", "DeliveryDate", "IsDeleted") VALUES (${no}, ${customer}, ${styleId}, '2026-05-14'::timestamp, ${deleted ? 1 : 0}) RETURNING "RecId" as id`);
+    const id = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "CurrentAccountId", "StyleCardId", "DeliveryDate", "IsDeleted") VALUES (1, ${no}, ${customer}, ${styleId}, '2026-05-14'::timestamp, ${deleted ? 1 : 0}) RETURNING "RecId" as id`);
     const item = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${id}, 1, 0) RETURNING "RecId" as id`);
     return { id, item };
   };

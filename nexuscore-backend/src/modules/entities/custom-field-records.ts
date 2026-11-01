@@ -5,6 +5,7 @@ import { CONTRACT_TYPES } from '../legacy-erp/contract-types.config';
 import { screenKeyFor as inventoryReceiptScreenKey } from '../legacy-erp/inventory-receipt.service';
 import { screenKeyFor as orderScreenKey } from '../legacy-erp/purchase-order.service';
 import { WORK_ORDER_SCREEN_KEY } from '../legacy-erp/work-order.service';
+import { legacyCompanyOrNull } from '../legacy-erp/legacy-company-scope';
 
 // Server-side resolution of the record a set of User Defined Field values belongs to — the
 // ownership/permission side of GET/PUT custom-field-values. Nothing here is taken from the client
@@ -56,10 +57,15 @@ const orderResolver = (entity: string, receiptType: number, permissionModule: st
   if (!LEGACY_ID.test(entityId)) return null;
   const row = await legacyRow(prisma, Prisma.sql`
     SELECT "ReceiptNo" AS "receiptNo" FROM "IM_OrderReceipt"
-    WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}`);
+    WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0 AND "ReceiptType" = ${receiptType}${await inCompany(prisma)}`);
   if (!row) return null;
   return { entity, entityId, permissionModule, screenKey: orderScreenKey(receiptType), documentNo: row.receiptNo ?? null };
 };
+
+/** ` AND "CompanyId" = <caller's legacy company>` — legacy records are only reachable by their own
+ *  company (company isolation); a company with no legacy mapping reaches none (-1 matches no row). */
+const inCompany = async (prisma: PrismaService) =>
+  Prisma.sql` AND "CompanyId" = ${(await legacyCompanyOrNull(prisma))?.legacyCompanyId ?? -1}`;
 
 const legacyRow = async (prisma: PrismaService, sql: Prisma.Sql) => {
   const rows = await prisma.$queryRaw<any[]>(sql);
@@ -78,7 +84,7 @@ const RESOLVERS: Record<string, Resolver> = {
     if (!LEGACY_ID.test(entityId)) return null;
     const row = await legacyRow(prisma, Prisma.sql`
       SELECT "ReceiptType" AS "receiptType", "ReceiptNo" AS "receiptNo" FROM "IM_Receipt"
-      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0`);
+      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0${await inCompany(prisma)}`);
     const receiptType = row ? Number(row.receiptType) : NaN;
     if (!row || !RECEIPT_TYPE_SET.has(receiptType)) return null;
     return {
@@ -92,7 +98,7 @@ const RESOLVERS: Record<string, Resolver> = {
     if (!LEGACY_ID.test(entityId)) return null;
     const row = await legacyRow(prisma, Prisma.sql`
       SELECT "ReceiptNo" AS "receiptNo" FROM "FI_Receipt"
-      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0 AND "ReceiptType" = ${FI_RECEIPT_TYPE}`);
+      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0 AND "ReceiptType" = ${FI_RECEIPT_TYPE}${await inCompany(prisma)}`);
     if (!row) return null;
     return {
       entity: 'FiReceipt', entityId, permissionModule: 'financial-receipts',
@@ -103,7 +109,7 @@ const RESOLVERS: Record<string, Resolver> = {
     if (!LEGACY_ID.test(entityId)) return null;
     const row = await legacyRow(prisma, Prisma.sql`
       SELECT "InventoryCode" AS "code" FROM "IM_Item"
-      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0 AND "AccessCode" = ${YARN_ACCESS_CODE}`);
+      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0 AND "AccessCode" = ${YARN_ACCESS_CODE}${await inCompany(prisma)}`);
     if (!row) return null;
     return {
       entity: 'YarnCard', entityId, permissionModule: 'yarn-cards',
@@ -123,7 +129,7 @@ const RESOLVERS: Record<string, Resolver> = {
   WorkOrder: async (prisma, entityId) => {
     if (!LEGACY_ID.test(entityId)) return null;
     const row = await legacyRow(prisma, Prisma.sql`
-      SELECT "WorkOrderNo" AS "workOrderNo" FROM "MA_WorkOrder" WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0`);
+      SELECT "WorkOrderNo" AS "workOrderNo" FROM "MA_WorkOrder" WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0${await inCompany(prisma)}`);
     if (!row) return null;
     return { entity: 'WorkOrder', entityId, permissionModule: 'work-orders', screenKey: WORK_ORDER_SCREEN_KEY, documentNo: row.workOrderNo ?? null };
   },
@@ -134,7 +140,7 @@ const RESOLVERS: Record<string, Resolver> = {
     if (!LEGACY_ID.test(entityId)) return null;
     const row = await legacyRow(prisma, Prisma.sql`
       SELECT "ReceiptType" AS "receiptType", "ReceiptNo" AS "receiptNo" FROM "SM_Contract"
-      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0`);
+      WHERE "RecId" = ${BigInt(entityId)} AND "IsDeleted" = 0${await inCompany(prisma)}`);
     const receiptType = row ? Number(row.receiptType) : NaN;
     if (!row || !CONTRACT_TYPE_SET.has(receiptType)) return null;
     return { entity: 'Contract', entityId, permissionModule: 'contracts', screenKey: contractScreenKey(receiptType), documentNo: row.receiptNo ?? null };

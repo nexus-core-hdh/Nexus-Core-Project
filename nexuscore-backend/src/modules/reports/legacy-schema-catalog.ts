@@ -527,6 +527,30 @@ export class LegacySchemaCatalog {
       throw new BadRequestException(`This report refers to fields that are no longer available in ${base.name}: ${stale.join('; ')}. Edit the report and remove or replace them.`);
     }
 
+    // Company isolation: rows of the request's legacy company only (set transaction-locally by the
+    // report builder — legacyCompanyScoped). A table with its own CompanyId filters on it (shared
+    // NULL-company master rows stay visible); a line table without one is scoped through the
+    // company-owned parents it references (≤ MAX_TO_ONE_HOPS): every such parent it does reference
+    // must be the company's, and it must reference at least one (a NULL link proves nothing); a
+    // table with no company dimension at all (cities, units, …) is shared reference data.
+    const LEGACY_COMPANY = "current_setting('nexus.legacy_company_id')::int";
+    const companyCondition = (table: CatalogTable, alias: string, depth: number): string | null => {
+      if (table.columnByName.has('CompanyId')) return `(${alias}."CompanyId" = ${LEGACY_COMPANY} OR ${alias}."CompanyId" IS NULL)`;
+      if (depth >= MAX_TO_ONE_HOPS) return null;
+      const links: { col: string; owned: string }[] = [];
+      for (const [i, fk] of table.outgoing.entries()) {
+        const parent = tables.get(fk.parent);
+        if (!parent || parent.name === table.name) continue;
+        const pa = `cp${depth}_${i}`;
+        const inner = companyCondition(parent, pa, depth + 1);
+        if (inner) links.push({ col: `${alias}.${q(fk.childCol)}`, owned: `EXISTS (SELECT 1 FROM ${q(parent.name)} ${pa} WHERE ${pa}.${q(fk.parentCol)} = ${alias}.${q(fk.childCol)} AND ${inner})` });
+      }
+      if (!links.length) return null;
+      return `((${links.map((l) => `${l.col} IS NOT NULL`).join(' OR ')}) AND ${links.map((l) => `(${l.col} IS NULL OR ${l.owned})`).join(' AND ')})`;
+    };
+    const company = companyCondition(base, 't0', 0);
+    const live = base.softDelete ? `t0."IsDeleted" = 0` : 'TRUE';
+
     return {
       kind: 'sql',
       key: sourceKey,
@@ -534,7 +558,8 @@ export class LegacySchemaCatalog {
       label: base.label,
       description: `Database table ${base.name}`,
       from: [`${q(base.name)} t0`, ...joins].join('\n    '),
-      where: base.softDelete ? `t0."IsDeleted" = 0` : 'TRUE',
+      where: company ? `${live} AND ${company}` : live,
+      legacyCompanyScoped: true,
       defaultSort: { field: base.pk, direction: 'desc' },
       menuSection: tableSourceSection(sourceKey),
       fields,

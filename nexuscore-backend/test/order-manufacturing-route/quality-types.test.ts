@@ -48,10 +48,10 @@ before(async () => {
   companyId = (await prisma.company.create({ data: { name: `OM Types ${RUN}` } })).id;
   // A Work Order without a Route (every process allowed), one RED/S variant, a factory, a process.
   ids.process = await one(Prisma.sql`INSERT INTO "MA_Process" ("ProcessCode", "ProcessName", "IsDeleted") VALUES (${`T${RUN}`.slice(0, 20)}, ${`Printing ${RUN}`}, 0) RETURNING "RecId" as id`);
-  ids.wo = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${`W/O-Q${RUN}`.slice(0, 25)}, 0) RETURNING "RecId" as id`);
+  ids.wo = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${`W/O-Q${RUN}`.slice(0, 25)}, 0) RETURNING "RecId" as id`);
   const item = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${ids.wo}, 1, 0) RETURNING "RecId" as id`);
   await prisma.$executeRaw`INSERT INTO "MA_WorkOrderItemVariant" ("WorkOrderItemId", "Explanation", "IsDeleted") VALUES (${item}, ${'RED‖S'}, 0)`;
-  ids.factory = await one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${`Q${RUN}`}, 'Factory', 0) RETURNING "RecId" as id`);
+  ids.factory = await one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${`Q${RUN}`}, 'Factory', 0) RETURNING "RecId" as id`);
   // A Quality / B Quality as in the live master (codes A / B) — only if this database has none yet.
   for (const [code, name] of [['A', 'A Quality'], ['B', 'B Quality']]) {
     const existing = await prisma.$queryRaw<{ id: number }[]>`SELECT "RecId" as id FROM "MA_QualityType" WHERE COALESCE("IsDeleted", 0) = 0 AND "QualityName" = ${name} ORDER BY "RecId" LIMIT 1`;

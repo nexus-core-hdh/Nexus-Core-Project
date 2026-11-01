@@ -37,8 +37,8 @@ async function receipt(key: string, o: { type: number; account: number; date: st
   lines: { item: number; qty: number; gross?: number | null; total?: number; party?: string; wo?: number; deleted?: boolean }[] }) {
   nos[key] = uniq('R-');
   const id = await one(Prisma.sql`
-    INSERT INTO "IM_Receipt" ("ReceiptNo", "ReceiptType", "ReceiptDate", "CurrentAccountId", "SubcontractTypeId", "DocumentNo", "IsDeleted")
-    VALUES (${nos[key]}, ${o.type}, ${o.date}::timestamp, ${o.account}, ${o.process ?? null}, ${o.doc ?? null}, ${o.deleted ? 1 : 0}) RETURNING "RecId" as id`);
+    INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptNo", "ReceiptType", "ReceiptDate", "CurrentAccountId", "SubcontractTypeId", "DocumentNo", "IsDeleted")
+    VALUES (1, ${nos[key]}, ${o.type}, ${o.date}::timestamp, ${o.account}, ${o.process ?? null}, ${o.doc ?? null}, ${o.deleted ? 1 : 0}) RETURNING "RecId" as id`);
   for (const [i, l] of o.lines.entries()) {
     await prisma.$executeRaw`
       INSERT INTO "IM_ReceiptItem" ("InventoryReceiptId", "ReceiptType", "ItemOrderNo", "InventoryId", "Quantity", "GrossQuantity", "ItemTotal", "PartyNo", "WorkOrderReceiptItemId", "IsDeleted")
@@ -57,17 +57,17 @@ before(async () => {
   exporter = new ReportExportService();
   companyId = (await prisma.company.create({ data: { name: `Dyeing ${RUN}` } })).id;
 
-  const account = (code: string, name: string) => one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${code}, ${name}, 0) RETURNING "RecId" as id`);
+  const account = (code: string, name: string) => one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${code}, ${name}, 0) RETURNING "RecId" as id`);
   ids.a = await account(`A${RUN}`, 'Alpha Dyers');
   ids.b = await account(`B${RUN}`, 'Beta Knitwears');
-  const item = (name: string) => one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${uniq('K')}, ${name}, 'FABRIC', 0) RETURNING "RecId" as id`);
+  const item = (name: string) => one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${uniq('K')}, ${name}, 'FABRIC', 0) RETURNING "RecId" as id`);
   ids.fleece = await item(`L.S FLEECE ${RUN}`);
   ids.rib = await item(`RIB 2X1 ${RUN}`);
   const process = (name: string) => one(Prisma.sql`INSERT INTO "MD_SubcontractType" ("SubcontractTypeCode", "SubcontractTypeName", "InUse", "IsDeleted") VALUES (${uniq('P')}, ${name}, 1, 0) RETURNING "RecId" as id`);
   ids.dye = await process(DYE);
   ids.dye2 = await process(DYE); // a second master row of the same process — the filter matches both
   ids.knit = await process(KNIT);
-  const wo = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${`W/O-${RUN}`.slice(0, 25)}, 0) RETURNING "RecId" as id`);
+  const wo = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${`W/O-${RUN}`.slice(0, 25)}, 0) RETURNING "RecId" as id`);
   ids.wo = wo;
   ids.woItem = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${wo}, 1, 0) RETURNING "RecId" as id`);
 

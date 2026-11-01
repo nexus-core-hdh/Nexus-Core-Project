@@ -49,7 +49,7 @@ before(async () => {
   companyId = (await prisma.company.create({ data: { name: `Yarn Report ${RUN}` } })).id;
 
   const item = (code: string, name: string, access: string) =>
-    one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${code}, ${name}, ${access}, 0) RETURNING "RecId" as id`);
+    one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${code}, ${name}, ${access}, 0) RETURNING "RecId" as id`);
   fabric = await item(uniq('FAB-'), `CARDI FLEECE ${RUN}`, 'FABRIC');
   yarnA = await item(uniq('YRN-A'), YARN_A, 'YARN');
   yarnB = await item(uniq('YRN-B'), YARN_B, 'YARN');
@@ -66,20 +66,20 @@ after(async () => { await prisma.$disconnect(); });
 
 /** A Work Order of `pieces` (one color, one size, no extra cutting) using 0.5 fabric/pc at 10% waste. */
 async function workOrder(no: string, pieces: number) {
-  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "WorkOrderDate", "Quantity", "Quantity2", "IsDeleted") VALUES (${no}, ${'2026-07-02'}::timestamp, ${pieces}, 0, 0) RETURNING "RecId" as id`);
+  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "WorkOrderDate", "Quantity", "Quantity2", "IsDeleted") VALUES (1, ${no}, ${'2026-07-02'}::timestamp, ${pieces}, 0, 0) RETURNING "RecId" as id`);
   const itemId = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${woId}, 1, 0) RETURNING "RecId" as id`);
   await prisma.$executeRaw`INSERT INTO "MA_WorkOrderItemVariant" ("WorkOrderItemId", "Explanation", "Quantity", "SubNo", "IsDeleted") VALUES (${itemId}, ${'OXFORD TAN‖M'}, ${pieces}, 1, 0)`;
-  const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (${woId}, 1, ${uniq('R')}, 0) RETURNING "RecId" as id`);
+  const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("CompanyId", "WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (1, ${woId}, 1, ${uniq('R')}, 0) RETURNING "RecId" as id`);
   await prisma.$executeRaw`INSERT INTO "MA_RecipeItem" ("RecipeId", "InventoryId", "Quantity", "Wastage", "IsDeleted") VALUES (${recipe}, ${fabric}, 0.5, 10, 0)`;
   return { woId, itemId, no };
 }
 async function purchaseOrder(woId: number, inventoryId: number, qty: number, supplier: string) {
-  const acc = await one(Prisma.sql`INSERT INTO "FI_Account" ("CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (${uniq('S')}, ${supplier}, 0) RETURNING "RecId" as id`);
-  const po = await one(Prisma.sql`INSERT INTO "IM_OrderReceipt" ("ReceiptNo", "ReceiptType", "CurrentAccountId", "IsDeleted") VALUES (${uniq('PO-')}, 1, ${acc}, 0) RETURNING "RecId" as id`);
+  const acc = await one(Prisma.sql`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode", "CurrentAccountName", "IsDeleted") VALUES (1, ${uniq('S')}, ${supplier}, 0) RETURNING "RecId" as id`);
+  const po = await one(Prisma.sql`INSERT INTO "IM_OrderReceipt" ("CompanyId", "ReceiptNo", "ReceiptType", "CurrentAccountId", "IsDeleted") VALUES (1, ${uniq('PO-')}, 1, ${acc}, 0) RETURNING "RecId" as id`);
   await prisma.$executeRaw`INSERT INTO "IM_OrderReceiptItem" ("OrderReceiptId", "ReceiptType", "InventoryId", "Quantity", "ManufacturingOrderId", "IsDeleted") VALUES (${po}, 1, ${inventoryId}, ${qty}, ${woId}, 0)`;
 }
 async function receipt(type: number, workOrderItemId: number, inventoryId: number, qty: number) {
-  const r = await one(Prisma.sql`INSERT INTO "IM_Receipt" ("ReceiptNo", "ReceiptType", "IsDeleted") VALUES (${uniq('RC-')}, ${type}, 0) RETURNING "RecId" as id`);
+  const r = await one(Prisma.sql`INSERT INTO "IM_Receipt" ("CompanyId", "ReceiptNo", "ReceiptType", "IsDeleted") VALUES (1, ${uniq('RC-')}, ${type}, 0) RETURNING "RecId" as id`);
   await prisma.$executeRaw`INSERT INTO "IM_ReceiptItem" ("InventoryReceiptId", "ItemOrderNo", "InventoryId", "Quantity", "WorkOrderReceiptItemId", "IsDeleted") VALUES (${r}, 1, ${inventoryId}, ${qty}, ${workOrderItemId}, 0)`;
 }
 
@@ -176,7 +176,7 @@ test('Order No filter includes the whole order family and nothing else; filters 
 });
 
 test('a Work Order without yarn requirement still prints its header with an empty table', async () => {
-  const bare = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${uniq('W/O-EMPTY-')}, 0) RETURNING "RecId" as id`);
+  const bare = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${uniq('W/O-EMPTY-')}, 0) RETURNING "RecId" as id`);
   const r = await run({ ids: [bare] });
   assert.equal(headers(r).length, 1);
   assert.deepEqual(tables(r)[0].rows, []);
@@ -264,10 +264,10 @@ test('Fabric Cumulative Report: fabric rows per Work Order, material colors kept
 });
 
 test('Trim Cumulative Report: trim BOM requirement, purchases and issues, repeated trims totalled', async () => {
-  const trim = await one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${uniq('TRM-')}, ${`SNAP BUTTON ${RUN}`}, 'TRIM', 0) RETURNING "RecId" as id`);
+  const trim = await one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${uniq('TRM-')}, ${`SNAP BUTTON ${RUN}`}, 'TRIM', 0) RETURNING "RecId" as id`);
   const withTrim = async (no: string, pieces: number) => {
     const w = await workOrder(no, pieces);
-    const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (${w.woId}, 2, ${uniq('T')}, 0) RETURNING "RecId" as id`);
+    const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("CompanyId", "WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (1, ${w.woId}, 2, ${uniq('T')}, 0) RETURNING "RecId" as id`);
     await prisma.$executeRaw`INSERT INTO "MA_RecipeItem" ("RecipeId", "InventoryId", "Quantity", "Wastage", "UD_Remarks", "IsDeleted") VALUES (${recipe}, ${trim}, 2, 5, 'Attach', 0)`;
     return w;
   };
@@ -310,10 +310,10 @@ async function saveRequirement(wo: { itemId: number }, type: number, inventoryId
 for (const material of ['yarn', 'fabric', 'trim'] as const) {
   test(`${material}: saved requirements always; Work Orders without them only with the BOM option`, async () => {
     // A trim BOM line too, so every material has a live calculation to fall back on.
-    const trim = await one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${uniq('TRM-')}, ${`LABEL ${RUN}`}, 'TRIM', 0) RETURNING "RecId" as id`);
+    const trim = await one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${uniq('TRM-')}, ${`LABEL ${RUN}`}, 'TRIM', 0) RETURNING "RecId" as id`);
     const make = async (no: string, pieces: number) => {
       const w = await workOrder(no, pieces);
-      const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (${w.woId}, 2, ${uniq('T')}, 0) RETURNING "RecId" as id`);
+      const recipe = await one(Prisma.sql`INSERT INTO "MA_Recipe" ("CompanyId", "WorkOrderId", "RecipeType", "RecipeCode", "IsDeleted") VALUES (1, ${w.woId}, 2, ${uniq('T')}, 0) RETURNING "RecId" as id`);
       await prisma.$executeRaw`INSERT INTO "MA_RecipeItem" ("RecipeId", "InventoryId", "Quantity", "Wastage", "IsDeleted") VALUES (${recipe}, ${trim}, 1, 0, 0)`;
       return w;
     };

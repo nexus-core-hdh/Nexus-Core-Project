@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { ListPaging, runLegacyList } from './list-paging.util';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
@@ -88,7 +89,7 @@ export class PackingListService {
       : Prisma.sql``;
     return runLegacyList(this.prisma, {
       select: Prisma.sql`${HEADER_SELECT}, ${HEADER_LABELS}`,
-      from: Prisma.sql`FROM "IM_PackagingList" h ${HEADER_JOINS} WHERE h."IsDeleted" = 0 ${searchFilter}`,
+      from: Prisma.sql`FROM "IM_PackagingList" h ${HEADER_JOINS} WHERE h."IsDeleted" = 0 AND h."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} ${searchFilter}`,
       sortable: {
         packagingNo: Prisma.sql`h."PackagingNo"`, packagingDate: Prisma.sql`h."PackagingDate"`,
         workOrderNo: Prisma.sql`wo."WorkOrderNo"`, customerName: Prisma.sql`cu."CurrentAccountName"`,
@@ -101,7 +102,7 @@ export class PackingListService {
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${HEADER_SELECT}, ${HEADER_LABELS} FROM "IM_PackagingList" h ${HEADER_JOINS}
-      WHERE h."RecId" = ${id} AND h."IsDeleted" = 0
+      WHERE h."RecId" = ${id} AND h."IsDeleted" = 0 AND h."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Packing list not found');
     const row = sanitizeRawRow(rows[0]);
@@ -124,8 +125,10 @@ export class PackingListService {
   }
 
   /** Customer / Factory (FI_Account) and Shipment (IM_Receipt) must exist when given — the legacy
-   *  FKs would otherwise reject the write with a database error instead of a clear message. */
+   *  FKs would otherwise reject the write with a database error instead of a clear message — and be
+   *  the caller's company's own (company isolation). */
   private async assertReferences(dto: Record<string, any>) {
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId;
     const checks: [unknown, string, string][] = [
       [dto.currentAccountId, 'FI_Account', 'Customer'],
       [dto.factoryId, 'FI_Account', 'Factory'],
@@ -135,7 +138,7 @@ export class PackingListService {
       if (value === undefined || value === null || value === '') continue;
       const id = Number(value);
       const found = Number.isInteger(id) && id > 0
-        ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT 1 FROM ${Prisma.raw(`"${table}"`)} WHERE "RecId" = ${id} AND COALESCE("IsDeleted", 0) = 0`)
+        ? await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT 1 FROM ${Prisma.raw(`"${table}"`)} WHERE "RecId" = ${id} AND COALESCE("IsDeleted", 0) = 0 AND "CompanyId" = ${cid}`)
         : [];
       if (!found.length) throw new BadRequestException(`${label} ${value} does not exist`);
     }
@@ -163,7 +166,7 @@ export class PackingListService {
     const values = cols.map((c) => toDb(c, effective[camel(c)]));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO "IM_PackagingList" (${colList})
-      VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+      VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       RETURNING "RecId" as id
     `);
     return this.get(Number(rows[0].id));

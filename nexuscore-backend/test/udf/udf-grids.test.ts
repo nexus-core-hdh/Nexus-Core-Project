@@ -209,7 +209,7 @@ describe('batched loading — no query per row', () => {
     const f = (await w.svc.create(u, fieldDto('ContractLine', 'UD_Bulk', 'number'))).id;
     const g = (await w.svc.create(u, fieldDto('ContractLine', 'UD_Bulk2', 'textbox'))).id;
     const doc = async (n: number) => {
-      const id = String((await w.prisma.$queryRawUnsafe<{ id: bigint }[]>(`INSERT INTO "SM_Contract" ("ReceiptType","ReceiptNo") VALUES (1,'PC-BULK-${n}') RETURNING "RecId" AS id`))[0].id);
+      const id = String((await w.prisma.$queryRawUnsafe<{ id: bigint }[]>(`INSERT INTO "SM_Contract" ("CompanyId", "ReceiptType","ReceiptNo") VALUES (1, 1,'PC-BULK-${n}') RETURNING "RecId" AS id`))[0].id);
       const rows: string[] = [];
       for (let i = 0; i < n; i++) {
         rows.push(String((await w.prisma.$queryRawUnsafe<{ id: bigint }[]>(`INSERT INTO "SM_ContractItem" ("ReceiptId") VALUES (${id}) RETURNING "RecId" AS id`))[0].id));

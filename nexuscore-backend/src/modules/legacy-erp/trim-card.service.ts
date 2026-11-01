@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedChild, assertOwnedRow, assertRefsSameCompany, currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { nextLegacySeqCode, previewLegacySeqCode } from './legacy-code-sequence.util';
@@ -49,7 +50,7 @@ export class TrimCardService {
       : Prisma.sql``;
     return runLegacyList(this.prisma, {
       select: Prisma.sql`${LIST_SELECT}, a."CurrentAccountName" as "customerName"`,
-      from: Prisma.sql`FROM "MA_YarnTrimCard" t LEFT JOIN "FI_Account" a ON a."RecId" = t."CustomerId" WHERE t."IsDeleted" = 0 ${searchFilter}`,
+      from: Prisma.sql`FROM "MA_YarnTrimCard" t LEFT JOIN "FI_Account" a ON a."RecId" = t."CustomerId" WHERE t."IsDeleted" = 0 AND t."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} ${searchFilter}`,
       sortable: { code: Prisma.sql`t."Code"`, explanation: Prisma.sql`t."Explanation"`, customerName: Prisma.sql`a."CurrentAccountName"` },
       defaultSortBy: 'code', defaultSortDir: 'asc', tiebreak: Prisma.sql`t."RecId"`, legacyLimit: 50,
     }, paging, sanitizeRawRow);
@@ -57,7 +58,7 @@ export class TrimCardService {
 
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "MA_YarnTrimCard" WHERE "RecId" = ${id} AND "IsDeleted" = 0
+      SELECT ${HEADER_SELECT} FROM "MA_YarnTrimCard" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Trim card not found');
     return sanitizeRawRow(rows[0]);
@@ -65,7 +66,7 @@ export class TrimCardService {
 
   async getByCode(code: string) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "MA_YarnTrimCard" WHERE "Code" = ${code} AND "IsDeleted" = 0
+      SELECT ${HEADER_SELECT} FROM "MA_YarnTrimCard" WHERE "Code" = ${code} AND "IsDeleted" = 0 AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Trim card not found');
     return sanitizeRawRow(rows[0]);
@@ -76,6 +77,7 @@ export class TrimCardService {
   }
 
   async create(dto: Record<string, any>, userId: number) {
+    await assertRefsSameCompany(this.prisma, [['FI_Account', dto.customerId, 'Customer']]);
     const toDb = await this.headerToDb();
     const code = await nextLegacySeqCode(this.prisma, CODE_ENTITY, CODE_PREFIX, HEADER_TABLE, 'Code');
     const effective = { ...dto, code };
@@ -84,13 +86,14 @@ export class TrimCardService {
     const values = cols.map((c) => toDb(c, effective[camel(c)]));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       INSERT INTO "MA_YarnTrimCard" (${colList})
-      VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+      VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
       RETURNING ${HEADER_SELECT}
     `);
     return sanitizeRawRow(rows[0]);
   }
 
   async update(id: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedRow(this.prisma, 'MA_YarnTrimCard', id, 'Trim card'); await assertRefsSameCompany(this.prisma, [['FI_Account', dto.customerId, 'Customer']]);
     await this.get(id);
     const toDb = await this.headerToDb();
     // Code is immutable after creation — never editable via update, regardless of what the
@@ -107,6 +110,7 @@ export class TrimCardService {
   }
 
   async remove(id: number, userId: number) {
+    await assertOwnedRow(this.prisma, 'MA_YarnTrimCard', id, 'Trim card');
     await this.get(id);
     await this.prisma.$executeRaw`
       UPDATE "MA_YarnTrimCard" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id}
@@ -116,6 +120,7 @@ export class TrimCardService {
 
   // Grid lines
   async listItems(trimCardId: number) {
+    await assertOwnedRow(this.prisma, 'MA_YarnTrimCard', trimCardId, 'Trim card');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_SELECT} FROM "MA_YarnTrimCardItem"
       WHERE "YarnTrimCardId" = ${trimCardId} AND "IsDeleted" = 0
@@ -125,6 +130,7 @@ export class TrimCardService {
   }
 
   async createItem(trimCardId: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedRow(this.prisma, 'MA_YarnTrimCard', trimCardId, 'Trim card');
     const toDb = await this.itemToDb();
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
     const colList = Prisma.raw(['"YarnTrimCardId"', ...cols.map((c) => `"${c}"`), '"InsertedAt"', '"InsertedBy"', '"IsDeleted"', '"UUID"'].join(', '));
@@ -138,6 +144,7 @@ export class TrimCardService {
   }
 
   async updateItem(itemId: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedChild(this.prisma, 'MA_YarnTrimCardItem', 'YarnTrimCardId', 'MA_YarnTrimCard', itemId, 'Line');
     const toDb = await this.itemToDb();
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
     if (!cols.length) {
@@ -156,6 +163,7 @@ export class TrimCardService {
   }
 
   async removeItem(itemId: number, userId: number) {
+    await assertOwnedChild(this.prisma, 'MA_YarnTrimCardItem', 'YarnTrimCardId', 'MA_YarnTrimCard', itemId, 'Line');
     const result = await this.prisma.$executeRaw`
       UPDATE "MA_YarnTrimCardItem" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${itemId}
     `;

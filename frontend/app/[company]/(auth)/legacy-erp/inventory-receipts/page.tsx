@@ -10,6 +10,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { RowContextMenu, RowActionsMenu } from "@/components/legacy-erp/row-actions";
 import { inwardGatePassAction } from "@/components/legacy-erp/inward-gate-pass";
+import { createInvoiceAction } from "@/components/legacy-erp/create-invoice-action";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -19,7 +20,7 @@ import { legacyErpApi, approvalConfigApi } from "@/lib/nexuscore-api";
 import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { useDraftForm } from "@/hooks/legacy-erp/use-draft-form";
 import { toast } from "sonner";
-import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert } from "lucide-react";
+import { Search, Save, FilePlus2, Truck, Lock, BadgeCheck, XCircle, ShieldAlert, CheckCircle2, RotateCcw } from "lucide-react";
 import { ModuleHeader } from "@/components/legacy-erp/module-header";
 import { useWorkspaceSearchParams } from "@/hooks/use-workspace-search-params";
 import { useWorkspaceRecordId } from "@/hooks/use-workspace-record-id";
@@ -149,7 +150,10 @@ export default function InventoryReceiptPage() {
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<"view" | "edit" | "create">(initialMode);
-  const readOnly = mode === "view";
+  // Approve / Unapprove, as on the Packing List: an approved receipt is locked (header, lines,
+  // delete — the backend enforces the same) until it is unapproved. Saving never approves.
+  const isApproved = !!receiptId && !!Number(form.isApproved);
+  const readOnly = mode === "view" || isApproved;
   const [activeTab, setActiveTab] = useState("General");
 
   const lastSavedRef = useRef<Record<string, any>>(emptyForm);
@@ -251,16 +255,39 @@ export default function InventoryReceiptPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receiptId]);
 
+  /** Approve / Unapprove change only the status fields — taken from the server's answer into both
+   *  the form and the last-saved snapshot, so they never count as unsaved edits. */
+  const applyApproval = (r: any) => {
+    const patch = { isApproved: r.isApproved, approvedAt: r.approvedAt ?? null };
+    setForm((p) => ({ ...p, ...patch }));
+    lastSavedRef.current = { ...lastSavedRef.current, ...patch };
+  };
+
   const runApproveReceipt = async () => {
     if (!receiptId) return;
+    if (isDirty) { toast.error("Save your changes before approving."); return; }
     setApproving(true);
     try {
-      const r: any = await client.approve(receiptId);
-      setForm((p) => ({ ...p, isApproved: r.isApproved }));
-      toast.success("Approved");
+      applyApproval(await client.approve(receiptId));
+      toast.success(`${cfg.label} approved`);
       await refreshApprovalStatus(receiptId);
     } catch (e: any) {
       toast.error(e.message || "Approval failed");
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const runUnapproveReceipt = async () => {
+    if (!receiptId) return;
+    setApproving(true);
+    try {
+      applyApproval(await client.unapprove(receiptId));
+      if (mode === "view") setMode("edit");
+      toast.success(`${cfg.label} reopened`);
+      await refreshApprovalStatus(receiptId);
+    } catch (e: any) {
+      toast.error(e.message || "Unapprove failed");
     } finally {
       setApproving(false);
     }
@@ -481,15 +508,20 @@ export default function InventoryReceiptPage() {
     // "Return / Outside Process Receive Receipt" when receiptType===11, so a Subcontract Order's
     // receiving screen never shows Purchase Receipt wording it has no business role in.
     relatedReceiptsLabel: `Return / ${cfg.label}`,
-    onDelete: receiptId ? () => setDeleteConfirmOpen(true) : undefined,
+    // An approved receipt can't be deleted (backend-enforced) — unapprove it first.
+    onDelete: receiptId && !isApproved ? () => setDeleteConfirmOpen(true) : undefined,
   });
   useUniversalActionShortcuts(universalActions);
   // Right-click / ⋮ menus: on inward receipt types the universal actions' own (placeholder) Print
   // becomes Print → Inward Gate Pass — Manage Reports' Inward Gate Pass report for this saved
   // receipt — in its usual place; other receipt types keep the placeholder unchanged.
-  const menuActions = isInwardReceiptType(receiptType)
+  const printActions = isInwardReceiptType(receiptType)
     ? universalActions.map((a) => (a.key === "print" ? { ...inwardGatePassAction(router, { id: receiptId, receiptNo: form.receiptNo, receiptType }), separatorBefore: a.separatorBefore } : a))
     : universalActions;
+  // Create Invoice — added just before Delete; every existing action is kept as is.
+  const deleteAt = printActions.findIndex((a) => a.key === "delete");
+  const invoiceAction = createInvoiceAction(router, { id: receiptId, receiptType, isDirty });
+  const menuActions = deleteAt < 0 ? [...printActions, invoiceAction] : [...printActions.slice(0, deleteAt), invoiceAction, ...printActions.slice(deleteAt)];
 
   const saveRequired = (label: string) => (
     <Empty className="py-10">
@@ -537,12 +569,12 @@ export default function InventoryReceiptPage() {
           <>
             {/* Do not show approval controls when Approval Required = No — the plain existing
                 Approved/Unapproved badge stays exactly as before in that case. */}
-            {receiptId && !approvalRequired && (
-              <Badge variant={form.isApproved ? "default" : "secondary"} className="h-5 text-[11px] font-normal">
-                {statusLabel}
+            {receiptId && (!approvalRequired || isApproved) && (
+              <Badge variant={isApproved ? "default" : "secondary"} className="h-5 text-[11px] font-normal">
+                {isApproved ? `Approved${form.approvedAt ? ` · ${String(form.approvedAt).slice(0, 10)}` : ""}` : statusLabel}
               </Badge>
             )}
-            {receiptId && approvalRequired && (
+            {receiptId && approvalRequired && !isApproved && (
               <Badge
                 variant={approvalStatus?.status === "approved" ? "default" : approvalStatus?.status === "rejected" ? "destructive" : "secondary"}
                 className="h-5 text-[11px] font-normal"
@@ -554,7 +586,7 @@ export default function InventoryReceiptPage() {
                   : "Draft"}
               </Badge>
             )}
-            {readOnly && (
+            {mode === "view" && !isApproved && (
               <Badge variant="secondary" className="h-5 gap-1 text-[11px] font-normal">
                 <Lock className="h-2.5 w-2.5" />View Only
               </Badge>
@@ -582,6 +614,15 @@ export default function InventoryReceiptPage() {
             </InputGroup>
             <div className="hidden h-6 w-px bg-border sm:block" />
             <Button variant="outline" size="sm" onClick={newRecord}><FilePlus2 className="h-3.5 w-3.5 mr-2" />New</Button>
+            {/* Approve / Unapprove — as on the Packing List (next to New, before Save). With an
+                Approval Configuration for this screen, Approve stays the pending-approval
+                Approve / Reject pair below. */}
+            {receiptId && !approvalRequired && !isApproved && (
+              <Button variant="outline" size="sm" onClick={runApproveReceipt} disabled={approving}><CheckCircle2 className="h-3.5 w-3.5 mr-2" />Approve</Button>
+            )}
+            {receiptId && isApproved && (
+              <Button variant="outline" size="sm" onClick={runUnapproveReceipt} disabled={approving}><RotateCcw className="h-3.5 w-3.5 mr-2" />Unapprove</Button>
+            )}
             {!readOnly && <Button size="sm" onClick={save} disabled={saving}><Save className="h-3.5 w-3.5 mr-2" />{saving ? "Saving..." : "Save"}</Button>}
             {/* Reuses the same authorized-approver pattern as receipt-master-data/page.tsx's row
                 action — backend (approval:approve/reject permission + pending-state + self-
@@ -602,6 +643,12 @@ export default function InventoryReceiptPage() {
           </>
         }
       />
+
+      {isApproved && (
+        <p className="rounded-md border bg-muted/40 px-3 py-1.5 text-[11.5px] text-muted-foreground">
+          This {cfg.label} is approved, so it is locked. Click <span className="font-medium text-foreground">Unapprove</span> (top right) to add, change or remove lines.
+        </p>
+      )}
 
       {approvalRequired && approvalStatus?.status === "pending_approval" && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">

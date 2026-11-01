@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedRow } from './legacy-company-scope';
 
 // FI_AccountAttachment.Type has no existing data or documented convention anywhere in the
 // migrated schema/procedures (verified — table was empty, no CHECK constraint, no comment).
@@ -41,6 +42,7 @@ export class AccountAttachmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(accountId: number, kind: 'document' | 'picture') {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account'); // company isolation
     const type = kind === 'document' ? TYPE_DOCUMENT : TYPE_PICTURE;
     const rows = kind === 'picture'
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -59,6 +61,7 @@ export class AccountAttachmentsService {
   }
 
   async upload(accountId: number, dto: UploadDto, userId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account'); // company isolation
     if (!dto.fileName || !dto.dataUrl) throw new BadRequestException('fileName and dataUrl are required');
     const ext = extOf(dto.fileName);
 
@@ -85,6 +88,7 @@ export class AccountAttachmentsService {
   }
 
   async assertExists(accountId: number, attachmentId: number): Promise<void> {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account'); // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" FROM "FI_AccountAttachment" WHERE "RecId" = ${attachmentId} AND "CurrentAccountId" = ${accountId} AND "IsDeleted" = 0
     `);
@@ -92,6 +96,7 @@ export class AccountAttachmentsService {
   }
 
   async content(accountId: number, attachmentId: number): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account'); // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "FileName" as "fileName", "Attachment" as "attachment"
       FROM "FI_AccountAttachment" WHERE "RecId" = ${attachmentId} AND "CurrentAccountId" = ${accountId} AND "IsDeleted" = 0
@@ -101,6 +106,7 @@ export class AccountAttachmentsService {
   }
 
   async remove(accountId: number, attachmentId: number, userId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Account', accountId, 'Current account'); // company isolation
     const result = await this.prisma.$executeRaw`
       UPDATE "FI_AccountAttachment" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}
       WHERE "RecId" = ${attachmentId} AND "CurrentAccountId" = ${accountId}

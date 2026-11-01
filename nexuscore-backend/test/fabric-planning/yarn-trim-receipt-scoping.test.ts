@@ -53,13 +53,13 @@ before(async () => {
 after(async () => { await prisma.$disconnect(); });
 
 const item = (code: string, access: string) =>
-  one(`INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES ($1,$1,$2,0) RETURNING "RecId" AS id`, code, access);
+  one(`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES (1, $1,$1,$2,0) RETURNING "RecId" AS id`, code, access);
 const color = async (name: string) => (await prisma.colorCard.create({ data: { code: uniq('C'), name, color: '#123456', branchId } })).id;
 
 async function workOrder() {
   const style = await prisma.styleCard.create({ data: { styleNumber: uniq('SC-'), title: 'yarn trim test', branchId, createdBy: 'u1' } });
   const workOrderNo = `W/O-${RUN}-${++seq}`.toUpperCase(); // UdtCode: at most 25 characters
-  const id = await one(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","StyleCardId","IsDeleted") VALUES ($1,$2,0) RETURNING "RecId" AS id`, workOrderNo, style.id);
+  const id = await one(`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo","StyleCardId","IsDeleted") VALUES (1, $1,$2,0) RETURNING "RecId" AS id`, workOrderNo, style.id);
   const itemId = await one(`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId","ItemOrderNo","IsDeleted") VALUES ($1,1,0) RETURNING "RecId" AS id`, id);
   return { id, itemId };
 }

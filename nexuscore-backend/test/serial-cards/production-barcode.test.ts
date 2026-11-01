@@ -44,15 +44,15 @@ async function fabric(opts: { composition?: string; gsm?: string; width?: number
   const comp = opts.composition ? await master('MD_Composition', 'CompositionCode', 'CompositionName', opts.composition) : null;
   const gsm = opts.gsm ? await master('MD_FinishGSM', 'FinishGSMCode', 'FinishGSMName', opts.gsm) : null;
   return one(
-    `INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","UD_FabComposition","UD_FabGSM","FWidth","FWeight","IsDeleted") VALUES ($1,'Rib 1x1','FABRIC',$2,$3,$4,$5,0) RETURNING "RecId" AS id`,
+    `INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","UD_FabComposition","UD_FabGSM","FWidth","FWeight","IsDeleted") VALUES (1, $1,'Rib 1x1','FABRIC',$2,$3,$4,$5,0) RETURNING "RecId" AS id`,
     uniq('FAB'), comp != null ? String(comp) : null, gsm != null ? String(gsm) : null, opts.width ?? null, opts.weight ?? null,
   );
 }
-const yarn = (name: string) => one(`INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES ($1,$2,'YARN',0) RETURNING "RecId" AS id`, uniq('YRN'), name);
+const yarn = (name: string) => one(`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES (1, $1,$2,'YARN',0) RETURNING "RecId" AS id`, uniq('YRN'), name);
 const color = async (name: string) => (await prisma.colorCard.create({ data: { code: uniq('C'), name, color: '#123456', branchId } })).id;
 /** A Work Order (optionally linked to a Style Card) with one item, as Work Order entry creates them. */
 async function workOrder(styleCardId: string | null) {
-  const woId = await one(`INSERT INTO "MA_WorkOrder" ("WorkOrderNo","StyleCardId","IsDeleted") VALUES ($1,$2,0) RETURNING "RecId" AS id`, uniq('W/O-'), styleCardId);
+  const woId = await one(`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo","StyleCardId","IsDeleted") VALUES (1, $1,$2,0) RETURNING "RecId" AS id`, uniq('W/O-'), styleCardId);
   const itemId = await one(`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId","ItemOrderNo","IsDeleted") VALUES ($1,1,0) RETURNING "RecId" AS id`, woId);
   return { woId, itemId };
 }
@@ -299,7 +299,7 @@ describe('QR link and the scan page\'s data', () => {
     const comp = await master('MD_Composition', 'CompositionCode', 'CompositionName', '97% CTN 3% LYC');
     const gsm = await master('MD_FinishGSM', 'FinishGSMCode', 'FinishGSMName', '320');
     const fab = await one(
-      `INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","UD_FabComposition","UD_FabGSM","FWidth","FWeight","IsDeleted") VALUES ($1,$2,'FABRIC',$3,$4,72,320,0) RETURNING "RecId" AS id`,
+      `INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","UD_FabComposition","UD_FabGSM","FWidth","FWeight","IsDeleted") VALUES (1, $1,$2,'FABRIC',$3,$4,72,320,0) RETURNING "RecId" AS id`,
       uniq('FAB'), opts.fabricName ?? 'Rib 1x1', String(comp), String(gsm),
     );
     const cotton = await yarn('30/1 Combed Cotton');
@@ -312,7 +312,7 @@ describe('QR link and the scan page\'s data', () => {
     await prisma.styleBomLine.create({ data: { styleCardId: s.id, lineType: 'fabric', sortOrder: 1, fabricInventoryId: fab, quantity: 1 } as any });
     const wo = await workOrder(s.id);
     const navy = await color('Navy');
-    const acc = await one(`INSERT INTO "FI_Account" ("CurrentAccountCode","CurrentAccountName","IsDeleted") VALUES ($1,'Knit Supplier Ltd.',0) RETURNING "RecId" AS id`, uniq('ACC'));
+    const acc = await one(`INSERT INTO "FI_Account" ("CompanyId", "CurrentAccountCode","CurrentAccountName","IsDeleted") VALUES (1, $1,'Knit Supplier Ltd.',0) RETURNING "RecId" AS id`, uniq('ACC'));
     const l = await receiptLine(fab, 100, { workOrderItemId: wo.itemId, colorCardId: navy });
     const cards = await produce(l, { count: 2, quantity: 45, width: 70, weight: 318, partyNo: '211-1', currentAccountId: acc, manufacturingDate: '2026-10-12', shelfLife: 12, explanation: 'ok' });
     return { cards, style: s, acc };

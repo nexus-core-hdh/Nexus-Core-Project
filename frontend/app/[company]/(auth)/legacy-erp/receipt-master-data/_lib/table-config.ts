@@ -95,7 +95,9 @@ const receiptTypeActions = (receiptType: number, label: string): TableActions =>
   onView: ({ row, router }) => navigateOrOpenTab(router, `/legacy-erp/inventory-receipts?id=${row.RecId}&mode=view&receiptType=${receiptType}`),
   onUpdate: ({ row, router }) => navigateOrOpenTab(router, `/legacy-erp/inventory-receipts?id=${row.RecId}&mode=edit&receiptType=${receiptType}`),
   onDelete: async ({ row, reload }) => { await legacyErpApi.receipts(receiptType).delete(Number(row.RecId)); reload(); },
-  onApprove: async ({ row, reload }) => { await legacyErpApi.receipts(receiptType).update(Number(row.RecId), { isApproved: true }); reload(); },
+  // The Approve route (approval:approve), like receiptActions() above — Is Approved can no longer
+  // be written through a plain update.
+  onApprove: async ({ row, reload }) => { await legacyErpApi.receipts(receiptType).approve(Number(row.RecId)); reload(); },
   isApproved: (row) => !!row.IsApproved,
 });
 

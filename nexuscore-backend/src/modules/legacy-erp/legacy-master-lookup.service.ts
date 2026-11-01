@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { companyScopeSql, currentLegacyCompany, tablesWithCompanyColumn } from './legacy-company-scope';
 import { DeleteDependencyService, isProtectedEntityType } from './delete-dependency.service';
 
 interface TableLookupConfig {
@@ -213,6 +214,7 @@ export class LegacyMasterLookupService {
   // while still existing for audit/history on records that already reference it.
   async search(key: string, search?: string) {
     const cfg = this.config(key);
+    const scope = await companyScopeSql(this.prisma, cfg.table); // company isolation
 
     const select = Prisma.raw(
       ['"RecId" as id', cfg.codeColumn ? `"${cfg.codeColumn}" as "code"` : `NULL as "code"`, `"${cfg.nameColumn}" as "name"`].join(', '),
@@ -222,7 +224,7 @@ export class LegacyMasterLookupService {
 
     if (!search) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-        SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ORDER BY "${Prisma.raw(cfg.nameColumn)}" LIMIT 50
+        SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ${scope} ORDER BY "${Prisma.raw(cfg.nameColumn)}" LIMIT 50
       `);
       return sanitizeRawRow(rows);
     }
@@ -233,7 +235,7 @@ export class LegacyMasterLookupService {
       ' OR ',
     );
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} AND (${whereSearch}) ORDER BY "${Prisma.raw(cfg.nameColumn)}" LIMIT 50
+      SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ${scope} AND (${whereSearch}) ORDER BY "${Prisma.raw(cfg.nameColumn)}" LIMIT 50
     `);
     return sanitizeRawRow(rows);
   }
@@ -254,7 +256,7 @@ export class LegacyMasterLookupService {
     const table = Prisma.raw(`"${cfg.table}"`);
     const activeFilter = cfg.activeColumn && !opts?.includeInactive ? Prisma.sql`AND "${Prisma.raw(cfg.activeColumn)}" = 1` : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${select} FROM ${table} WHERE "RecId" = ${id} AND "IsDeleted" = 0 ${activeFilter} LIMIT 1
+      SELECT ${select} FROM ${table} WHERE "RecId" = ${id} AND "IsDeleted" = 0 ${activeFilter} ${await companyScopeSql(this.prisma, cfg.table)} LIMIT 1
     `);
     return rows.length ? sanitizeRawRow(rows[0]) : null;
   }
@@ -282,7 +284,7 @@ export class LegacyMasterLookupService {
       ? Prisma.sql`AND ("${Prisma.raw(cfg.codeColumn)}" ILIKE ${`%${search}%`} OR "${Prisma.raw(cfg.nameColumn)}" ILIKE ${`%${search}%`})`
       : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${whereSearch} ORDER BY "${Prisma.raw(cfg.nameColumn)}"
+      SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${whereSearch} ${await companyScopeSql(this.prisma, cfg.table)} ORDER BY "${Prisma.raw(cfg.nameColumn)}"
     `);
     return sanitizeRawRow(rows);
   }
@@ -294,7 +296,7 @@ export class LegacyMasterLookupService {
     const exclude = excludeId ? Prisma.sql`AND "RecId" != ${excludeId}` : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "${Prisma.raw(cfg.codeColumn!)}" as code, "${Prisma.raw(cfg.nameColumn)}" as name FROM ${table}
-      WHERE "IsDeleted" = 0
+      WHERE "IsDeleted" = 0 ${await companyScopeSql(this.prisma, cfg.table)}
         AND (LOWER("${Prisma.raw(cfg.codeColumn!)}") = LOWER(${code}) OR LOWER("${Prisma.raw(cfg.nameColumn)}") = LOWER(${name}))
         ${exclude}
     `);
@@ -317,9 +319,13 @@ export class LegacyMasterLookupService {
     const select = Prisma.raw([
       '"RecId" as id', `"${cfg.codeColumn}" as "code"`, `"${cfg.nameColumn}" as "name"`, `"${cfg.activeColumn}" as "active"`,
     ].join(', '));
+    // Company isolation: a company-column master created now is the creating company's own.
+    const owned = (await tablesWithCompanyColumn(this.prisma)).has(cfg.table);
+    const companyCol = owned ? Prisma.raw('"CompanyId", ') : Prisma.empty;
+    const companyVal = owned ? Prisma.sql`${(await currentLegacyCompany(this.prisma)).legacyCompanyId}, ` : Prisma.empty;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      INSERT INTO ${table} ("${Prisma.raw(cfg.codeColumn!)}", "${Prisma.raw(cfg.nameColumn)}", "${Prisma.raw(cfg.activeColumn!)}", "InsertedAt", "InsertedBy", "IsDeleted", "UUID")
-      VALUES (${code}, ${name}, 1, now(), ${userId}, 0, gen_random_uuid())
+      INSERT INTO ${table} (${companyCol}"${Prisma.raw(cfg.codeColumn!)}", "${Prisma.raw(cfg.nameColumn)}", "${Prisma.raw(cfg.activeColumn!)}", "InsertedAt", "InsertedBy", "IsDeleted", "UUID")
+      VALUES (${companyVal}${code}, ${name}, 1, now(), ${userId}, 0, gen_random_uuid())
       RETURNING ${select}
     `);
     return sanitizeRawRow(rows[0]);
@@ -346,7 +352,7 @@ export class LegacyMasterLookupService {
       : Prisma.sql``;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       UPDATE ${table} SET "${Prisma.raw(cfg.codeColumn!)}" = ${code}, "${Prisma.raw(cfg.nameColumn)}" = ${name}, "UpdatedAt" = now(), "UpdatedBy" = ${userId} ${activeAssignment}
-      WHERE "RecId" = ${id} AND "IsDeleted" = 0
+      WHERE "RecId" = ${id} AND "IsDeleted" = 0 ${await companyScopeSql(this.prisma, cfg.table)}
       RETURNING ${select}
     `);
     if (!rows.length) throw new NotFoundException('Record not found');
@@ -362,12 +368,13 @@ export class LegacyMasterLookupService {
   async remove(key: string, id: number, userId: number) {
     const cfg = this.manageable(key);
     const table = Prisma.raw(`"${cfg.table}"`);
+    const scope = await companyScopeSql(this.prisma, cfg.table); // company isolation
     const result = await this.prisma.$transaction(async (tx) => {
       if (isProtectedEntityType(cfg.table)) {
         await this.deleteGuard.assertDeletable(cfg.table, id, tx);
       }
       return tx.$executeRaw`
-        UPDATE ${table} SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id} AND "IsDeleted" = 0
+        UPDATE ${table} SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId} WHERE "RecId" = ${id} AND "IsDeleted" = 0 ${scope}
       `;
     });
     if (!result) throw new NotFoundException('Record not found');

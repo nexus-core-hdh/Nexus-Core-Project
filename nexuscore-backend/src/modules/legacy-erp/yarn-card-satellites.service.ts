@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedChild, assertOwnedRow } from './legacy-company-scope';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 
 interface SatelliteConfig {
@@ -89,7 +90,13 @@ export class YarnCardSatellitesService {
     return buildDbValueCoercer(await getColumnTypeMap(this.prisma, table));
   }
 
+  /** Company isolation — the satellite's parent (an item or a Work Order) must be the caller's own. */
+  private parentTable(fkColumn: string) {
+    return fkColumn === 'WorkOrderId' ? 'MA_WorkOrder' : 'IM_Item';
+  }
+
   async list(tab: string, itemId: number) {
+    await assertOwnedRow(this.prisma, this.parentTable(this.config(tab).fkColumn), itemId, 'Record');
     const cfg = this.config(tab);
     const select = Prisma.raw(['"RecId" as id', ...cfg.columns.map((c) => `"${c}" as "${camel(c)}"`)].join(', '));
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -149,6 +156,7 @@ export class YarnCardSatellitesService {
   }
 
   async create(tab: string, itemId: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedRow(this.prisma, this.parentTable(this.config(tab).fkColumn), itemId, 'Record');
     const cfg = this.config(tab);
     const toDb = await this.toDb(cfg.table);
     // Base Unit enforcement (spec Section 2) — the Base Unit's own UnitFactor/UnitDivisor must be
@@ -192,6 +200,7 @@ export class YarnCardSatellitesService {
   // other satellite tabs) lets the user edit a row's values in place after copying them in
   // from a Unit Set item, rather than only ever adding/removing whole rows.
   async update(tab: string, lineId: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedChild(this.prisma, this.config(tab).table, this.config(tab).fkColumn, this.parentTable(this.config(tab).fkColumn), lineId, 'Row');
     const cfg = this.config(tab);
     const toDb = await this.toDb(cfg.table);
     // Same Base-Unit-must-be-identity enforcement as create() above — see its own comment.
@@ -244,6 +253,7 @@ export class YarnCardSatellitesService {
   }
 
   async remove(tab: string, lineId: number, userId: number) {
+    await assertOwnedChild(this.prisma, this.config(tab).table, this.config(tab).fkColumn, this.parentTable(this.config(tab).fkColumn), lineId, 'Row');
     const cfg = this.config(tab);
     const result = await this.prisma.$executeRaw`
       UPDATE ${Prisma.raw(`"${cfg.table}"`)} SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}

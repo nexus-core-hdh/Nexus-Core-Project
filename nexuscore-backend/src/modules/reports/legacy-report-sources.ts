@@ -6,7 +6,10 @@
 // User input never becomes SQL text — report-sql.ts binds every filter value as a parameter.
 //
 // Scope matches the existing Legacy ERP screens: soft-deleted rows (and lines of soft-deleted
-// headers) are excluded; like those screens there is no per-company filter on legacy data.
+// headers) are excluded. Company isolation: every source is legacyCompanyScoped — the report
+// builder runs it in a transaction with the request's legacy company in the transaction-local
+// setting nexus.legacy_company_id (report-builder.service.ts), and each row condition below keeps
+// only that company's rows (lines through their document). Missing setting = query error (closed).
 // Booleans are stored as smallint 0/1, so boolean fields are written as `(<col> = 1)`.
 import { Prisma } from '@prisma/client';
 import type { ReportField, ReportFieldType, SqlReportSource } from './report-sources';
@@ -14,6 +17,8 @@ import { RECEIPT_TYPES, DIRECTION_CLASS } from '../legacy-erp/receipt-types.conf
 import { ORDER_TYPES } from '../legacy-erp/order-types.config';
 import { CONTRACT_TYPES } from '../legacy-erp/contract-types.config';
 import { stockOnHandSumSql } from '../legacy-erp/inventory-card.service';
+/** The request's legacy company inside a report query (set per transaction by the report builder). */
+const LEGACY_COMPANY = "current_setting('nexus.legacy_company_id')::int";
 
 type Spec = [key: string, label: string, type: ReportFieldType, sql: string | Prisma.Sql];
 
@@ -67,7 +72,8 @@ const INVENTORY_ITEMS: SqlReportSource = {
     LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = i."UnitId"
     LEFT JOIN "IM_Warehouse" w ON w."RecId" = i."WarehouseId"
     LEFT JOIN "FI_Account" a ON a."RecId" = i."CurrentAccountId"`,
-  where: `i."IsDeleted" = 0`,
+  where: `i."IsDeleted" = 0 AND i."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'code', direction: 'asc' },
   menuSection: SECTION.inventory,
   fields: [
@@ -98,7 +104,7 @@ const INVENTORY_ITEMS: SqlReportSource = {
       ['updatedAt', 'Updated On', 'date', `i."UpdatedAt"`],
     ]),
     ...fields('Stock', [
-      ['stockOnHand', 'Stock on Hand (Base Unit)', 'number', Prisma.sql`(${stockOnHandSumSql(Prisma.sql`i."RecId"`)})`],
+      ['stockOnHand', 'Stock on Hand (Base Unit)', 'number', Prisma.sql`(${stockOnHandSumSql(Prisma.sql`i."RecId"`, Prisma.raw(LEGACY_COMPANY))})`],
       ['receiptLines', 'Receipt Lines', 'number', `(SELECT count(*) FROM "IM_ReceiptItem" x JOIN "IM_Receipt" xr ON xr."RecId" = x."InventoryReceiptId" AND xr."IsDeleted" = 0 WHERE x."InventoryId" = i."RecId" AND x."IsDeleted" = 0)`],
       ['lastReceiptDate', 'Last Receipt Date', 'date', `(SELECT max(xr."ReceiptDate") FROM "IM_ReceiptItem" x JOIN "IM_Receipt" xr ON xr."RecId" = x."InventoryReceiptId" AND xr."IsDeleted" = 0 WHERE x."InventoryId" = i."RecId" AND x."IsDeleted" = 0)`],
     ]),
@@ -139,7 +145,8 @@ const INVENTORY_RECEIPTS: SqlReportSource = {
   label: 'Inventory Receipts',
   description: 'One row per inventory receipt (purchase, return, transfer, outside process, wholesale, ...) with account, warehouses and totals.',
   from: RECEIPT_FROM,
-  where: `r."IsDeleted" = 0`,
+  where: `r."IsDeleted" = 0 AND r."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'receiptDate', direction: 'desc' },
   menuSection: SECTION.inventory,
   fields: [
@@ -185,7 +192,8 @@ const INVENTORY_RECEIPT_LINES: SqlReportSource = {
     LEFT JOIN "IM_Item" i ON i."RecId" = ri."InventoryId"
     LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = ri."UnitId"
     LEFT JOIN "MD_Forex" lfx ON lfx."RecId" = ri."ForexId"`,
-  where: `ri."IsDeleted" = 0 AND r."IsDeleted" = 0`,
+  where: `ri."IsDeleted" = 0 AND r."IsDeleted" = 0 AND r."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'receiptDate', direction: 'desc' },
   menuSection: SECTION.inventory,
   fields: [
@@ -220,7 +228,8 @@ const WAREHOUSES: SqlReportSource = {
   label: 'Warehouses',
   description: 'One row per warehouse with contact details and how much it is used.',
   from: `"IM_Warehouse" w`,
-  where: `w."IsDeleted" = 0`,
+  where: `w."IsDeleted" = 0 AND w."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'code', direction: 'asc' },
   menuSection: SECTION.inventory,
   fields: fields('Warehouse', [
@@ -248,7 +257,8 @@ const SERIAL_CARDS: SqlReportSource = {
   from: `"IM_SerialCard" sc
     LEFT JOIN "IM_Item" i ON i."RecId" = sc."InventoryId"
     LEFT JOIN "FI_Account" a ON a."RecId" = sc."CurrentAccountId"`,
-  where: `sc."IsDeleted" = 0`,
+  where: `sc."IsDeleted" = 0 AND sc."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'serialCode', direction: 'asc' },
   menuSection: SECTION.inventory,
   fields: [
@@ -295,7 +305,8 @@ const PURCHASE_ORDERS: SqlReportSource = {
   label: 'Purchase & Subcontract Orders',
   description: 'One row per purchase or subcontract order with supplier, warehouse, status flags and totals.',
   from: ORDER_FROM,
-  where: `o."IsDeleted" = 0`,
+  where: `o."IsDeleted" = 0 AND o."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'orderDate', direction: 'desc' },
   menuSection: SECTION.purchase,
   fields: [
@@ -334,7 +345,8 @@ const PURCHASE_ORDER_LINES: SqlReportSource = {
     JOIN ${ORDER_FROM.replace('"IM_OrderReceipt" o', '"IM_OrderReceipt" o ON o."RecId" = oi."OrderReceiptId"')}
     LEFT JOIN "IM_Item" i ON i."RecId" = oi."InventoryId"
     LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = oi."UnitId"`,
-  where: `oi."IsDeleted" = 0 AND o."IsDeleted" = 0`,
+  where: `oi."IsDeleted" = 0 AND o."IsDeleted" = 0 AND o."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'orderDate', direction: 'desc' },
   menuSection: SECTION.purchase,
   fields: [
@@ -383,7 +395,8 @@ const WORK_ORDERS: SqlReportSource = {
   label: 'Work Orders',
   description: 'One row per production work order with customer, factory, linked PLM style, key dates and quantities.',
   from: WORK_ORDER_FROM,
-  where: `wo."IsDeleted" = 0`,
+  where: `wo."IsDeleted" = 0 AND wo."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'workOrderDate', direction: 'desc' },
   menuSection: SECTION.production,
   fields: [
@@ -432,7 +445,8 @@ const WORK_ORDER_LINES: SqlReportSource = {
     LEFT JOIN "IM_Item" i ON i."RecId" = woi."InventoryId"
     LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = woi."InventoryUnitId"
     LEFT JOIN "FI_Account" mf ON mf."RecId" = woi."ManufacturingFactoryId"`,
-  where: `woi."IsDeleted" = 0 AND wo."IsDeleted" = 0`,
+  where: `woi."IsDeleted" = 0 AND wo."IsDeleted" = 0 AND wo."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'workOrderDate', direction: 'desc' },
   menuSection: SECTION.production,
   fields: [
@@ -467,7 +481,8 @@ const CURRENT_ACCOUNTS: SqlReportSource = {
   label: 'Current Accounts',
   description: 'One row per customer / supplier account with terms, limits, flags, activity and balance.',
   from: `"FI_Account" a LEFT JOIN "MD_Forex" fx ON fx."RecId" = a."ForexId"`,
-  where: `a."IsDeleted" = 0`,
+  where: `a."IsDeleted" = 0 AND a."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'code', direction: 'asc' },
   menuSection: SECTION.finance,
   fields: [
@@ -514,7 +529,8 @@ const ACCOUNT_TRANSACTIONS: SqlReportSource = {
     JOIN "FI_Receipt" f ON f."RecId" = fi."CurrentAccountReceiptId"
     LEFT JOIN "FI_Account" a ON a."RecId" = fi."CurrentAccountId"
     LEFT JOIN "MD_Forex" fx ON fx."RecId" = fi."ForexId"`,
-  where: `fi."IsDeleted" = 0 AND f."IsDeleted" = 0`,
+  where: `fi."IsDeleted" = 0 AND f."IsDeleted" = 0 AND f."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'receiptDate', direction: 'desc' },
   menuSection: SECTION.finance,
   fields: [
@@ -561,7 +577,8 @@ const CONTRACTS: SqlReportSource = {
   label: 'Contracts',
   description: 'One row per purchase / sale contract with account, validity period, amounts and status.',
   from: CONTRACT_FROM,
-  where: `c."IsDeleted" = 0`,
+  where: `c."IsDeleted" = 0 AND c."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'contractDate', direction: 'desc' },
   menuSection: SECTION.contracts,
   fields: [
@@ -594,7 +611,8 @@ const CONTRACT_LINES: SqlReportSource = {
     JOIN ${CONTRACT_FROM.replace('"SM_Contract" c', '"SM_Contract" c ON c."RecId" = ci."ReceiptId"')}
     LEFT JOIN "IM_Item" i ON i."RecId" = ci."InventoryId"
     LEFT JOIN "MD_UnitSetItem" u ON u."RecId" = ci."UnitId"`,
-  where: `ci."IsDeleted" = 0 AND c."IsDeleted" = 0`,
+  where: `ci."IsDeleted" = 0 AND c."IsDeleted" = 0 AND c."CompanyId" = ${LEGACY_COMPANY}`,
+  legacyCompanyScoped: true,
   defaultSort: { field: 'contractDate', direction: 'desc' },
   menuSection: SECTION.contracts,
   fields: [

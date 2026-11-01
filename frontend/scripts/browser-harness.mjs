@@ -119,13 +119,14 @@ export async function openPage(html) {
     }
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  /** A real mouse click (move, press, release) at the centre of the first element matching the JS expression. */
-  const click = async (elementExpression) => {
+  /** A real mouse click (move, press, release) at the centre of the first element matching the JS expression.
+   *  `{ button: "right" }` right-clicks (opens context menus). */
+  const click = async (elementExpression, { button = "left" } = {}) => {
     const rect = await evaluate(`(() => { const e = ${elementExpression}; if (!e) return null; e.scrollIntoView({ block: "center" }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 8) }; })()`);
     if (!rect) throw new Error(`click: no element for ${elementExpression}`);
     await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y });
-    await send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button: "left", clickCount: 1 });
-    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x, y: rect.y, button: "left", clickCount: 1 });
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button, clickCount: 1 });
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x, y: rect.y, button, clickCount: 1 });
   };
   const KEYS = { Enter: 13, Escape: 27, Tab: 9, ArrowDown: 40, ArrowUp: 38, Backspace: 8 };
   const press = async (key) => {

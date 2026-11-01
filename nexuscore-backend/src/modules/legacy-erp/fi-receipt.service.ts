@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedChild, assertOwnedRow, assertRefsSameCompany, currentLegacyCompany, legacyStampSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getColumnTypeMap, buildDbValueCoercer } from './legacy-db-types.util';
 import { DeleteDependencyService } from './delete-dependency.service';
@@ -54,7 +55,7 @@ export class FiReceiptService {
       : Prisma.sql``;
     return runLegacyList(this.prisma, {
       select: HEADER_SELECT,
-      from: Prisma.sql`FROM "FI_Receipt" WHERE "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE} ${searchFilter}`,
+      from: Prisma.sql`FROM "FI_Receipt" WHERE "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} ${searchFilter}`,
       sortable: { receiptNo: Prisma.sql`"ReceiptNo"`, documentNo: Prisma.sql`"DocumentNo"`, receiptDate: Prisma.sql`"ReceiptDate"` },
       defaultSortBy: 'receiptNo', defaultSortDir: 'desc', tiebreak: Prisma.sql`"RecId"`, legacyLimit: 50,
     }, paging, sanitizeRawRow);
@@ -62,7 +63,7 @@ export class FiReceiptService {
 
   async get(id: number) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "FI_Receipt" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE}
+      SELECT ${HEADER_SELECT} FROM "FI_Receipt" WHERE "RecId" = ${id} AND "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Financial receipt not found');
     return sanitizeRawRow(rows[0]);
@@ -70,7 +71,7 @@ export class FiReceiptService {
 
   async getByReceiptNo(receiptNo: string) {
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${HEADER_SELECT} FROM "FI_Receipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE}
+      SELECT ${HEADER_SELECT} FROM "FI_Receipt" WHERE "ReceiptNo" = ${receiptNo} AND "IsDeleted" = 0 AND "ReceiptType" = ${RECEIPT_TYPE} AND "CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}
     `);
     if (!rows.length) throw new NotFoundException('Financial receipt not found');
     return sanitizeRawRow(rows[0]);
@@ -102,6 +103,7 @@ export class FiReceiptService {
   private static readonly MAX_CODE_RETRIES = 5;
 
   async create(dto: Record<string, any>, userId: number, numberPrefix = 'FR') {
+    await assertRefsSameCompany(this.prisma, [['FI_Cash', dto.cashId, 'Cash'], ['FI_CostCenter', dto.costCenterId, 'Cost Center']], { allowShared: true });
     const toDb = await this.headerToDb();
     const manualReceiptNo = String(dto.receiptNo ?? '').trim();
 
@@ -114,7 +116,7 @@ export class FiReceiptService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "FI_Receipt" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         return sanitizeRawRow(rows[0]);
@@ -134,7 +136,7 @@ export class FiReceiptService {
       try {
         const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
           INSERT INTO "FI_Receipt" (${colList})
-          VALUES (1, 1, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
+          VALUES (${await legacyStampSql(this.prisma)}, ${Prisma.join(values)}, now(), ${userId}, 0, gen_random_uuid())
           RETURNING ${HEADER_SELECT}
         `);
         return sanitizeRawRow(rows[0]);
@@ -176,6 +178,7 @@ export class FiReceiptService {
   // --- Detail lines (the grid) ------------------------------------------------------------
 
   async listItems(fiReceiptId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Receipt', fiReceiptId, 'Receipt');
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${ITEM_SELECT} FROM "FI_ReceiptItem"
       WHERE "CurrentAccountReceiptId" = ${fiReceiptId} AND "IsDeleted" = 0
@@ -185,6 +188,7 @@ export class FiReceiptService {
   }
 
   async createItem(fiReceiptId: number, dto: Record<string, any>, userId: number) {
+    await assertOwnedRow(this.prisma, 'FI_Receipt', fiReceiptId, 'Receipt'); await assertRefsSameCompany(this.prisma, [['FI_Account', dto.currentAccountId, 'Current Account']]);
     if (!dto.currentAccountId) throw new BadRequestException('A current account is required');
     const toDb = await this.itemToDb();
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
@@ -199,6 +203,7 @@ export class FiReceiptService {
   }
 
   async updateItem(itemId: number, dto: Record<string, any>, userId: number, fiReceiptId?: number) {
+    await assertOwnedChild(this.prisma, 'FI_ReceiptItem', 'CurrentAccountReceiptId', 'FI_Receipt', itemId, 'Line'); await assertRefsSameCompany(this.prisma, [['FI_Account', dto.currentAccountId, 'Current Account']]);
     const toDb = await this.itemToDb();
     const owner = fiReceiptId !== undefined ? Prisma.sql`AND "CurrentAccountReceiptId" = ${fiReceiptId}` : Prisma.sql``;
     const cols = ITEM_COLUMNS.filter((c) => toDb(c, dto[camel(c)]) !== undefined);
@@ -218,6 +223,7 @@ export class FiReceiptService {
   }
 
   async removeItem(itemId: number, userId: number, fiReceiptId?: number) {
+    await assertOwnedChild(this.prisma, 'FI_ReceiptItem', 'CurrentAccountReceiptId', 'FI_Receipt', itemId, 'Line');
     const owner = fiReceiptId !== undefined ? Prisma.sql`AND "CurrentAccountReceiptId" = ${fiReceiptId}` : Prisma.sql``;
     const result = await this.prisma.$transaction(async (tx) => {
       await this.deleteGuard.assertDeletable('FI_ReceiptItem', itemId, tx);

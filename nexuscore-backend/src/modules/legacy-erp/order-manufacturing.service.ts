@@ -6,6 +6,7 @@ import { WorkOrderService } from './work-order.service';
 import { CuttingCardService } from './cutting-card.service';
 import { FabricYarnRequirementsService } from './fabric-yarn-requirements.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedRow, assertRefsSameCompany } from './legacy-company-scope';
 import { assertAllNonNegative } from './numeric-guards.util';
 
 // Order Manufacturing Entry — MenuItem.href, same screenKey convention every audited screen uses.
@@ -182,6 +183,7 @@ export class OrderManufacturingService {
    *    one is not available. Never falls back to every process — an empty Route allows nothing.
    */
   async allowedProcesses(workOrderId: number) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const master: LegacyProcess[] = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "RecId" as id, "ProcessCode" as code, "ProcessName" as name FROM "MA_Process" WHERE COALESCE("IsDeleted", 0) = 0 ORDER BY "ProcessName", "RecId"`))
       .map((r: any) => ({ id: Number(r.id), code: (r.code as string | null) ?? null, name: (r.name as string | null) ?? null }));
@@ -411,6 +413,7 @@ export class OrderManufacturingService {
 
   // Main screen read model.
   async getContext(workOrderId: number, processId?: number | null) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const head = await this.header(workOrderId, processId ?? null);
     const model = await this.buildReadModel(workOrderId, head.process?.id ?? null);
     return { ...head, ...model };
@@ -461,6 +464,7 @@ export class OrderManufacturingService {
   }
 
   async getEntries(workOrderId: number, processId: number, color: string, mode: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const def = this.modeDef(mode);
     const m = mode as ManufacturingMode;
     const head = await this.header(workOrderId, processId);
@@ -526,6 +530,7 @@ export class OrderManufacturingService {
   // repeated Save can never duplicate), soft-delete removed rows. Nothing is written for an unchanged
   // row and no audit event is created for it (hasRealChanges).
   async saveEntries(dto: SaveEntriesDto, currentUserId: string, companyId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', Number(dto.workOrderId), 'Work order'); await assertRefsSameCompany(this.prisma, (dto.rows || []).map((r: any) => ['FI_Account', r?.factoryId, 'Factory'] as [string, unknown, string]));
     const def = this.modeDef(dto.mode);
     const workOrderId = Number(dto.workOrderId);
     const processId = Number(dto.processId);
@@ -654,6 +659,7 @@ export class OrderManufacturingService {
   // this is the minimum real flow over that one table. It has no Process column, so a price
   // contract is per Work Order + Factory, not per Process.
   async listPriceContracts(workOrderId: number) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation
     const wo: any = await this.workOrderSvc.get(workOrderId);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT sp."RecId" as id, sp."CurrAccId" as "factoryId", sp."Price" as price, sp."ForexId" as "forexId", sp."Quantity" as quantity,
@@ -681,6 +687,7 @@ export class OrderManufacturingService {
   }
 
   async savePriceContracts(workOrderId: number, rows: PriceContractRowDto[], deletedIds: number[] | undefined, currentUserId: string, companyId: string) {
+    await assertOwnedRow(this.prisma, 'MA_WorkOrder', workOrderId, 'Work order'); // company isolation await assertRefsSameCompany(this.prisma, (rows || []).map((r) => ['FI_Account', r?.factoryId, 'Factory'] as [string, unknown, string]));
     await this.assertOpen(workOrderId);
     const wo: any = await this.workOrderSvc.get(workOrderId);
     const items = await this.workOrderSvc.listItems(workOrderId);

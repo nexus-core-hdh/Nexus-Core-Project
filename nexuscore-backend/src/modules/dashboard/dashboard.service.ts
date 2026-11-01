@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PurchaseOrderService } from '../legacy-erp/purchase-order.service';
+import { legacyCompanyOrNull } from '../legacy-erp/legacy-company-scope';
 import { FiReceiptService } from '../legacy-erp/fi-receipt.service';
 import { InventoryReceiptService } from '../legacy-erp/inventory-receipt.service';
 import { getReceiptTypeConfig, RECEIPT_TYPES } from '../legacy-erp/receipt-types.config';
@@ -151,22 +152,25 @@ export class DashboardService {
     const previousTo = new Date(from.getTime() - 1);
     const previousFrom = new Date(from.getTime() - span);
     const sliceMs = span / SPARK_SLICES;
+    // Company isolation: only the caller's legacy company's Work Orders; a company with no legacy
+    // mapping counts none (-1 matches no row).
+    const cid = (await legacyCompanyOrNull(this.prisma))?.legacyCompanyId ?? -1;
     const [inRange, inPrevious, delayedRows] = await Promise.all([
       this.prisma.$queryRaw<{ slice: number; status: number | null; n: number }[]>(Prisma.sql`
         SELECT LEAST(FLOOR(EXTRACT(EPOCH FROM ("WorkOrderDate" - ${utc(from)})) * 1000 / ${sliceMs}), ${SPARK_SLICES - 1})::int AS slice,
                "Status"::int AS status, COUNT(*)::int AS n
         FROM "MA_WorkOrder"
-        WHERE "IsDeleted" = 0 AND "WorkOrderDate" >= ${utc(from)} AND "WorkOrderDate" <= ${utc(to)}
+        WHERE "IsDeleted" = 0 AND "CompanyId" = ${cid} AND "WorkOrderDate" >= ${utc(from)} AND "WorkOrderDate" <= ${utc(to)}
         GROUP BY 1, 2`),
       this.prisma.$queryRaw<{ status: number | null; n: number }[]>(Prisma.sql`
         SELECT "Status"::int AS status, COUNT(*)::int AS n
         FROM "MA_WorkOrder"
-        WHERE "IsDeleted" = 0 AND "WorkOrderDate" >= ${utc(previousFrom)} AND "WorkOrderDate" <= ${utc(previousTo)}
+        WHERE "IsDeleted" = 0 AND "CompanyId" = ${cid} AND "WorkOrderDate" >= ${utc(previousFrom)} AND "WorkOrderDate" <= ${utc(previousTo)}
         GROUP BY 1`),
       this.prisma.$queryRaw<{ n: number }[]>(Prisma.sql`
         SELECT COUNT(*)::int AS n
         FROM "MA_WorkOrder"
-        WHERE "IsDeleted" = 0 AND "DeliveryDate" < ${utc(new Date())} AND ("Status" IS NULL OR "Status" NOT IN (3, 4))`),
+        WHERE "IsDeleted" = 0 AND "CompanyId" = ${cid} AND "DeliveryDate" < ${utc(new Date())} AND ("Status" IS NULL OR "Status" NOT IN (3, 4))`),
     ]);
 
     const current = emptyCounts();
@@ -244,6 +248,7 @@ export class DashboardService {
   }
 
   private async purchases(take: number): Promise<RecentTransaction[]> {
+    if (!(await legacyCompanyOrNull(this.prisma))) return []; // no legacy mapping: no legacy transactions
     const page: any = await this.purchaseOrders.list(undefined, 'all', 1, { page: 1, pageSize: take, sortBy: 'receiptDate', sortDir: 'desc' });
     const rows: any[] = page?.rows ?? [];
     const [accounts, forex] = await Promise.all([
@@ -261,6 +266,7 @@ export class DashboardService {
   }
 
   private async receipts(take: number): Promise<RecentTransaction[]> {
+    if (!(await legacyCompanyOrNull(this.prisma))) return []; // no legacy mapping: no legacy transactions
     const page: any = await this.fiReceipts.list(undefined, { page: 1, pageSize: take, sortBy: 'receiptDate', sortDir: 'desc' });
     const rows: any[] = page?.rows ?? [];
     const ids = rows.map((r) => Number(r.id));
@@ -290,6 +296,7 @@ export class DashboardService {
   }
 
   private async imReceipts(take: number): Promise<RecentTransaction[]> {
+    if (!(await legacyCompanyOrNull(this.prisma))) return []; // no legacy mapping: no legacy transactions
     const types = RECEIPT_TYPES.map((t) => t.receiptType);
     const page: any = await this.inventoryReceipts.list(undefined, types, undefined, { page: 1, pageSize: take, sortBy: 'receiptDate', sortDir: 'desc' });
     const rows: any[] = page?.rows ?? [];
@@ -312,7 +319,8 @@ export class DashboardService {
     const unique = Array.from(new Set(ids.filter((v) => v != null).map(Number)));
     if (!unique.length) return new Map();
     const rows = await this.prisma.$queryRaw<{ id: number; name: string | null }[]>(Prisma.sql`
-      SELECT "RecId"::int AS id, "CurrentAccountName" AS name FROM "FI_Account" WHERE "RecId" IN (${Prisma.join(unique)})`);
+      SELECT "RecId"::int AS id, "CurrentAccountName" AS name FROM "FI_Account" WHERE "RecId" IN (${Prisma.join(unique)})
+        AND "CompanyId" = ${(await legacyCompanyOrNull(this.prisma))?.legacyCompanyId ?? -1}`);
     return new Map(rows.filter((r) => r.name).map((r) => [Number(r.id), r.name as string]));
   }
 

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedRow } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 
 // IM_ItemAttachment already has a Type column (bare smallint, no FK/CHECK, no seed data —
@@ -43,6 +44,7 @@ export class YarnCardAttachmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(itemId: number, kind: 'document' | 'picture') {
+    await assertOwnedRow(this.prisma, 'IM_Item', itemId, 'Item'); // company isolation
     const type = kind === 'document' ? TYPE_DOCUMENT : TYPE_PICTURE;
     const rows = kind === 'picture'
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -61,6 +63,7 @@ export class YarnCardAttachmentsService {
   }
 
   async upload(itemId: number, dto: UploadDto, userId: number) {
+    await assertOwnedRow(this.prisma, 'IM_Item', itemId, 'Item'); // company isolation
     if (!dto.fileName || !dto.dataUrl) throw new BadRequestException('fileName and dataUrl are required');
     const ext = extOf(dto.fileName);
 
@@ -85,6 +88,7 @@ export class YarnCardAttachmentsService {
   }
 
   async content(itemId: number, attachmentId: number): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    await assertOwnedRow(this.prisma, 'IM_Item', itemId, 'Item'); // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "FileName" as "fileName", "Attachment" as "attachment"
       FROM "IM_ItemAttachment" WHERE "RecId" = ${attachmentId} AND "InventoryId" = ${itemId} AND "IsDeleted" = 0
@@ -94,6 +98,7 @@ export class YarnCardAttachmentsService {
   }
 
   async remove(itemId: number, attachmentId: number, userId: number) {
+    await assertOwnedRow(this.prisma, 'IM_Item', itemId, 'Item'); // company isolation
     const result = await this.prisma.$executeRaw`
       UPDATE "IM_ItemAttachment" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}
       WHERE "RecId" = ${attachmentId} AND "InventoryId" = ${itemId}

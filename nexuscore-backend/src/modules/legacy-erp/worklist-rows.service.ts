@@ -2,6 +2,7 @@ import { ListPaging, runLegacyList } from './list-paging.util';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { companyRowScopeSql } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { TABLES, type UnifiedGridConfig } from './unified-grid.service';
 import { WorklistFieldsService, type WorklistSourceKey } from './worklist-fields.service';
@@ -163,6 +164,8 @@ const SOURCE_TABLE: Record<WorklistSourceKey, { table: string; filter?: Prisma.S
   // only for this Record's completeness.
   'work-order': { table: 'MA_WorkOrder' },
   'packing-list': { table: 'IM_PackagingList' },
+  // Invoice lists' self-source — projected client-side from list() rows (never resolved here).
+  invoice: { table: 'IM_Invoice' },
   // Joined-only targets for Subcontract Type/Receipt — see RELATIONSHIPS['purchase-receipt']
   // below. No filter/receiptScope needed: MD_SubcontractType/MD_SubcontractReceipt aren't
   // receipt-scoped tables, just plain masters (same shape as current-account/warehouse above).
@@ -419,12 +422,13 @@ export class WorklistRowsService {
     // Prisma.join() throws on an empty array (common here — e.g. a worklist with no
     // cross-source fields needs no joins at all) — Prisma.sql`` is a safe empty fragment.
     const joinsSql = joinParts.length ? Prisma.join(joinParts, ' ') : Prisma.sql``;
+    const companyScope = await companyRowScopeSql(this.prisma, cfg.table, 'r'); // company isolation
 
     // Forward joins are FK lookups and reverse/bridge sources are single-row LATERAL aggregates,
     // so there is one row per primary record and the count over the same FROM/WHERE is exact.
     return runLegacyList(this.prisma, {
       select: Prisma.join(selectParts, ', '),
-      from: Prisma.sql`FROM ${table} r ${joinsSql} WHERE r."IsDeleted" = 0 ${extraWhere} ${whereSearch}`,
+      from: Prisma.sql`FROM ${table} r ${joinsSql} WHERE r."IsDeleted" = 0 ${extraWhere} ${whereSearch} ${companyScope}`,
       sortable: Object.fromEntries([...new Set([cfg.orderBy, ...cfg.searchColumns])].map((c) => [c, Prisma.sql`r.${id(c)}`])),
       defaultSortBy: cfg.orderBy,
       defaultSortDir: cfg.orderDir === 'DESC' ? 'desc' : 'asc',

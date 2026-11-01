@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentLegacyCompany } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 import { getReceiptTypeConfig } from './receipt-types.config';
 
@@ -86,6 +87,7 @@ export class DyeingFollowUpService {
 
     // Every filter given is required (AND); a filter left out restricts nothing.
     const where: Prisma.Sql[] = [
+      Prisma.sql`r."CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId}`, // company isolation
       Prisma.sql`r."IsDeleted" = 0`, Prisma.sql`i."IsDeleted" = 0`,
       Prisma.sql`r."ReceiptType" IN (${Prisma.join([...DYEING_RECEIPT_TYPES])})`,
     ];
@@ -189,7 +191,7 @@ export class DyeingFollowUpService {
       item: Prisma.sql`SELECT "RecId" as id, "InventoryCode" as name FROM "IM_Item"`,
       workOrder: Prisma.sql`SELECT "RecId" as id, "WorkOrderNo" as name FROM "MA_WorkOrder"`,
     }[table];
-    const rows = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`${q} WHERE "RecId" IN (${Prisma.join(ids)})`));
+    const rows = sanitizeRawRow(await this.prisma.$queryRaw<any[]>(Prisma.sql`${q} WHERE "RecId" IN (${Prisma.join(ids)}) AND ("CompanyId" = ${(await currentLegacyCompany(this.prisma)).legacyCompanyId} OR "CompanyId" IS NULL)`));
     const byId = new Map(rows.map((r: any) => [Number(r.id), String(r.name ?? '')]));
     return ids.map((id) => byId.get(id) || `#${id}`);
   }

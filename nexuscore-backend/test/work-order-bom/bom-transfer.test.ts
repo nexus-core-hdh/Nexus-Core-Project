@@ -30,7 +30,7 @@ before(async () => {
 after(async () => { await prisma.$disconnect(); });
 
 const one = async (sql: Prisma.Sql) => Number((await prisma.$queryRaw<any[]>(sql))[0].id);
-const item = (code: string) => one(Prisma.sql`INSERT INTO "IM_Item" ("InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (${code}, ${`${code} name`}, 'FABRIC', 0) RETURNING "RecId" as id`);
+const item = (code: string) => one(Prisma.sql`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode", "InventoryName", "AccessCode", "IsDeleted") VALUES (1, ${code}, ${`${code} name`}, 'FABRIC', 0) RETURNING "RecId" as id`);
 
 /** A Work Order with Production Colors (Manufacturing Quantities) and a Style Card whose BOM has
  *  one line per type — every field the transfer maps is set to a distinctive value. */
@@ -50,7 +50,7 @@ async function world() {
       { ...base, lineType: 'process', sortOrder: 1, explanation: 'Wash', variant: 'WASH', quantity: 1 },
     ] as any,
   });
-  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("WorkOrderNo", "IsDeleted") VALUES (${uniq('W/O')}, 0) RETURNING "RecId" as id`);
+  const woId = await one(Prisma.sql`INSERT INTO "MA_WorkOrder" ("CompanyId", "WorkOrderNo", "IsDeleted") VALUES (1, ${uniq('W/O')}, 0) RETURNING "RecId" as id`);
   const itemId = await one(Prisma.sql`INSERT INTO "MA_WorkOrderItem" ("WorkOrderId", "ItemOrderNo", "IsDeleted") VALUES (${woId}, 1, 0) RETURNING "RecId" as id`);
   for (const [i, color] of ['ECRU', 'NAVY'].entries()) {
     await prisma.$executeRaw`INSERT INTO "MA_WorkOrderItemVariant" ("WorkOrderItemId", "Explanation", "Quantity", "SubNo", "IsDeleted") VALUES (${itemId}, ${`${color}‖S`}, 10, ${i + 1}, 0)`;

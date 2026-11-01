@@ -193,6 +193,7 @@ export class CuttingCardService {
   // quantities exist) with its own Order/Will-Be-Cut per size. Colors NOT present here simply
   // never render — there is nothing to cut yet.
   async getColorMatrix(workOrderId: number) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     await this.workOrderSvc.get(workOrderId); // 404s if the Work Order itself doesn't exist
     const [sizes, { byColorSize, colorsInOrder, extraCuttingPercent }, cutByColor] = await Promise.all([
       this.resolveSizes(workOrderId),
@@ -229,6 +230,7 @@ export class CuttingCardService {
   // only when it case-insensitively matches. A material with none of its lines applicable to this
   // color is left out entirely — never padded in with an unrelated color's own mapping.
   async listApplicableFabrics(workOrderId: number, productionColor: string): Promise<ApplicableFabric[]> {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const key = productionColor.trim().toLowerCase();
     const lines = await this.fabricYarnSvc.resolveBomLines(workOrderId, 'fabric');
     const byMaterial = new Map<string, any[]>();
@@ -293,6 +295,7 @@ export class CuttingCardService {
   // Card screen's read-only preview panel (the per-Fabric Cutting Entry screen is where entries
   // are actually logged/edited). Never persisted itself; always a live re-aggregation.
   async getColorCutTotals(workOrderId: number, productionColor: string): Promise<Record<string, number>> {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const color = productionColor.trim();
     const cards = await this.prisma.cuttingCard.findMany({
       where: { workOrderId, productionColor: { equals: color, mode: 'insensitive' } },
@@ -314,6 +317,7 @@ export class CuttingCardService {
   // "Cutting" column is the exact same Cut Qty definition the Cutting Card screens already show,
   // never a second calculation. Keyed by lowercased/trimmed color, then size.
   async getCutTotalsByColor(workOrderId: number): Promise<Map<string, Record<string, number>>> {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const cards = await this.prisma.cuttingCard.findMany({
       where: { workOrderId },
       include: { entries: { include: { sizes: true } } },
@@ -384,6 +388,7 @@ export class CuttingCardService {
   }
 
   async getCuttingCard(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, userId?: string) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     await this.workOrderSvc.get(workOrderId); // 404s if the Work Order itself doesn't exist
     const card = await this.getOrCreateCard(workOrderId, productionColor, materialKey, materialLabel, userId);
     const [sizes, mfg, entryRows] = await Promise.all([
@@ -469,6 +474,7 @@ export class CuttingCardService {
     userId?: string,
     companyId?: string,
   ) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     assertAllNonNegative({
       'Marker Weight': detail.markerWeight, 'Marker Plies': detail.markerPlies, 'Marker Count': detail.markerCount,
       'Sent for Cutting': detail.sentForCutting, Increase: detail.increase, Return: detail.returnQty,
@@ -510,6 +516,7 @@ export class CuttingCardService {
   // total, exactly like a freshly Added Color row on Manufacturing Quantities contributes 0 until
   // sizes are typed in.
   async addCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, userId?: string, companyId?: string) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const card = await this.getOrCreateCard(workOrderId, productionColor, materialKey, materialLabel, userId);
     const entry = await this.prisma.cuttingCardEntry.create({ data: { cuttingCardId: card.id } });
     await this.auditEntry(AUDIT_ACTIONS.CREATE, workOrderId, card.id, entry.id, null, await this.loadEntry(entry.id), userId, companyId);
@@ -522,6 +529,7 @@ export class CuttingCardService {
     userId?: string,
     companyId?: string,
   ) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId, productionColor, materialKey);
     const before = userId && companyId ? await this.loadEntry(entryId) : null;
     await this.prisma.cuttingCardEntry.update({
@@ -540,6 +548,7 @@ export class CuttingCardService {
     workOrderId: number, productionColor: string, materialKey: string, materialLabel: string,
     entryId: string, sizeCode: string, quantity: number, userId?: string, companyId?: string,
   ) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     assertNonNegative(quantity, `Cut Qty (${sizeCode})`);
     const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId, productionColor, materialKey);
     const before = userId && companyId ? await this.loadEntry(entryId) : null;
@@ -556,6 +565,7 @@ export class CuttingCardService {
   }
 
   async deleteCuttingEntry(workOrderId: number, productionColor: string, materialKey: string, materialLabel: string, entryId: string, userId?: string, companyId?: string) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const owned = await this.assertEntryBelongsToWorkOrder(entryId, workOrderId, productionColor, materialKey);
     const before = userId && companyId ? await this.loadEntry(entryId) : null; // last valid state incl. sizes
     await this.prisma.cuttingCardEntry.delete({ where: { id: entryId } }); // CuttingCardEntrySize rows cascade
@@ -574,6 +584,7 @@ export class CuttingCardService {
   // The Work Order's Fabrics (one per materialKey), each with the Production Colors it applies to,
   // in Manufacturing Quantities' color order — the per-color listApplicableFabrics rule, unioned.
   async listOrderFabrics(workOrderId: number): Promise<(ApplicableFabric & { colors: string[] })[]> {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     const { colorsInOrder } = await this.getAllVariantQuantities(workOrderId);
     const out = new Map<string, ApplicableFabric & { colors: string[] }>();
     for (const color of colorsInOrder) {
@@ -594,6 +605,7 @@ export class CuttingCardService {
 
   // Read-only: never creates a CuttingCard (a color without one simply shows Cut 0 and no entries).
   async getOrderCutting(workOrderId: number, materialKey: string) {
+    await this.workOrderSvc.assertOwned(workOrderId); // company isolation
     await this.workOrderSvc.get(workOrderId); // 404s if the Work Order itself doesn't exist
     const fabric = await this.requireOrderFabric(workOrderId, materialKey);
     const [sizes, { byColorSize, extraCuttingPercent }, cards] = await Promise.all([

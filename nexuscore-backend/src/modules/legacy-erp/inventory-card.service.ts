@@ -7,6 +7,7 @@ import { getColumnTypeMap } from './legacy-db-types.util';
 import { screenKeyFor } from './inventory-receipt.service';
 import { baseQuantitySql, baseQuantityJoinSql, fromBaseQuantitySql, unitConversionIssueSql } from './unit-conversion.util';
 import { STOCK_IN_RECEIPT_TYPES, STOCK_OUT_RECEIPT_TYPES } from './receipt-types.config';
+import { currentLegacyCompany } from './legacy-company-scope';
 
 // Approval gate for every stock figure (Stock on Hand here, Item Statement's ledger) — moved here
 // unchanged from item-statement.service.ts's own inline filter. Only Purchase Receipt/Return
@@ -88,7 +89,7 @@ export interface StockValuation {
   stockPriceReceiptDate: string | null;
 }
 
-function stockPriceSql(itemRef: Prisma.Sql) {
+function stockPriceSql(itemRef: Prisma.Sql, legacyCompanyId: number) {
   const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
   return Prisma.sql`
     SELECT ${fromBaseQuantitySql(Prisma.sql`ri."UnitPrice"`, 'pu')} AS "price",
@@ -99,6 +100,7 @@ function stockPriceSql(itemRef: Prisma.Sql) {
     WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
       AND rec."ReceiptType" IN (${inTypes})
       AND ri."UnitPrice" > 0
+      AND rec."CompanyId" = ${legacyCompanyId}
       AND ${stockApprovalGateSql('rec')}
       AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'pu')} IS NULL
     ORDER BY rec."ReceiptDate" DESC NULLS LAST, rec."RecId" DESC, ri."RecId" DESC
@@ -110,13 +112,15 @@ export async function loadStockValuations(prisma: PrismaService, itemIds: number
   const ids = [...new Set(itemIds.filter((v) => Number.isInteger(v) && v > 0))];
   const out = new Map<number, StockValuation>();
   if (!ids.length) return out;
+  // Company isolation: stock and price from the current company's receipts only.
+  const { legacyCompanyId } = await currentLegacyCompany(prisma);
   const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
     SELECT i."RecId" AS id, COALESCE(stock."qty", 0) AS "qty", unit_lookup."unitName" AS "unit",
            price."price", price."receiptNo", price."receiptDate"
     FROM "IM_Item" i
     ${itemUnitNameLateral('i')}
-    LEFT JOIN LATERAL ( ${stockOnHandSumSql(Prisma.sql`i."RecId"`)} ) stock ON true
-    LEFT JOIN LATERAL ( ${stockPriceSql(Prisma.sql`i."RecId"`)} ) price ON true
+    LEFT JOIN LATERAL ( ${stockOnHandSumSql(Prisma.sql`i."RecId"`, legacyCompanyId)} ) stock ON true
+    LEFT JOIN LATERAL ( ${stockPriceSql(Prisma.sql`i."RecId"`, legacyCompanyId)} ) price ON true
     WHERE i."RecId" IN (${Prisma.join(ids)})`);
   for (const r of rows) {
     const qty = Number(r.qty ?? 0);
@@ -179,7 +183,9 @@ export interface InventoryCardListParams {
 // Stock on Hand SQL for one item (see the comment on InventoryCardService.stockSumSql, which
 // delegates here). Exported so other read-only consumers (the Report Builder's Legacy ERP
 // inventory reports) use this exact formula instead of a second, divergent one.
-export function stockOnHandSumSql(itemRef: Prisma.Sql): Prisma.Sql {
+/** Company isolation: `legacyCompanyId` is required — stock is always ONE legacy company's receipts
+ *  (IM_Receipt."CompanyId"; receipt lines inherit their receipt's company). */
+export function stockOnHandSumSql(itemRef: Prisma.Sql, legacyCompanyId: number | Prisma.Sql): Prisma.Sql {
   const baseQty = baseQuantitySql(Prisma.sql`ri."Quantity"`, Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri');
   const inTypes = Prisma.join([...STOCK_IN_RECEIPT_TYPES]);
   const outTypes = Prisma.join([...STOCK_OUT_RECEIPT_TYPES]);
@@ -196,6 +202,7 @@ export function stockOnHandSumSql(itemRef: Prisma.Sql): Prisma.Sql {
     ${baseQuantityJoinSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')}
     WHERE ri."InventoryId" = ${itemRef} AND ri."IsDeleted" = 0
       AND rec."ReceiptType" IN (${inTypes}, ${outTypes})
+      AND rec."CompanyId" = ${legacyCompanyId}
       AND ${stockApprovalGateSql('rec')}
       AND ${unitConversionIssueSql(Prisma.sql`ri."InventoryId"`, Prisma.sql`ri."UnitId"`, 'ri')} IS NULL
   `;
@@ -238,18 +245,19 @@ export class InventoryCardService {
     const whereSearch = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.sql``;
 
     const creatorName = await this.creatorNameExpr();
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId;
 
     // Stock Value (and its price) for the rows of this page — one valuation query, see withStockValuation.
     return withStockValuation(this.prisma, await runLegacyList(this.prisma, {
       select: Prisma.sql`*`,
       from: Prisma.sql`FROM (
-        ${this.fabricAndTrimSlice('FABRIC', 'Fabric', 'fabric', creatorName)}
+        ${this.fabricAndTrimSlice('FABRIC', 'Fabric', 'fabric', creatorName, cid)}
         UNION ALL
-        ${this.yarnSlice(creatorName)}
+        ${this.yarnSlice(creatorName, cid)}
         UNION ALL
-        ${this.fabricAndTrimSlice('TRIM', 'Trim', 'trim', creatorName)}
+        ${this.fabricAndTrimSlice('TRIM', 'Trim', 'trim', creatorName, cid)}
         UNION ALL
-        ${this.fabricAndTrimSlice('FIXEDASSET', 'Fixed Asset', 'fixedasset', creatorName)}
+        ${this.fabricAndTrimSlice('FIXEDASSET', 'Fixed Asset', 'fixedasset', creatorName, cid)}
       ) combined
       ${whereSearch}`,
       sortable: Object.fromEntries(Object.entries(SORTABLE_COLUMNS).map(([k, col]) => [k, Prisma.sql`${Prisma.raw(`"${col}"`)}`])),
@@ -268,7 +276,7 @@ export class InventoryCardService {
   // its own (confirmed via pg_catalog): IM_FixedAssetDepreciation/Expense/Inflation all key
   // off InventoryId -> IM_Item the same way Fabric/Trim/Yarn do, so a Fixed Asset item is
   // just an IM_Item row with AccessCode = 'FIXEDASSET' (0 rows today — no fake data).
-  private fabricAndTrimSlice(accessCode: string, label: string, sourceType: string, creatorName: Prisma.Sql) {
+  private fabricAndTrimSlice(accessCode: string, label: string, sourceType: string, creatorName: Prisma.Sql, cid: number) {
     return Prisma.sql`
       SELECT
         i."RecId" AS id,
@@ -284,14 +292,14 @@ export class InventoryCardService {
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
       ${itemUnitNameLateral('i')}
-      ${this.stockLateral()}
-      ${this.lastPurchasePriceLateral()}
+      ${this.stockLateral(cid)}
+      ${this.lastPurchasePriceLateral(cid)}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"
-      WHERE i."IsDeleted" = 0 AND i."AccessCode" = ${accessCode}
+      WHERE i."IsDeleted" = 0 AND i."AccessCode" = ${accessCode} AND i."CompanyId" = ${cid}
     `;
   }
 
-  private yarnSlice(creatorName: Prisma.Sql) {
+  private yarnSlice(creatorName: Prisma.Sql, cid: number) {
     return Prisma.sql`
       SELECT
         i."RecId" AS id,
@@ -307,10 +315,10 @@ export class InventoryCardService {
         ${creatorName} AS "insertedBy"
       FROM "IM_Item" i
       ${itemUnitNameLateral('i')}
-      ${this.stockLateral()}
-      ${this.lastPurchasePriceLateral()}
+      ${this.stockLateral(cid)}
+      ${this.lastPurchasePriceLateral(cid)}
       LEFT JOIN "User" creator ON creator."id" = i."InsertedByUserId"
-      WHERE i."IsDeleted" = 0 AND i."AccessCode" = 'YARN'
+      WHERE i."IsDeleted" = 0 AND i."AccessCode" = 'YARN' AND i."CompanyId" = ${cid}
     `;
   }
 
@@ -359,12 +367,12 @@ export class InventoryCardService {
   // Unit — a raw SUM("Quantity") across mixed units is meaningless. Reuses the one conversion
   // formula in unit-conversion.util.ts (the same one purchase-order.service.ts's listPending and
   // inventory-receipt.service.ts's assertPendingQty use) rather than a second stock formula.
-  private stockSumSql(itemRef: Prisma.Sql) {
-    return stockOnHandSumSql(itemRef);
+  private stockSumSql(itemRef: Prisma.Sql, cid: number) {
+    return stockOnHandSumSql(itemRef, cid);
   }
 
-  private stockLateral() {
-    return Prisma.sql`LEFT JOIN LATERAL ( ${this.stockSumSql(Prisma.sql`i."RecId"`)} ) stock ON true`;
+  private stockLateral(cid: number) {
+    return Prisma.sql`LEFT JOIN LATERAL ( ${this.stockSumSql(Prisma.sql`i."RecId"`, cid)} ) stock ON true`;
   }
 
   // Single-item entry point for item-statement.service.ts's "Current Stock" header field and
@@ -372,7 +380,8 @@ export class InventoryCardService {
   // formula as the list() grid's "Stock on Hand" column above, just scalar instead of a
   // per-row LATERAL join. Never a second, divergent stock calculation.
   async getStockOnHand(itemId: number): Promise<number> {
-    const rows = await this.prisma.$queryRaw<any[]>(this.stockSumSql(Prisma.sql`${itemId}`));
+    const cid = (await currentLegacyCompany(this.prisma)).legacyCompanyId;
+    const rows = await this.prisma.$queryRaw<any[]>(this.stockSumSql(Prisma.sql`${itemId}`, cid));
     return Number(rows[0]?.qty ?? 0);
   }
 
@@ -389,19 +398,19 @@ export class InventoryCardService {
   //
   // BUG FIX: the IM_ReceiptItem side also filters on the HEADER's "ReceiptType" (rec), same
   // stale-denormalized-column reasoning as stockLateral above.
-  private lastPurchasePriceLateral() {
+  private lastPurchasePriceLateral(cid: number) {
     return Prisma.sql`
       LEFT JOIN LATERAL (
         SELECT p."price"
         FROM (
           SELECT ooi."UnitPrice" AS "price", ooi."InsertedAt" AS "ts"
           FROM "IM_OrderReceiptItem" ooi
-          JOIN "IM_OrderReceipt" po ON po."RecId" = ooi."OrderReceiptId" AND po."IsDeleted" = 0
+          JOIN "IM_OrderReceipt" po ON po."RecId" = ooi."OrderReceiptId" AND po."IsDeleted" = 0 AND po."CompanyId" = ${cid}
           WHERE ooi."InventoryId" = i."RecId" AND ooi."IsDeleted" = 0 AND ooi."UnitPrice" IS NOT NULL
           UNION ALL
           SELECT ri."UnitPrice" AS "price", ri."InsertedAt" AS "ts"
           FROM "IM_ReceiptItem" ri
-          JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0
+          JOIN "IM_Receipt" rec ON rec."RecId" = ri."InventoryReceiptId" AND rec."IsDeleted" = 0 AND rec."CompanyId" = ${cid}
           WHERE ri."InventoryId" = i."RecId" AND ri."IsDeleted" = 0 AND rec."ReceiptType" = 2 AND ri."UnitPrice" IS NOT NULL
         ) p
         ORDER BY p."ts" DESC

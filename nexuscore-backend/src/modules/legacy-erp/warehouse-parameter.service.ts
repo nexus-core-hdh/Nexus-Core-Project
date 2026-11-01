@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertOwnedRow } from './legacy-company-scope';
 import { sanitizeRawRow } from './raw-row.util';
 
 // Module + Warehouse scoped configuration — Negative Stock / Critical Stock behavior, whether
@@ -40,6 +41,7 @@ export class WarehouseParameterService {
   // defaults (never persisted as a row until Save is actually pressed — an unconfigured
   // warehouse simply behaves like "warn"/"warn"/allowed/no limits until someone opts in).
   async get(module: string, warehouseId: number) {
+    await assertOwnedRow(this.prisma, 'IM_Warehouse', warehouseId, 'Warehouse'); // company isolation
     this.assertModule(module);
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT ${Prisma.raw(ROW_SELECT)} FROM "LegacyWarehouseModuleParameter"
@@ -53,6 +55,7 @@ export class WarehouseParameterService {
     module: string; warehouseId: number; negativeStock: string; criticalStock: string;
     allowTransaction: boolean; minimumStockLevel: number | null; maximumStockLevel: null | number;
   }, userId: number) {
+    if (dto?.warehouseId) await assertOwnedRow(this.prisma, 'IM_Warehouse', dto.warehouseId, 'Warehouse'); // company isolation
     const { module, warehouseId } = dto;
     this.assertModule(module);
     if (!warehouseId) throw new BadRequestException('warehouseId is required');

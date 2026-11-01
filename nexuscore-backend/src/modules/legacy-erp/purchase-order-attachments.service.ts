@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
+import { assertOwnedRow } from './legacy-company-scope';
 
 // Mirrors yarn-card-attachments.service.ts exactly, against IM_OrderReceiptAttachment
 // instead of IM_ItemAttachment — a purpose-built attachments table that already exists in
@@ -45,6 +46,7 @@ export class PurchaseOrderAttachmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(orderReceiptId: number, kind: 'document' | 'picture') {
+    await assertOwnedRow(this.prisma, 'IM_OrderReceipt', orderReceiptId, 'Order'); // company isolation
     const type = kind === 'document' ? TYPE_DOCUMENT : TYPE_PICTURE;
     const rows = kind === 'picture'
       ? await this.prisma.$queryRaw<any[]>(Prisma.sql`
@@ -63,6 +65,7 @@ export class PurchaseOrderAttachmentsService {
   }
 
   async upload(orderReceiptId: number, dto: UploadDto, userId: number) {
+    await assertOwnedRow(this.prisma, 'IM_OrderReceipt', orderReceiptId, 'Order'); // company isolation
     if (!dto.fileName || !dto.dataUrl) throw new BadRequestException('fileName and dataUrl are required');
     const ext = extOf(dto.fileName);
 
@@ -87,6 +90,7 @@ export class PurchaseOrderAttachmentsService {
   }
 
   async content(orderReceiptId: number, attachmentId: number): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    await assertOwnedRow(this.prisma, 'IM_OrderReceipt', orderReceiptId, 'Order'); // company isolation
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT "FileName" as "fileName", "Attachment" as "attachment"
       FROM "IM_OrderReceiptAttachment" WHERE "RecId" = ${attachmentId} AND "OrderReceiptId" = ${orderReceiptId} AND "IsDeleted" = 0
@@ -96,6 +100,7 @@ export class PurchaseOrderAttachmentsService {
   }
 
   async remove(orderReceiptId: number, attachmentId: number, userId: number) {
+    await assertOwnedRow(this.prisma, 'IM_OrderReceipt', orderReceiptId, 'Order'); // company isolation
     const result = await this.prisma.$executeRaw`
       UPDATE "IM_OrderReceiptAttachment" SET "IsDeleted" = 1, "DeletedAt" = now(), "DeletedBy" = ${userId}
       WHERE "RecId" = ${attachmentId} AND "OrderReceiptId" = ${orderReceiptId}

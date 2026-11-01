@@ -35,6 +35,7 @@ import {
 } from './process-follow-up.report';
 import { ORDER_FORM_WORK_ORDER_FIELD, ReportSection, SectionColumnConfig, cleanSectionColumns, orderFormSections } from './work-order-order-form.report';
 import { OrderManufacturingService } from '../legacy-erp/order-manufacturing.service';
+import { currentLegacyCompany } from '../legacy-erp/legacy-company-scope';
 import {
   OM_ENTRY_FIELDS, OM_ENTRY_SOURCE_KEY, OM_ENTRY_VIEW_SIZES, OM_ENTRY_VIEW_SUMMARY, OrderManufacturingContext, orderManufacturingEntrySections,
 } from './order-manufacturing-entry.report';
@@ -865,9 +866,13 @@ export class ReportBuilderService {
     source: SqlReportSource, fields: ReportField[], conditions: Prisma.Sql[],
     sorts: { field: ReportField; direction: 'asc' | 'desc' }[], take: number,
   ): Promise<Record<string, unknown>[]> {
+    // Company isolation: a Legacy ERP source runs as the request's legacy company (fails closed
+    // when the company has no valid mapping) — set transaction-locally for its row conditions.
+    const legacy = source.legacyCompanyScoped ? await currentLegacyCompany(this.prisma) : null;
     // A time limit per query, so an expensive report cannot tie up the database.
     const records = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
+      if (legacy) await tx.$executeRaw`SELECT set_config('nexus.legacy_company_id', ${String(legacy.legacyCompanyId)}, true)`;
       return tx.$queryRaw<Record<string, unknown>[]>(sqlQuery(source, fields, conditions, sorts, take));
     }, { timeout: SQL_STATEMENT_TIMEOUT_MS + 5000 }).catch((e: any) => {
       if (/statement timeout|canceling statement/i.test(String(e?.message))) {

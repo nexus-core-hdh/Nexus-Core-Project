@@ -45,6 +45,16 @@ export const RECEIPT_TYPES: ReceiptTypeConfig[] = [
 export const getReceiptTypeConfig = (receiptType: number): ReceiptTypeConfig | undefined =>
   RECEIPT_TYPES.find((t) => t.receiptType === receiptType);
 
+// Invoice type -> the receipt type(s) it invoices (the invoice screen's Source Receipt picker and
+// invoice.service.ts's link check both read this one rule). The existing design numbers an invoice
+// type like the receipt type it invoices: IM_Invoice.ReceiptType = N invoices IM_Receipt rows of
+// ReceiptType = N (the 18 Invoices menu entries are receiptType=N of RECEIPT_TYPES; the live
+// database has no invoice-type table and its only invoice links a type-2 receipt to a type-2
+// invoice). So every invoice type has exactly one source type today; a list keeps the picker and
+// the check correct if a type is ever given more than one.
+export const invoiceSourceReceiptTypes = (invoiceType: number): number[] =>
+  getReceiptTypeConfig(invoiceType) ? [invoiceType] : [];
+
 // Purchase Return's (ReceiptType=122) "Import Related Receipt" workflow — the only two receipt
 // types eligible as an IMPORT SOURCE for a new Purchase Return line, via the existing
 // IM_ReceiptItem.PurchaseReceiptItemId self-reference (see inventory-receipt.service.ts's

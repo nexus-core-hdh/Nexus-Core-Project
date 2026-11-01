@@ -14,11 +14,12 @@ import { HEADER_COLUMNS as UNIT_SET_COLUMNS } from './unit-set.service';
 import { INVENTORY_CARD_COLUMNS } from './inventory-card.service';
 import { HEADER_COLUMNS as WORK_ORDER_COLUMNS } from './work-order.service';
 import { HEADER_COLUMNS as PACKING_LIST_COLUMNS } from './packing-list.service';
+import { INVOICE_WORKLIST_COLUMNS } from './invoice.service';
 
 export type WorklistSourceKey =
   | 'purchase-receipt' | 'purchase-receipt-item' | 'yarn-card' | 'fabric-card' | 'current-account' | 'warehouse' | 'financial-receipt'
   | 'trim-card' | 'trim-inventory-card' | 'purchase-order' | 'contract' | 'size-set' | 'unit-set' | 'inventory-card'
-  | 'work-order' | 'subcontract-type' | 'subcontract-receipt' | 'script' | 'packing-list';
+  | 'work-order' | 'subcontract-type' | 'subcontract-receipt' | 'script' | 'packing-list' | 'invoice';
 
 // Subcontract Type / Subcontract Receipt — the two real columns on MD_SubcontractType/
 // MD_SubcontractReceipt (see legacy-master-lookup.service.ts's TABLES config for the master CRUD
@@ -70,6 +71,9 @@ const SOURCES: WorklistSourceFields[] = [
   // Packing List — IM_PackagingList header columns (packing-list.service.ts); list() rows carry every
   // one, so a custom worklist is a client-side projection like Work Order List above.
   { source: 'packing-list', label: 'Packing List', fields: PACKING_LIST_COLUMNS },
+  // Invoices (all 18 invoice-type lists) — IM_Invoice header columns (invoice.service.ts); list() rows
+  // carry every one, so a custom worklist is a client-side projection like Packing List above.
+  { source: 'invoice', label: 'Invoice List', fields: INVOICE_WORKLIST_COLUMNS },
   // Joined targets ONLY (see worklist-rows.service.ts's RELATIONSHIPS['purchase-receipt']) — a
   // worklist field with one of these sources resolves the real Name via a LEFT JOIN off the raw
   // SubcontractTypeId/SubcontractReceiptId columns already on IM_Receipt (Standard's own "Add
@@ -109,6 +113,7 @@ const ALLOWED_SOURCES_BY_PRIMARY: Partial<Record<string, WorklistSourceKey[]>> =
   'inventory-card-list': ['inventory-card'],
   'work-order-list': ['work-order'],
   'packing-list-list': ['packing-list'],
+  'receipt-invoice-list': ['invoice'],
   // Purchase Return's "Import Related Receipt" dialog — not itself a *-list screen (it's a
   // selection dialog, not a page with a table-key), so it gets its own explicit primary key
   // rather than reusing "purchase-receipt-list" (which doesn't exist — Purchase Receipt has no
@@ -117,12 +122,18 @@ const ALLOWED_SOURCES_BY_PRIMARY: Partial<Record<string, WorklistSourceKey[]>> =
   'related-receipt-import': ['purchase-receipt', 'purchase-receipt-item'],
 };
 
+/** Sources offered only to the screens that name them in ALLOWED_SOURCES_BY_PRIMARY. */
+const SCOPED_ONLY = new Set<WorklistSourceKey>(['invoice']);
+
 @Injectable()
 export class WorklistFieldsService {
   list(primary?: string): WorklistSourceFields[] {
-    if (!primary) return SOURCES;
+    // The invoice source only exists for the invoice lists: Receipt & Master Data and the other
+    // unscoped designers keep exactly the sources they offered before it was added.
+    const unscoped = SOURCES.filter((sf) => !SCOPED_ONLY.has(sf.source));
+    if (!primary) return unscoped;
     const allowed = ALLOWED_SOURCES_BY_PRIMARY[primary];
-    if (!allowed) return SOURCES; // unrecognized primary — fail open to today's unrestricted behavior
+    if (!allowed) return unscoped; // unrecognized primary — fail open to today's unrestricted behavior
     return SOURCES.filter((sf) => allowed.includes(sf.source));
   }
 }

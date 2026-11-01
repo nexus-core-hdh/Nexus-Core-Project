@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
 import { getReceiptTypeConfig } from './receipt-types.config';
+import { companyIs, currentLegacyCompany } from './legacy-company-scope';
 
 // Universal Action Menu -> "Return / Related Receipt" submenu. The one shared implementation of
 // the Order -> Receipt -> Received Connection -> Return traceability chain, reused by both
@@ -47,6 +48,7 @@ export class ReceiptTraceabilityService {
   // PurchaseReceiptItemId hops (received-connection, return, ...).
   private async familyByPurchaseOrderIds(poIds: number[]): Promise<RelatedReceiptRow[]> {
     if (!poIds.length) return [];
+    const ctx = await currentLegacyCompany(this.prisma); // company isolation: only this company's receipts
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       WITH RECURSIVE po_items AS (
         SELECT "RecId" as id FROM "IM_OrderReceiptItem"
@@ -67,7 +69,7 @@ export class ReceiptTraceabilityService {
       )
       SELECT rec."RecId" as id, rec."ReceiptNo" as "receiptNo", rec."ReceiptType" as "receiptType", rec."ReceiptDate" as "receiptDate"
       FROM "IM_Receipt" rec
-      WHERE rec."RecId" IN (SELECT DISTINCT "receiptId" FROM chain) AND rec."IsDeleted" = 0
+      WHERE rec."RecId" IN (SELECT DISTINCT "receiptId" FROM chain) AND rec."IsDeleted" = 0 AND ${companyIs('rec', ctx)}
       ORDER BY rec."ReceiptDate" DESC, rec."RecId" DESC
     `);
     return sanitizeRawRow(rows).map((r: any) => ({ ...r, label: this.labelFor(r.receiptType) }));

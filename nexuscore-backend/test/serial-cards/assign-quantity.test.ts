@@ -35,7 +35,7 @@ before(async () => {
 after(async () => { await prisma.$disconnect(); });
 
 // --- seed helpers ----------------------------------------------------------------------------
-const item = () => one(`INSERT INTO "IM_Item" ("InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES ($1,'serial item','FABRIC',0) RETURNING "RecId" AS id`, uniq('FAB'));
+const item = () => one(`INSERT INTO "IM_Item" ("CompanyId", "InventoryCode","InventoryName","AccessCode","IsDeleted") VALUES (1, $1,'serial item','FABRIC',0) RETURNING "RecId" AS id`, uniq('FAB'));
 async function receiptLine(quantity: number) {
   const inventoryId = await item();
   const receiptId = await one(`INSERT INTO "IM_Receipt" ("ReceiptType","ReceiptNo","ReceiptDate","CompanyId","WorkplaceId","IsDeleted") VALUES (2,$1,'2026-03-01'::date,1,1,0) RETURNING "RecId" AS id`, uniq('R'));

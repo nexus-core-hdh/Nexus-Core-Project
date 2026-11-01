@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-serial-cards-dialog";
+import { receiptTotals, type ReceiptTotals } from "@/lib/legacy-erp/receipt-totals";
 
 // Inventory Receipt detail grid — same click-to-edit spreadsheet interaction model as
 // purchase-order-line-grid.tsx (flush editors, one active cell at a time, no inline "always
@@ -69,7 +70,7 @@ import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-seri
 // collides with Purchase Order's own saved preferences in the same tablePreferences blob.
 // Arrow-key/Enter/F2/Tab/Escape cell navigation stays local to this file, unaffected.
 
-type ColKey =
+export type ColKey =
   | "itemOrderNo" | "type" | "itemId" | "code" | "name" | "color" | "stockOnHand" | "lastPurchasePrice" | "specialCode" | "explanation"
   | "manufacturingOrderNo" | "partyNo" | "accountCode" | "accountName" | "hsCode" | "hsDescription"
   | "c" | "lotCode" | "assortmentExplanation" | "lotQuantity"
@@ -543,6 +544,16 @@ interface Props {
   initialLines?: PlanningPrefillLine[];
   /** Whether any grid UDF value has been edited and not saved yet (feeds the screen's dirty state). */
   onUdfDirtyChange?: (dirty: boolean) => void;
+  /** Optional (Receipt Invoice screens): the document totals (lib/legacy-erp/receipt-totals.ts)
+   *  over this grid's lines whenever they change. Not passed by the Inventory Receipt screen. */
+  onTotalsChange?: (totals: ReceiptTotals, selected: { stockOnHand: number | null; unit: string } | null) => void;
+  /** Optional (Receipt Invoice screens, which show their own totals area): hide this grid's own
+   *  footer. Default false — the Inventory Receipt screen keeps its footer. */
+  hideFooter?: boolean;
+  /** Optional (Receipt Invoice screens): their own column layout — a separate saved-preferences key
+   *  and default order; columns not listed start hidden (still available in Manage Columns).
+   *  Omitted (the Inventory Receipt screen), the grid's own layout and "irLineGrid" key are used. */
+  columnLayout?: { storageKey: string; order: ColKey[] };
 }
 
 // A Work Order header (MA_WorkOrder) -> the link a receipt line stores: its CURRENT live line
@@ -609,7 +620,7 @@ export interface InventoryReceiptLineGridHandle {
 }
 
 export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandle, Props>(function InventoryReceiptLineGrid(
-  { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts, initialLines, onUdfDirtyChange },
+  { inventoryReceiptId, readOnly = false, api = legacyErpApi.inventoryReceipts, initialLines, onUdfDirtyChange, onTotalsChange, hideFooter = false, columnLayout },
   ref,
 ) {
   const router = useRouter();
@@ -1262,18 +1273,24 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   );
 
   // ---- Column resize/reorder/hide/persist — shared across every grid via useGridColumns ----
-  const gridColumnDefs = useMemo(
-    () => [
-      ...COLUMNS.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
+  const gridColumnDefs = useMemo(() => {
+    const ordered = columnLayout
+      ? [...columnLayout.order.map((k) => COLUMN_BY_KEY.get(k)!).filter(Boolean), ...COLUMNS.filter((c) => !columnLayout.order.includes(c.key))]
+      : COLUMNS;
+    return [
+      ...ordered.map((c) => ({ key: c.key as GridKey, label: c.label, defaultWidth: DEFAULT_WIDTHS[c.key], minWidth: MIN_WIDTHS[c.key] })),
       ...udf.columnDefs,
-    ],
-    [udf.columnDefs],
+    ];
+  }, [udf.columnDefs, columnLayout]);
+  const layoutHidden = useMemo<GridKey[]>(
+    () => (columnLayout ? COLUMNS.filter((c) => !columnLayout.order.includes(c.key) && !FIXED_COLS.includes(c.key)).map((c) => c.key) : LEGACY_HIDDEN_COLS),
+    [columnLayout],
   );
   const gridColumns = useGridColumns<GridKey>({
-    storageKey: "irLineGrid",
+    storageKey: columnLayout?.storageKey ?? "irLineGrid",
     columns: gridColumnDefs,
     fixedColumns: FIXED_COLS,
-    defaultHidden: LEGACY_HIDDEN_COLS,
+    defaultHidden: layoutHidden,
     hideNewDefaultHiddenColumns: true,
   });
   const displayColumnDefs = useMemo(
@@ -1410,6 +1427,10 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
   }, [rows]);
   const stockRow = cursor ? rows.find((r) => r.clientId === cursor.clientId) : undefined;
   const showStock = !!stockRow && stockRow.inventoryId != null;
+  // Receipt Invoice screens only (optional prop): totals for their own bottom totals area.
+  useEffect(() => {
+    if (onTotalsChange) onTotalsChange(receiptTotals(rows.filter((r) => !isBlankLine(r))), showStock ? { stockOnHand: stockRow!.stockOnHand, unit: stockRow!.unit } : null);
+  }, [rows, stockRow, showStock]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <Skeleton className="h-48 w-full rounded-lg" />;
 
@@ -1952,7 +1973,7 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
           on Hand / Last Purchase Price. Same markup/placement as Purchase Order's own grid
           footer (purchase-order-line-grid.tsx) so this reads as the same feature, not a
           lookalike rebuilt from scratch. */}
-      <div className={cn(HEADER_H, "flex items-center justify-end gap-5 px-3 text-[13px]")}>
+      <div className={cn(HEADER_H, "flex items-center justify-end gap-5 px-3 text-[13px]", hideFooter && "hidden")}>
         <span className="text-muted-foreground">Total Records <span className="ml-1.5 font-semibold text-foreground tabular-nums">{totalRecords}</span></span>
         <span className="text-muted-foreground">Total Quantity <span className="ml-1.5 font-semibold text-foreground tabular-nums">{totalQuantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span></span>
         <span className="text-muted-foreground">Total Amount <span className="ml-1.5 font-semibold text-foreground tabular-nums">{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></span>

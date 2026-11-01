@@ -62,6 +62,13 @@ export class InventoryReceiptController {
     return this.svc.approve(id, userId, dto?.remarks, undefined, companyId);
   }
 
+  // Approved -> Unapproved (unlocks editing) — same approval:approve permission as Approve.
+  @Permissions({ module: 'approval', action: 'approve' })
+  @Post(':id/unapprove')
+  unapprove(@Param('id', ParseIntPipe) id: number, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {
+    return this.svc.unapprove(id, userId, undefined, companyId);
+  }
+
   @Permissions({ module: 'approval', action: 'reject' })
   @Post(':id/reject')
   reject(@Param('id', ParseIntPipe) id: number, @Body() dto: { remarks: string }, @CurrentUser('id') userId: string, @CurrentUser('companyId') companyId: string) {

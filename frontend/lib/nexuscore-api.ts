@@ -932,6 +932,7 @@ export const legacyErpApi = {
     getApprovalStatus: (id: number) => api.get(`/legacy-erp/inventory-receipts/${id}/approval-status`),
     submitForApproval: (id: number) => api.post(`/legacy-erp/inventory-receipts/${id}/submit-for-approval`, {}),
     approve: (id: number, remarks?: string) => api.post(`/legacy-erp/inventory-receipts/${id}/approve`, { remarks }),
+    unapprove: (id: number) => api.post(`/legacy-erp/inventory-receipts/${id}/unapprove`, {}),
     reject: (id: number, remarks: string) => api.post(`/legacy-erp/inventory-receipts/${id}/reject`, { remarks }),
     // Universal Action Menu -> Return/Purchase Receipt submenu — walks back to the originating
     // Purchase Order (if any) and returns its whole receipt family minus this record itself.
@@ -948,6 +949,46 @@ export const legacyErpApi = {
     createItemVariant: (id: number, itemId: number, d: any) => api.post(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants`, d),
     updateItemVariant: (id: number, itemId: number, variantLineId: number, d: any) => api.put(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants/${variantLineId}`, d),
     removeItemVariant: (id: number, itemId: number, variantLineId: number) => api.delete(`/legacy-erp/inventory-receipts/${id}/items/${itemId}/variants/${variantLineId}`),
+  },
+  // Invoices — the legacy IM_Invoice header, one invoice type per receipt type (invoice.controller.ts);
+  // its lines are the linked Inventory Receipt's (edited through inventoryReceipts / receipts(type)).
+  invoices: (receiptType: number) => {
+    const base = `/legacy-erp/invoices/${receiptType}`;
+    return {
+      list: (search?: string, paging?: PageRequest) => api.get(withPaging(`${base}${search ? `?search=${encodeURIComponent(search)}` : ''}`, paging)),
+      get: (id: number) => api.get(`${base}/${id}`),
+      previewNextCode: () => api.get(`${base}/next-code`),
+      receiptCandidates: (search?: string, invoiceId?: number | null, paging?: PageRequest, currentAccountId?: number | null) => {
+        const qs = new URLSearchParams();
+        if (search) qs.set('search', search);
+        if (invoiceId) qs.set('invoiceId', String(invoiceId));
+        if (currentAccountId) qs.set('currentAccountId', String(currentAccountId));
+        const q = qs.toString();
+        return api.get(withPaging(`${base}/receipt-candidates${q ? `?${q}` : ''}`, paging));
+      },
+      /** Create New's Source Receipt picker: the receipt type(s) this invoice type invoices. */
+      sourceReceiptTypes: () => api.get(`${base}/source-receipt-types`),
+      /** Saved receipts of `sourceType` with lines; already-invoiced ones carry invoiceId / invoiceNo. */
+      sourceReceipts: (sourceType: number, search?: string, paging?: PageRequest, currentAccountId?: number | null) => {
+        const qs = new URLSearchParams({ sourceType: String(sourceType) });
+        if (search) qs.set('search', search);
+        if (currentAccountId) qs.set('currentAccountId', String(currentAccountId));
+        return api.get(withPaging(`${base}/source-receipts?${qs}`, paging));
+      },
+      /** A picked receipt's saved header, shaped as the invoice form's fields. */
+      sourceReceipt: (receiptId: number) => api.get(`${base}/source-receipts/${receiptId}`),
+      create: (d: any) => api.post(base, d),
+      /** Create Invoice from a receipt: its existing invoice, or a new one with the receipt's header. */
+      createFromReceipt: (receiptId: number) => api.post(`${base}/from-receipt/${receiptId}`, {}),
+      update: (id: number, d: any) => api.put(`${base}/${id}`, d),
+      delete: (id: number) => api.delete(`${base}/${id}`),
+      approve: (id: number) => api.post(`${base}/${id}/approve`, {}),
+      unapprove: (id: number) => api.post(`${base}/${id}/unapprove`, {}),
+      listAttachments: (id: number, kind: "document" | "picture") => api.get(`${base}/${id}/attachments?kind=${kind}`),
+      uploadAttachment: (id: number, d: { kind: "document" | "picture"; fileName: string; dataUrl: string }) => api.post(`${base}/${id}/attachments`, d),
+      removeAttachment: (id: number, attId: number) => api.delete(`${base}/${id}/attachments/${attId}`),
+      attachmentContentUrl: (id: number, attId: number) => `${process.env.NEXT_PUBLIC_NEXUSCORE_API_URL || 'http://localhost:4000/api/v1'}${base}/${id}/attachments/${attId}/content`,
+    };
   },
   // Financial Receipt (FI_Receipt) — a genuinely separate legacy entity from IM_Receipt above
   // (see fi-receipt.service.ts's own header comment). Same shape as `inventoryReceipts`.
@@ -1015,6 +1056,7 @@ export const legacyErpApi = {
       getApprovalStatus: (id: number) => api.get(`${base}/${id}/approval-status`),
       submitForApproval: (id: number) => api.post(`${base}/${id}/submit-for-approval`, {}),
       approve: (id: number, remarks?: string) => api.post(`${base}/${id}/approve`, { remarks }),
+      unapprove: (id: number) => api.post(`${base}/${id}/unapprove`, {}),
       reject: (id: number, remarks: string) => api.post(`${base}/${id}/reject`, { remarks }),
       // Universal Action Menu -> Return/Purchase Receipt submenu — same shared traceability
       // walk as inventoryReceipts' own, now available for Purchase Return, Received Connection
