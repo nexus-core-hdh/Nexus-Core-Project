@@ -131,6 +131,11 @@ export const ITEM_COLUMNS = [
   // table. 3 real Purchase Order lines already use ColorCardId, so Pending Orders import needs
   // somewhere real to carry that value onto the receipt line.
   'ColorCardId',
+  // The line's GL account — a real, pre-existing column with a real FK (FK_IM_ReceiptItem_GL_Account
+  // -> GL_Account.RecId), previously never selected or written. Users pick it per line on the
+  // receipt grid (approved per-line manual assignment). Its camel key is "gLAccountId"; the API
+  // accepts "glAccountId" (see glAccountPatch) and assertValidGlAccount checks every new pick.
+  'GLAccountId',
 ] as const;
 
 // Variant breakdown — exact structural mirror of purchase-order.service.ts's own
@@ -187,7 +192,29 @@ export class InventoryReceiptService {
       unitId: byKey('unit'),
       forexId: byKey('forex'),
       colorCardId: async (id) => this.prisma.colorCard.findUnique({ where: { id: String(id) }, select: { code: true, name: true } }),
+      gLAccountId: byKey('gl-account'),
     };
+  }
+
+  // GL account on a line: the API field is "glAccountId" (ITEM_COLUMNS' camel key is
+  // "gLAccountId"). Returns the ITEM_COLUMNS-keyed patch, or {} when the request doesn't touch it.
+  // "" / null clears the account.
+  private glAccountPatch(dto: Record<string, any>): Record<string, any> {
+    if (!Object.prototype.hasOwnProperty.call(dto, 'glAccountId')) return {};
+    const v = dto.glAccountId;
+    return { gLAccountId: v === '' || v === undefined ? null : v };
+  }
+
+  // A newly picked GL account must be an active, non-deleted GL_Account of the caller's company
+  // (getById('gl-account') is active-only and company-scoped). Unchanged saved values are not
+  // re-checked, so a line whose account was deactivated later can still be edited.
+  private async assertValidGlAccount(value: unknown, current?: unknown) {
+    if (value === null || value === undefined) return;
+    if (current !== undefined && current !== null && Number(current) === Number(value)) return;
+    const id = Number(value);
+    if (!Number.isInteger(id) || !(await this.masterLookupSvc.getById('gl-account', id))) {
+      throw new BadRequestException('GL Account is not an active account in the Chart of Accounts');
+    }
   }
 
   // Full document snapshot — root (IM_Receipt) + detail lines (IM_ReceiptItem) + variant
@@ -995,7 +1022,31 @@ export class InventoryReceiptService {
         r.variants = variantsByItem.get(Number(r.id)) ?? [];
       }
     }
-    return clean;
+    return this.attachGlAccounts(clean);
+  }
+
+  // GL account code/name for each line: IM_ReceiptItem.GLAccountId -> GL_Account.RecId
+  // (FK_IM_ReceiptItem_GL_Account), resolved in one batched follow-up query like the lookups in
+  // listItems above (adds glAccountId/glAccountCode/glAccountName). The account must belong to the
+  // caller's company; inactive/soft-deleted accounts still resolve so historical lines stay readable.
+  private async attachGlAccounts<T extends Record<string, any>>(rows: T[]): Promise<T[]> {
+    const ids = rows.map((r) => r.id).filter((v) => v != null);
+    if (!ids.length) return rows;
+    const ctx = await currentLegacyCompany(this.prisma);
+    const glRows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT ri."RecId"::int AS id, ri."GLAccountId"::int AS "glAccountId", g."AccountCode" AS "glAccountCode", g."AccountName" AS "glAccountName"
+      FROM "IM_ReceiptItem" ri
+      LEFT JOIN "GL_Account" g ON g."RecId" = ri."GLAccountId" AND ${companyIs('g', ctx)}
+      WHERE ri."RecId" IN (${Prisma.join(ids)})
+    `);
+    const byId = new Map(glRows.map((g: any) => [Number(g.id), g]));
+    for (const r of rows as any[]) {
+      const g = byId.get(Number(r.id));
+      r.glAccountId = g?.glAccountId ?? null;
+      r.glAccountCode = g?.glAccountCode ?? null;
+      r.glAccountName = g?.glAccountName ?? null;
+    }
+    return rows;
   }
 
   // Server-side re-check of a Pending-Orders-imported line's remaining quantity, from real
@@ -1202,8 +1253,9 @@ export class InventoryReceiptService {
     if (!dto.inventoryId) throw new BadRequestException('An inventory item is required');
     await this.assertLineRefs(dto);
     const toDb = await this.itemToDb();
-    const effective: Record<string, any> = { ...dto, receiptType };
+    const effective: Record<string, any> = { ...dto, receiptType, ...this.glAccountPatch(dto) };
     if (effective.colorCardId != null) await this.assertValidColorCard(String(effective.colorCardId));
+    await this.assertValidGlAccount(effective.gLAccountId);
     effective.unitId = await this.resolveUnitId(effective.inventoryId, effective.unitId);
     // Write-time enforcement (spec Section 3/10) — reject a unit with no configured conversion for
     // this item, rather than silently accepting an arbitrary combination.
@@ -1232,7 +1284,8 @@ export class InventoryReceiptService {
           after: { [`${ctx.label} Line (IM_ReceiptItem)`]: enriched },
         });
       }
-      return created;
+      // The grid replaces a line's display data with this response, so it carries the GL fields too.
+      return (await this.attachGlAccounts([created]))[0];
     };
 
     if (effective['orderReceiptItemId']) {
@@ -1297,12 +1350,17 @@ export class InventoryReceiptService {
           before: { [`${ctx.label} Line (IM_ReceiptItem)`]: enrichedBefore }, after: { [`${ctx.label} Line (IM_ReceiptItem)`]: enrichedAfter },
         });
       }
-      return updated;
+      // The grid replaces a line's display data with this response, so it carries the GL fields too.
+      return (await this.attachGlAccounts([updated]))[0];
     };
     const toDb = await this.itemToDb();
     const owner = inventoryReceiptId !== undefined ? Prisma.sql`AND "InventoryReceiptId" = ${inventoryReceiptId}` : Prisma.sql``;
-    const effective = { ...dto };
+    const effective = { ...dto, ...this.glAccountPatch(dto) };
     if (effective.colorCardId != null) await this.assertValidColorCard(String(effective.colorCardId));
+    if (effective.gLAccountId != null) {
+      const [cur] = await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT "GLAccountId"::int g FROM "IM_ReceiptItem" WHERE "RecId" = ${itemId}`);
+      await this.assertValidGlAccount(effective.gLAccountId, cur?.g);
+    }
     // Only touch Unit when this update actually changes Item and/or Unit — an edit to an
     // unrelated field (e.g. Explanation) must not force a normalization query. When Item
     // changes without an explicit Unit in the same payload, the current InventoryId's line is

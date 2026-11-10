@@ -27,6 +27,9 @@ interface CardLookupDialogProps<T extends CardLookupRow> {
    *  code-or-name), reused as-is here. */
   fetchOptions: (search?: string) => Promise<T[]>;
   onSelect: (row: T) => void;
+  /** Optional extra classes for the dialog panel (e.g. a per-screen width/height). Omitted: the
+   *  default dialog size, unchanged for every existing caller. */
+  contentClassName?: string;
 }
 
 // Generic "search a Card master and pick one" grid dialog — a proper multi-column, multi-row
@@ -37,7 +40,7 @@ interface CardLookupDialogProps<T extends CardLookupRow> {
 // via the same `.list(search)` call that screen's own search box already calls, and returns a
 // selection. One generic component for every card type — Fabric and Trim both mount this with
 // their own fetchOptions, never a second copy of the dialog.
-export function CardLookupDialog<T extends CardLookupRow>({ open, onOpenChange, title, fetchOptions, onSelect }: CardLookupDialogProps<T>) {
+export function CardLookupDialog<T extends CardLookupRow>({ open, onOpenChange, title, fetchOptions, onSelect, contentClassName }: CardLookupDialogProps<T>) {
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(false);
@@ -65,7 +68,7 @@ export function CardLookupDialog<T extends CardLookupRow>({ open, onOpenChange, 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col gap-0 p-0">
+      <DialogContent className={cn("flex max-h-[85vh] max-w-3xl flex-col gap-0 p-0", contentClassName)}>
         <DialogHeader className="shrink-0 border-b border-border px-5 py-4">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>Search by Code or Name, then select a record.</DialogDescription>

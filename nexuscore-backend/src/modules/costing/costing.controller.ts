@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { PermissionModule } from '../../common/decorators/permissions.decorator';
+import { PermissionModule, Permissions } from '../../common/decorators/permissions.decorator';
 import { ApiTags } from '@nestjs/swagger';
 import { CostingService } from './costing.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -22,6 +22,11 @@ export class CostingController {
   constructor(private readonly svc: CostingService) {}
 
   @Get('costing-sheets') list(@CurrentUser() u: any, @Query() q: any) { return this.svc.list(requireBranch(u), q); }
+  // Whether the current user may Lock / Unlock (screens use it to enable those actions). Declared
+  // before costing-sheets/:id so "lock-permissions" is never read as an id.
+  @Get('costing-sheets/lock-permissions') lockPermissions(@CurrentUser() u: any) { return this.svc.lockPermissions(u.id); }
+  // Picker data (Work Order → Detail → Initial Cost): ?search= / ?id= / ?take= — see CostingService.lookup.
+  @Get('costing-sheets/lookup') lookup(@CurrentUser() u: any, @Query() q: any) { return this.svc.lookup(u, q); }
   @Post('costing-sheets') create(@Body() dto: any, @CurrentUser() u: any) { return this.svc.create(dto, requireBranch(u), u.id, u.companyId); }
   @Get('costing-sheets/:id') get(@Param('id') id: string) { return this.svc.get(id); }
   @Put('costing-sheets/:id') update(@Param('id') id: string, @Body() dto: any) { return this.svc.update(id, dto); }
@@ -30,6 +35,17 @@ export class CostingController {
   @Put('costing-sheets/:id/raw-material-lines') upsertRawMaterialLines(@Param('id') id: string, @Body() lines: any[]) { return this.svc.upsertRawMaterialLines(id, lines); }
   @Put('costing-sheets/:id/labor-lines') upsertLaborLines(@Param('id') id: string, @Body() lines: any[]) { return this.svc.upsertLaborLines(id, lines); }
   @Put('costing-sheets/:id/other-lines') upsertOtherLines(@Param('id') id: string, @Body() lines: any[]) { return this.svc.upsertOtherLines(id, lines); }
+
+  // Lock / Unlock — explicit permissions (synced into the permission catalog at startup and granted
+  // to the Admin role; other roles get them from the Role/Permission screen). While locked, every
+  // write route above is refused by the service (409), for every user.
+  @Post('costing-sheets/:id/lock')
+  @Permissions({ module: 'costing', action: 'lock' })
+  lock(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.lock(id, u, requireBranch(u)); }
+
+  @Post('costing-sheets/:id/unlock')
+  @Permissions({ module: 'costing', action: 'unlock' })
+  unlock(@Param('id') id: string, @CurrentUser() u: any) { return this.svc.unlock(id, u, requireBranch(u)); }
 
   @Get('costing-sheets/:id/profit-breakdown') getProfitBreakdown(@Param('id') id: string) { return this.svc.getProfitBreakdown(id); }
 

@@ -67,6 +67,10 @@ export const HEADER_COLUMNS = [
   // read/write/coerce pipeline every other HEADER_COLUMNS entry already uses below, so create()/
   // update()/get()/list() all support it with zero new per-field code.
   'StyleCardId',
+  // Detail -> "Initial Cost": the linked PLM Costing Sheet (migration
+  // 20261103010000_work_order_costing_sheet_link — same text-column + FK shape as StyleCardId).
+  // Picked from CostingService.lookup; checked against the caller's company in assertHeaderRefs.
+  'CostingSheetId',
 ] as const;
 
 // Style Info grid — curated subset of MA_WorkOrderItem's 100 real columns. InventoryId is the
@@ -213,6 +217,10 @@ export class WorkOrderService {
         const sc = await this.prisma.styleCard.findUnique({ where: { id: String(id) }, select: { styleNumber: true, title: true } }).catch(() => null);
         return sc ? { code: sc.styleNumber, name: sc.title } : null;
       },
+      costingSheetId: async (id) => {
+        const cs = await this.prisma.costingSheet.findUnique({ where: { id: String(id) }, select: { costingNo: true, styleCode: true } }).catch(() => null);
+        return cs ? { code: cs.costingNo, name: cs.styleCode || cs.costingNo } : null;
+      },
     };
   }
 
@@ -259,6 +267,12 @@ export class WorkOrderService {
       const ok = await this.prisma.$queryRaw<any[]>`
         SELECT 1 FROM "StyleCard" s JOIN "Branch" b ON b.id = s."branchId" WHERE s.id = ${String(dto.styleCardId)} AND b."companyId" = ${ctx.companyId}`;
       if (!ok.length) throw new BadRequestException("Style Card is not one of your company's Style Cards");
+    }
+    // Initial Cost (Costing Sheet): any of the caller's company's sheets — never another company's.
+    if (dto.costingSheetId != null && dto.costingSheetId !== '') {
+      const ok = await this.prisma.$queryRaw<any[]>`
+        SELECT 1 FROM "CostingSheet" c JOIN "Branch" b ON b.id = c."branchId" WHERE c.id = ${String(dto.costingSheetId)} AND b."companyId" = ${ctx.companyId}`;
+      if (!ok.length) throw new BadRequestException("Initial Cost must be one of your company's Costing Sheets");
     }
   }
 

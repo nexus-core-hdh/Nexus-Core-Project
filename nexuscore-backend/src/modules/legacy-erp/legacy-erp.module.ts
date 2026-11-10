@@ -5,6 +5,8 @@ import { WarehouseController } from './warehouse.controller';
 import { WarehouseService } from './warehouse.service';
 import { AccountController } from './account.controller';
 import { AccountService } from './account.service';
+import { GlAccountController } from './gl-account.controller';
+import { GlAccountService } from './gl-account.service';
 import { AccountSatellitesService } from './account-satellites.service';
 import { AccountAttachmentsService } from './account-attachments.service';
 import { TrimCardController } from './trim-card.controller';
@@ -110,6 +112,7 @@ import { AuditModule } from '../audit/audit.module';
   controllers: [
     WarehouseController,
     AccountController,
+    GlAccountController,
     TrimCardController,
     PackingListController,
     InvoiceController,
@@ -151,6 +154,7 @@ import { AuditModule } from '../audit/audit.module';
   providers: [
     WarehouseService,
     AccountService,
+    GlAccountService,
     AccountSatellitesService,
     AccountAttachmentsService,
     TrimCardService,

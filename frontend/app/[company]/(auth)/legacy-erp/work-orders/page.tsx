@@ -11,7 +11,7 @@ import { openWorkOrderOrderForm } from "@/components/legacy-erp/work-order-order
 import { materialRequirementActions } from "@/components/legacy-erp/yarn-requirement-report";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { legacyErpApi, plmApi } from "@/lib/nexuscore-api";
+import { costingSheetLabel, legacyErpApi, plmApi } from "@/lib/nexuscore-api";
 import { currentAccountLabel } from "@/lib/legacy-erp/saved-line-refs";
 import { MasterAutocompleteField } from "@/components/legacy-erp/master-autocomplete-field";
 import { FormTextField as FieldText, FormSwitchField as FieldCheck } from "@/components/forms/form-field";
@@ -76,6 +76,8 @@ const emptyHeader = {
   status: 0, seasonCode: "",
   productionColorCumulativeType: 0, rowColor: 0, productionCertificates: "",
   certificationId: "", certificationLabel: "", initialCostId: "", initialCostLabel: "",
+  // Initial Cost = the linked PLM Costing Sheet (MA_WorkOrder."CostingSheetId").
+  costingSheetId: "", costingSheetLabel: "",
   projectId: "", projectLabel: "", brokerId: "", brokerLabel: "",
   comissionPercent: 0, generalExpensePercent: 0,
   discountAmount: 0, discountType: 0, isItemDiscount: false, typeOfShipment: 0,
@@ -545,8 +547,12 @@ export default function WorkOrderPage() {
         resolveLabel("employee", f.employeeId), resolveLabel("certification", f.certificationId),
         resolveLabel("initial-cost", f.initialCostId), resolveLabel("project", f.projectId),
         resolveAccount(f.brokerId), resolveLabel("forex", f.cmtForexId),
-      ]).then(([wh, fac, ctry, emp, cert, ic, proj, brk, fx]: any[]) => {
+        f.costingSheetId ? plmApi.costingSheets.lookup({ id: String(f.costingSheetId) }).then((rows) => rows[0] ?? null).catch(() => null) : Promise.resolve(null),
+      ]).then(([wh, fac, ctry, emp, cert, ic, proj, brk, fx, cs]: any[]) => {
         const labels = {
+          // Never the raw id: a link that can't be resolved (not visible to this user's company, or
+          // the lookup failed) says so; the stored id is kept as-is until the user changes it.
+          costingSheetLabel: cs ? costingSheetLabel(cs) : f.costingSheetId ? "Linked costing sheet unavailable" : "",
           warehouseLabel: wh?.name || "", factoryLabel: currentAccountLabel(fac),
           countryLabel: ctry?.name || "", employeeLabel: emp?.name || "", certificationLabel: cert?.name || "",
           initialCostLabel: ic?.name || "", projectLabel: proj?.name || "",
@@ -874,6 +880,8 @@ export default function WorkOrderPage() {
     productionCertificates: header.productionCertificates || undefined,
     certificationId: header.certificationId ? Number(header.certificationId) : undefined,
     initialCostId: header.initialCostId ? Number(header.initialCostId) : undefined,
+    // null clears the link (the field's clear); the server checks it is the company's own sheet.
+    costingSheetId: header.costingSheetId || null,
     projectId: header.projectId ? Number(header.projectId) : undefined,
     brokerId: header.brokerId ? Number(header.brokerId) : undefined,
     comissionPercent: round(header.comissionPercent, "recipe-percent"), generalExpensePercent: round(header.generalExpensePercent, "recipe-percent"),
@@ -1494,9 +1502,25 @@ export default function WorkOrderPage() {
                     onClear={() => setHeader((p) => ({ ...p, certificationId: "", certificationLabel: "" }))} />
                 </DField>
                 <DField label="Initial Cost">
-                  <MasterAutocompleteField label="Initial Cost" masterKey="initial-cost" compact displayValue={header.initialCostLabel}
-                    onSelect={(o) => setHeader((p) => ({ ...p, initialCostId: String(o.id), initialCostLabel: o.name }))}
-                    onClear={() => setHeader((p) => ({ ...p, initialCostId: "", initialCostLabel: "" }))} />
+                  {/* Any Costing Sheet of the user's branch (newest first; search by Costing No, Style,
+                      Style Name, Buyer, Brand) — the search icon / F2 opens the full Costing Sheets
+                      list in lookup mode. Saved as MA_WorkOrder."CostingSheetId". */}
+                  <MasterAutocompleteField label="Initial Cost" masterKey="costing-sheet" compact displayValue={header.costingSheetLabel}
+                    lookupPath="/plm/costing-sheets"
+                    fetchOptions={async (term) => {
+                      const rows = await plmApi.costingSheets.lookup({ search: term, take: 50 });
+                      return rows.map((c) => ({ id: c.id, code: c.costingNo, name: costingSheetLabel(c), cs: c }));
+                    }}
+                    renderOption={(o: any) => (
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium">{o.cs?.costingNo ?? o.code}{o.cs?.isLocked && <span className="ml-1.5 text-[10px] font-normal text-amber-600">Locked</span>}</span>
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {[o.cs?.styleCode, o.cs?.styleName, o.cs?.accountName, o.cs?.costingDate ? new Date(o.cs.costingDate).toLocaleDateString() : null].filter(Boolean).join(" · ") || "—"}
+                        </span>
+                      </span>
+                    )}
+                    onSelect={(o) => setHeader((p) => ({ ...p, costingSheetId: String(o.id), costingSheetLabel: o.name }))}
+                    onClear={() => setHeader((p) => ({ ...p, costingSheetId: "", costingSheetLabel: "" }))} />
                 </DField>
                 <DField label="Project No">
                   <MasterAutocompleteField label="Project No" masterKey="project" compact displayValue={header.projectLabel}

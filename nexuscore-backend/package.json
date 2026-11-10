@@ -36,6 +36,7 @@
     "test:receipt-approval": "ts-node -T test/packing-list/prepare-test-db.ts && node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/inventory-receipt-approval/*.test.ts\"",
     "test:invoices": "ts-node -T test/packing-list/prepare-test-db.ts && node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/invoices/*.test.ts\"",
     "test:company-isolation": "ts-node -T test/packing-list/prepare-test-db.ts && node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/company-isolation/*.test.ts\"",
+    "test:current-account-gl": "ts-node -T test/packing-list/prepare-test-db.ts && node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/current-account-gl/*.test.ts\"",
     "test:order-form": "node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/work-order-order-form/*.test.ts\"",
     "test:report-builder": "node --test --test-concurrency=1 -r ts-node/register/transpile-only \"test/report-builder/*.test.ts\"",
     "test:mail": "node --test -r ts-node/register/transpile-only \"test/mail/*.test.ts\"",

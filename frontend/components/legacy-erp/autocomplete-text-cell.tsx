@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EditableGridInput } from "@/components/ui/editable-grid-input";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { ChevronDown } from "lucide-react";
@@ -35,7 +35,7 @@ export interface AutocompleteOption {
 // — "verify-me" matches "v", "ify", "me", "fy", "ABC"/"abc"/"AbC" all match identically, since
 // both the query and the candidate text are lower-cased before the same String.includes() check.
 export function AutocompleteTextCell({
-  value, options, disabled, autoFocus, showDropdownIcon, startOpen = true, openOnFocus = false, popoverClassName, placeholder, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
+  value, options, disabled, autoFocus, showDropdownIcon, startOpen = true, openOnFocus = false, popoverClassName, maxResults = 20, placeholder, onChange, onCommit, onCancel, onSelectOption, onDoubleClick,
 }: {
   value: string;
   options: AutocompleteOption[];
@@ -60,6 +60,9 @@ export function AutocompleteTextCell({
   // Optional extra classes for the suggestion list (e.g. a min-width so long "Code - Name" options
   // stay readable in a narrow cell). Omitted: the list matches the cell's width, as before.
   popoverClassName?: string;
+  // How many matches the list shows at most (it scrolls internally). Default 20; a short,
+  // complete master (e.g. currencies) can raise it so every option is listed.
+  maxResults?: number;
   onChange: (v: string) => void;
   onCommit: (finalValue: string) => void;
   onCancel: () => void;
@@ -85,12 +88,18 @@ export function AutocompleteTextCell({
   // built on this component may bind either one as the primary searchable value (e.g. Name
   // search with a locked auto-filled Code), so both need to be searchable regardless of which
   // field's value is actually being typed into.
-  const filtered = (q ? options.filter((o) => `${o.code ?? ""} ${o.name ?? ""}`.toLowerCase().includes(q)) : options).slice(0, 20);
+  const filtered = (q ? options.filter((o) => `${o.code ?? ""} ${o.name ?? ""}`.toLowerCase().includes(q)) : options).slice(0, maxResults);
 
   // Re-anchor the highlighted row whenever the candidate set changes (new keystroke narrows or
   // widens it) — an index left pointing past the new, shorter list would highlight nothing, or
   // Enter/Tab would silently pick the wrong row.
   useEffect(() => { setHighlighted(0); }, [q, options.length]);
+
+  // The list scrolls internally (it's height-capped), so keep the keyboard-highlighted row in view.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [highlighted, open]);
 
   const selectSuggestion = (o: AutocompleteOption) => {
     const label = o.code || o.name || "";
@@ -153,6 +162,9 @@ export function AutocompleteTextCell({
       <PopoverContent
         align="start"
         sideOffset={1}
+        // Keep a small gap from the viewport edges; Radix flips the list above the field when it
+        // doesn't fit below, and shifts it horizontally to stay on-screen.
+        collisionPadding={8}
         onOpenAutoFocus={(e) => e.preventDefault()}
         // The bare `w-[--radix-popover-trigger-width]` form never actually applied under
         // Tailwind v4 — v4 treats a bracketed arbitrary value as a literal raw value, not an
@@ -160,9 +172,12 @@ export function AutocompleteTextCell({
         // which is why every suggestion popup used to silently ignore the trigger width and
         // just grow to fit its longest suggestion's own text width instead of matching the
         // cell it belongs to.
-        className={cn("w-[var(--radix-popover-trigger-width)] max-h-44 overflow-y-auto p-1", popoverClassName)}
+        //
+        // Never wider than the viewport space Radix reports, so a min-width from popoverClassName
+        // can't push the list off-screen on narrow windows.
+        className={cn("w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-content-available-width)] max-h-44 overflow-y-auto overscroll-contain p-1", popoverClassName)}
       >
-        <div role="listbox">
+        <div role="listbox" ref={listRef}>
           {filtered.map((o, i) => (
             <button
               key={o.id}

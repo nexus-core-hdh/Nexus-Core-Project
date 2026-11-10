@@ -28,6 +28,7 @@ import { InventoryCardsLookupDialog } from "@/components/legacy-erp/inventory-ca
 import { WorkOrdersLookupDialog } from "@/components/legacy-erp/work-orders-lookup";
 import { cn } from "@/lib/utils";
 import { AutocompleteTextCell } from "@/components/legacy-erp/autocomplete-text-cell";
+import { useMasterLookupField } from "@/hooks/use-master-lookup-field";
 import { RowContextMenu, type RowAction } from "@/components/legacy-erp/row-actions";
 import { GenerateSerialCardsDialog } from "@/components/legacy-erp/generate-serial-cards-dialog";
 import { receiptTotals, type ReceiptTotals } from "@/lib/legacy-erp/receipt-totals";
@@ -143,8 +144,11 @@ const COLUMNS: ColumnDef[] = [
   { key: "specialCode", label: "Special Code", align: "left", editable: true, kind: "text" },
   { key: "explanation", label: "Explanation", align: "left", editable: true, kind: "text" },
   ro("partyNo", "Party (Lot No)", "text", "partyNo"),
-  ro("accountCode", "Account Code", "text"),
-  ro("accountName", "Account Name", "text"),
+  // The line's GL account: IM_ReceiptItem.GLAccountId -> GL_Account. Account Code is picked per
+  // line from the Chart of Accounts (typeahead "Code — Name", or the search icon); Account Name
+  // follows the pick. Both render from LineRow.glAccount* (special-cased below).
+  { key: "accountCode", label: "Account Code", align: "left", editable: true, kind: "text" },
+  ro("accountName", "Account Name", "text", "glAccountName"),
   ro("hsCode", "HS Code", "text"),
   ro("hsDescription", "HS Description", "text"),
   ro("c", "C", "text"),
@@ -337,6 +341,11 @@ const CELL_BORDER = "border-r border-b border-border";
 const FIRST_COL_BORDER = "border-l border-border";
 const EDITOR_CONTROL = "h-full! w-full min-w-0 rounded-none border-0 bg-background px-3.5 text-[13px] font-medium shadow-none focus-visible:ring-0";
 const EDITOR_WRAP = "flex h-12 items-stretch";
+
+// GL account picker helpers (Account Code cell).
+const CHART_OF_ACCOUNTS_PATH = "/finance-erp/general-ledger/chart-of-accounts";
+type GlOption = { id: number; code: string; name: string };
+const glLabel = (g: { code?: string | null; name?: string | null }) => (g.code ? `${g.code} — ${g.name ?? ""}` : g.name ?? "");
 const DEL_W = 44;
 
 // Same "no lookup/enum table for item type" situation as Purchase Order's own grid — Inventory
@@ -439,6 +448,12 @@ interface LineRow {
   // existing orderReceiptNo follow-up query) once a line is actually saved and reloaded.
   workOrderReceiptItemId: number | null;
   workOrderNo: string;
+  // GL account — IM_ReceiptItem.GLAccountId (FK -> GL_Account.RecId), picked per line in the
+  // Account Code cell (Chart of Accounts). glAccountId is what is saved; code/name are display
+  // only, resolved by the server (inventory-receipt.service.ts attachGlAccounts) or the pick.
+  glAccountId: number | null;
+  glAccountCode: string;
+  glAccountName: string;
   // Variant breakdown rows copied from the source PO line at import time, not yet created on
   // the server (createItemVariant needs this line's own real __rowId, which only exists after
   // this line itself is persisted — see persistRow/commitDrafts). Cleared once created; never
@@ -468,6 +483,7 @@ const emptyLine = (): LineRow => ({
   purchaseReceiptItemId: null, sourceReceiptNo: "", sourceReceiptType: null,
   colorCardId: null, color: "", pendingVariants: [],
   workOrderReceiptItemId: null, workOrderNo: "",
+  glAccountId: null, glAccountCode: "", glAccountName: "",
   variantLines: [], variant1Name: "",
   extra: {},
 });
@@ -785,6 +801,27 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     plmApi.colors.list().then((r: any) => setColorOptions(Array.isArray(r) ? r : [])).catch(() => {});
   }, []);
 
+  // GL account picker (Account Code cell): the company's active Chart of Accounts, loaded once.
+  // Options are labelled "Code — Name"; the pick stores the account's RecId on the line.
+  const [glOptions, setGlOptions] = useState<GlOption[]>([]);
+  useEffect(() => {
+    if (readOnly) return;
+    legacyErpApi.glAccounts.list()
+      .then((r: any) => setGlOptions((Array.isArray(r) ? r : []).filter((a: any) => a.inUse).map((a: any) => ({ id: a.id, code: a.accountCode ?? "", name: a.accountName ?? "" }))))
+      .catch(() => {});
+  }, [readOnly]);
+  const glPickerOptions = useMemo(() => glOptions.map((g) => ({ id: String(g.id), name: glLabel(g) })), [glOptions]);
+  const applyGlAccount = (clientId: string, acc: GlOption | null) =>
+    updateRow(clientId, acc ? { glAccountId: Number(acc.id), glAccountCode: acc.code, glAccountName: acc.name } : { glAccountId: null, glAccountCode: "", glAccountName: "" }, true);
+  // Search icon: opens Finance ERP > Chart of Accounts in selection mode as a workspace tab. The
+  // hand-off lives here (not in the cell editor) so the pick still lands after that tab closes.
+  const glLookupTargetRef = useRef<string | null>(null);
+  const { openFullScreen: openGlLookup } = useMasterLookupField("gl-account", (sel) => {
+    const clientId = glLookupTargetRef.current;
+    glLookupTargetRef.current = null;
+    if (clientId) applyGlAccount(clientId, { id: Number(sel.id), code: sel.code ?? "", name: sel.name ?? "" });
+  }, CHART_OF_ACCOUNTS_PATH);
+
   // Resolves an inventory id back to its Inventory Card List record (sourceType etc.) — same
   // purpose as purchase-order-line-grid.tsx's own inventoryById.
   const inventoryById = useMemo(() => new Map(inventoryOptions.map((o) => [String(o.id), o])), [inventoryOptions]);
@@ -921,6 +958,9 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     pendingVariants: [],
     workOrderReceiptItemId: r.workOrderReceiptItemId ?? null,
     workOrderNo: r.workOrderNo ?? "",
+    glAccountId: r.glAccountId ?? null,
+    glAccountCode: r.glAccountCode ?? "",
+    glAccountName: r.glAccountName ?? "",
     // r.variants — already resolved by listItems()'s existing "Variant breakdown read-back"
     // query (inventory-receipt.service.ts), so this needs no extra fetch to arrive; only the
     // human-readable Variant1 name still needs hydrateVariants() below.
@@ -1011,6 +1051,8 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
     // loaded line always carries its real stored value (fromApiRow), so null only ever writes
     // NULL where there is no link or the user removed it.
     workOrderReceiptItemId: row.workOrderReceiptItemId,
+    // GL account (IM_ReceiptItem.GLAccountId) — null clears it, same convention as Work Order above.
+    glAccountId: row.glAccountId,
   }), [round]);
 
   // Variant breakdown — creates each of a just-persisted line's still-pending
@@ -1702,6 +1744,78 @@ export const InventoryReceiptLineGrid = forwardRef<InventoryReceiptLineGridHandl
                               />
                             </div>
                           ) : <div {...staticCellProps(r, "color", r.color || "—", "left", !r.color)} />}
+                        </TableCell>
+                      );
+                    }
+
+                    // ACCOUNT CODE — the line's GL account (IM_ReceiptItem.GLAccountId). Click /
+                    // Enter / F2 types to search the active Chart of Accounts ("Code — Name", by
+                    // code or name); the search icon opens the Chart of Accounts screen in selection
+                    // mode; × clears it. Only a listed account can be committed — unmatched text is
+                    // reverted. The server re-checks every new pick (active, same company).
+                    if (col.key === "accountCode") {
+                      return (
+                        <TableCell key={col.key} className={cellCls(r.clientId, "accountCode", firstBorder)}>
+                          {isActive(r.clientId, "accountCode") && editing ? (
+                            <div className={EDITOR_WRAP}>
+                              <AutocompleteTextCell
+                                autoFocus
+                                value={r.glAccountCode}
+                                options={glPickerOptions}
+                                disabled={readOnly}
+                                placeholder="Code or name"
+                                popoverClassName="min-w-72"
+                                maxResults={50}
+                                onChange={(v) => updateRow(r.clientId, { glAccountCode: v })}
+                                onCancel={() => cancelEdit(r.clientId)}
+                                onSelectOption={(o) => {
+                                  setEditing(false);
+                                  preEditSnapshotRef.current = null;
+                                  const acc = glOptions.find((g) => String(g.id) === String(o.id));
+                                  if (acc) applyGlAccount(r.clientId, acc);
+                                }}
+                                onCommit={(finalValue) => {
+                                  const text = finalValue.trim().toLowerCase();
+                                  if (!text) { setEditing(false); preEditSnapshotRef.current = null; applyGlAccount(r.clientId, null); return; }
+                                  const acc = glOptions.find((g) => g.code.toLowerCase() === text || glLabel(g).toLowerCase() === text);
+                                  if (acc) { setEditing(false); preEditSnapshotRef.current = null; applyGlAccount(r.clientId, acc); return; }
+                                  const unchanged = r.glAccountId != null && text === (preEditSnapshotRef.current?.glAccountCode ?? "").toLowerCase();
+                                  cancelEdit(r.clientId);
+                                  if (!unchanged) toast.error(`No active GL account matches "${finalValue.trim()}"`);
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              {...staticCellProps(r, "accountCode", r.glAccountCode || "", "left", !r.glAccountCode)}
+                              title={r.glAccountId != null ? glLabel({ code: r.glAccountCode, name: r.glAccountName }) : (readOnly ? undefined : "Select GL Account")}>
+                              {!readOnly && (
+                                <button
+                                  type="button" aria-label="Open Chart of Accounts" title="Open Chart of Accounts (selection)"
+                                  className="mr-1.5 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  onClick={(e) => { e.stopPropagation(); glLookupTargetRef.current = r.clientId; openGlLookup(); }}>
+                                  <Search className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              <span data-col="accountCode" className="min-w-0 flex-1 truncate">{r.glAccountCode || (readOnly ? "—" : "")}</span>
+                              {!readOnly && r.glAccountId != null && (
+                                <button
+                                  type="button" aria-label="Clear GL Account" title="Clear GL Account"
+                                  className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  onClick={(e) => { e.stopPropagation(); applyGlAccount(r.clientId, null); }}>
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                      );
+                    }
+                    // ACCOUNT NAME — read-only, follows the Account Code pick.
+                    if (col.key === "accountName") {
+                      return (
+                        <TableCell key={col.key} className={cellCls(r.clientId, "accountName", firstBorder)}>
+                          <div {...staticCellProps(r, "accountName", r.glAccountName || "—", "left", !r.glAccountName)} />
                         </TableCell>
                       );
                     }

@@ -28,7 +28,8 @@ export type DeleteEntityType =
   | 'IM_ReceiptItem'
   | 'FI_Receipt'
   | 'FI_ReceiptItem'
-  | 'StyleCard';
+  | 'StyleCard'
+  | 'GL_Account';
 
 export interface DeleteDependencyCheck {
   label: string;
@@ -59,7 +60,64 @@ const ENTITY_LABELS: Record<DeleteEntityType, string> = {
   FI_Receipt: 'Receipt/Payment Voucher',
   FI_ReceiptItem: 'Voucher line',
   StyleCard: 'Sample/Style Card',
+  GL_Account: 'Account',
 };
+
+// GL_Account (Chart of Accounts) — every column that references GL_Account.RecId, read live from
+// pg_constraint (31 FK columns, all ON DELETE NO ACTION / NOT VALID), plus columns with no FK that
+// may hold a GL account reference: GL_Integration.GLAccountCode/GLAccountCode2 (by account CODE,
+// same company) and four undocumented integer account-id columns (IM_InvoiceCCDistribution/
+// SM_ServiceCCDistribution.AccountId, FI_ReceiptItem/SM_Pos.FOAccountId) — those four are counted
+// conservatively: they can only ever block a delete, never allow one. GL_AccountTotal has no
+// IsDeleted column, so any balance row blocks. Live (IsDeleted = 0) rows only elsewhere, matching
+// every other check in this file.
+// Exported so the test suite can assert it still covers every live FK into GL_Account.
+export const GL_ACCOUNT_REFERENCES: Array<[label: string, table: string, columns: string[]]> = [
+  ['Current Account (Customer/Supplier GL)', 'FI_Account', ['CustomerGLAccountId', 'SupplierGLAccountId']],
+  ['Bank Account integration', 'FI_BankAccountIA', ['GLAccountId']],
+  ['Bank Credit', 'FI_BankCredit', ['CreditGLAccountId', 'DebitGLAccountId']],
+  ['Bank Credit line', 'FI_BankCreditItem', ['GLAccountId']],
+  ['Bank Receipt line', 'FI_BankReceiptItem', ['GLAccountId']],
+  ['Cash integration', 'FI_CashIA', ['GLAccountId']],
+  ['Export/Import record', 'FI_EximImport', ['GLAccountId']],
+  ['Expense', 'FI_Expense', ['GLAccountId']],
+  ['Incentive', 'FI_Incentive', ['GLAccountId']],
+  ['Payment Card', 'FI_PaymentCard', ['GLAccountId']],
+  ['Financial Receipt line', 'FI_ReceiptItem', ['GLAccountId', 'FOAccountId']],
+  ['Tax integration', 'FI_TaxIA', ['GLAccountId']],
+  ['Counter Account', 'GL_CounterAccount', ['AccountId', 'OwnerAccountId']],
+  ['Financial Table line', 'GL_FinancialTableItem', ['StartAccountId', 'EndAccountId']],
+  ['Journal (GL Receipt) line', 'GL_ReceiptItem', ['AccountId', 'GLCashAccountId']],
+  ['Reflection', 'GL_Reflection', ['AccountId', 'FirstAccountId', 'LastAccountId']],
+  ['Employee', 'HR_Employee', ['GLAccountId']],
+  ['Invoice', 'IM_Invoice', ['IncentiveGLAccountId']],
+  ['Invoice cost distribution', 'IM_InvoiceCCDistribution', ['AccountId']],
+  ['Inventory Item integration', 'IM_ItemIA', ['GLAccountId']],
+  ['Inventory Receipt line', 'IM_ReceiptItem', ['GLAccountId']],
+  ['Company integration', 'MD_CompanyIA', ['GLAccountId']],
+  ['Discount', 'SM_Discount', ['GLAccountId']],
+  ['POS', 'SM_Pos', ['FOAccountId']],
+  ['Service cost distribution', 'SM_ServiceCCDistribution', ['AccountId']],
+  ['Service integration', 'SM_ServiceIA', ['GLAccountId']],
+];
+
+const glAccountChecks: CheckSpec[] = [
+  ...GL_ACCOUNT_REFERENCES.map(([label, table, columns]) => ({
+    label,
+    existsSql: (id: number | string) => Prisma.sql`EXISTS (SELECT 1 FROM ${Prisma.raw(`"${table}"`)} WHERE "IsDeleted" = 0 AND (${Prisma.join(
+      columns.map((c) => Prisma.sql`${Prisma.raw(`"${c}"`)} = ${id}`), ' OR ',
+    )}))`,
+  })),
+  { label: 'Account balance', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "GL_AccountTotal" WHERE "AccountId" = ${id})` },
+  {
+    label: 'GL Integration rule',
+    existsSql: (id) => Prisma.sql`EXISTS (
+      SELECT 1 FROM "GL_Integration" gi JOIN "GL_Account" g ON g."RecId" = ${id}
+      WHERE gi."IsDeleted" = 0 AND gi."CompanyId" IS NOT DISTINCT FROM g."CompanyId"
+        AND (LOWER(gi."GLAccountCode") = LOWER(g."AccountCode") OR LOWER(gi."GLAccountCode2") = LOWER(g."AccountCode"))
+    )`,
+  },
+];
 
 // Every check is a single `EXISTS (...)` correlated to the record being deleted — combined below
 // into ONE round-trip query per validate call, never a per-child SELECT * (no N+1).
@@ -213,6 +271,7 @@ const CHECKS: Record<DeleteEntityType, CheckSpec[]> = {
     { label: 'Costing Sheet', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "CostingSheet" WHERE "styleCardId" = ${id})` },
     { label: 'Study Template', existsSql: (id) => Prisma.sql`EXISTS (SELECT 1 FROM "StudyTemplateCard" WHERE "styleCardId" = ${id})` },
   ],
+  GL_Account: glAccountChecks,
 };
 
 // Lets a generic, config-driven delete path (legacy-master-lookup.service.ts's remove()) find out

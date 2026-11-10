@@ -190,6 +190,17 @@ export const plmApi = {
     upsertLaborLines: (id: string, lines: any[]) => api.put(plm(`/costing-sheets/${id}/labor-lines`), lines),
     upsertOtherLines: (id: string, lines: any[]) => api.put(plm(`/costing-sheets/${id}/other-lines`), lines),
     getProfitBreakdown: (id: string) => api.get(plm(`/costing-sheets/${id}/profit-breakdown`)),
+    // Lock / Unlock (costing:lock / costing:unlock); a locked sheet refuses every change.
+    lockPermissions: (): Promise<{ canLock: boolean; canUnlock: boolean }> => api.get(plm('/costing-sheets/lock-permissions')) as any,
+    // Picker (Work Order → Initial Cost): own-branch sheets by ?search=, or one company sheet by ?id=.
+    // The response interceptor turns the service's { data, total } into the envelope's data (the
+    // rows array) and request() unwraps it — so the rows arrive as a plain array; normalized here.
+    lookup: async (q: { search?: string; id?: string; take?: number }): Promise<CostingSheetOption[]> => {
+      const r: any = await api.get(plm('/costing-sheets/lookup', Object.fromEntries(Object.entries(q).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]))));
+      return Array.isArray(r) ? r : Array.isArray(r?.data) ? r.data : [];
+    },
+    lock: (id: string) => api.post(plm(`/costing-sheets/${id}/lock`), {}),
+    unlock: (id: string) => api.post(plm(`/costing-sheets/${id}/unlock`), {}),
   },
   // Cards
   moodBoards: { list: (q?: any) => api.get(plm('/mood-boards', q)), create: (d: any) => api.post(plm('/mood-boards'), d), get: (id: string) => api.get(plm(`/mood-boards/${id}`)), update: (id: string, d: any) => api.put(plm(`/mood-boards/${id}`), d), delete: (id: string) => api.delete(plm(`/mood-boards/${id}`)), addImages: (id: string, images: string[]) => api.post(plm(`/mood-boards/${id}/images`), { images }) },
@@ -1154,6 +1165,15 @@ export const legacyErpApi = {
     update: (key: string, id: number, d: { code: string; name: string; active?: boolean }) => api.put(`/legacy-erp/master-lookup/${key}/${id}`, d),
     delete: (key: string, id: number) => api.delete(`/legacy-erp/master-lookup/${key}/${id}`),
   },
+  // Chart of Accounts — the legacy GL_Account table (gl-account.controller.ts). delete is a soft
+  // delete that the server refuses (409) while any record still references the account.
+  glAccounts: {
+    list: (search?: string) => api.get(`/legacy-erp/gl-accounts${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+    get: (id: number) => api.get(`/legacy-erp/gl-accounts/${id}`),
+    create: (d: Record<string, any>) => api.post(`/legacy-erp/gl-accounts`, d),
+    update: (id: number, d: Record<string, any>) => api.put(`/legacy-erp/gl-accounts/${id}`, d),
+    delete: (id: number) => api.delete(`/legacy-erp/gl-accounts/${id}`),
+  },
   lookupParameters: (group: "style-group" | "brand" | "style-department", search?: string) =>
     api.get(`/legacy-erp/lookup/parameters/${group}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   // Order Manufacturing Entry (order-manufacturing.service.ts) — main read model, the shared
@@ -1184,7 +1204,7 @@ export const legacyErpApi = {
       | "fabric" | "process" | "finish-gsm" | "dye-type" | "composition" | "forex" | "unit"
       | "service" | "manufacturing-order" | "size-parameter" | "city" | "state" | "country"
       | "cash" | "cost-center" | "subcontract-type" | "subcontract-receipt"
-      | "employee" | "certification" | "initial-cost" | "project",
+      | "employee" | "certification" | "initial-cost" | "project" | "gl-account",
     search?: string,
   ) => api.get(`/legacy-erp/lookup/tables/${key}${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   // Resolve one stored FK id back to its display Code/Name — for loading an EXISTING record
@@ -1590,6 +1610,16 @@ export const REPORT_MODULE_UI: Record<ReportModuleKey, { label: string; basePath
 export const ORDER_FORM_REPORT = { dataSource: 'work-order-order-form', workOrderField: 'workOrderId' } as const;
 /** The Inward Gate Pass document source (backend reports/inward-gate-pass.report.ts). */
 export const GATE_PASS_REPORT = { dataSource: 'inward-gate-pass', receiptField: 'receiptId' } as const;
+/** One Costing Sheet as the Initial Cost picker lists it (backend CostingService.lookup). */
+export interface CostingSheetOption {
+  id: string; costingNo: string; costingDate: string | null; styleCode: string | null; styleName: string | null;
+  accountName: string | null; brand: string | null; isLocked: boolean;
+}
+/** "001231 · SC-2026-8609 · Buyer" — how a Costing Sheet reads in a field. */
+export const costingSheetLabel = (c: Pick<CostingSheetOption, 'costingNo' | 'styleCode' | 'accountName'>) =>
+  [c.costingNo, c.styleCode, c.accountName].filter((x) => x && String(x).trim()).join(' · ');
+/** The PLM Costing Form document source (backend reports/costing-form.report.ts): runs by Costing No. */
+export const COSTING_FORM_REPORT = { dataSource: 'costing-form', sheetField: 'costingNo', reportName: 'Costing Form' } as const;
 /** The Yarn Requirement document source (backend reports/yarn-requirement.report.ts). */
 export const YARN_REPORT = { dataSource: 'yarn-requirement-report', workOrdersField: 'workOrderIds' } as const;
 /** The Yarn / Fabric / Trim cumulative requirement sources (same filters and layout), with their standard report names. */

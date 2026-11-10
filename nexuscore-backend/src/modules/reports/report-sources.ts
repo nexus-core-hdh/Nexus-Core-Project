@@ -25,6 +25,7 @@ import { FABRIC_REPORT_SOURCE, TRIM_REPORT_SOURCE, YARN_REPORT_SOURCE } from './
 import { DYEING_SOURCE } from './dyeing-follow-up.report';
 import { PROCESS_FOLLOW_UP_SOURCE } from './process-follow-up.report';
 import { OM_ENTRY_SOURCE } from './order-manufacturing-entry.report';
+import { COSTING_FORM_SOURCE } from './costing-form.report';
 import type { SectionColumnDef } from './work-order-order-form.report';
 
 export type ReportFieldType = 'string' | 'number' | 'date' | 'boolean';
@@ -719,6 +720,7 @@ export const REPORT_SOURCES: ReportSource[] = [
   DYEING_SOURCE,
   PROCESS_FOLLOW_UP_SOURCE,
   OM_ENTRY_SOURCE,
+  COSTING_FORM_SOURCE,
 ];
 
 export function findReportSource(key: string, module?: string): ReportSource | undefined {

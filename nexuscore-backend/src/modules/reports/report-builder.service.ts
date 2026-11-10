@@ -35,6 +35,8 @@ import {
 } from './process-follow-up.report';
 import { ORDER_FORM_WORK_ORDER_FIELD, ReportSection, SectionColumnConfig, cleanSectionColumns, orderFormSections } from './work-order-order-form.report';
 import { OrderManufacturingService } from '../legacy-erp/order-manufacturing.service';
+import { CostingService } from '../costing/costing.service';
+import { COSTING_FORM_SHEET_FIELD, COSTING_FORM_SOURCE_KEY, costingFormSections } from './costing-form.report';
 import { currentLegacyCompany } from '../legacy-erp/legacy-company-scope';
 import {
   OM_ENTRY_FIELDS, OM_ENTRY_SOURCE_KEY, OM_ENTRY_VIEW_SIZES, OM_ENTRY_VIEW_SUMMARY, OrderManufacturingContext, orderManufacturingEntrySections,
@@ -165,6 +167,8 @@ export class ReportBuilderService {
     @Optional() private readonly processFollowUp?: ProcessFollowUpService,
     // Builds the Order Manufacturing Entry document source — the screen's own read model (same reason it is optional).
     @Optional() private readonly orderManufacturing?: OrderManufacturingService,
+    // Builds the PLM Costing Form document source from the saved Costing Sheet (same reason it is optional).
+    @Optional() private readonly costing?: CostingService,
   ) {
     this.schema = new LegacySchemaCatalog(prisma);
   }
@@ -785,6 +789,24 @@ export class ReportBuilderService {
             applied: applied.join(' · ') || 'All Work Orders',
             // 20 columns, as on the legacy report: compact print so every one fits the page.
             document: { showTitle: true, companyAddress: null, showSectionTitles: false, compactTables: true },
+          };
+        },
+      },
+      [COSTING_FORM_SOURCE_KEY]: {
+        fields: [COSTING_FORM_SHEET_FIELD], noun: 'Costing Sheet',
+        build: async (values: DocumentFilterValues, user: ReportUser, columns: ReportColumn[]) => {
+          if (!this.costing) throw new BadRequestException('This document report is not available here');
+          const costingNo = String(values[COSTING_FORM_SHEET_FIELD]?.value ?? '').trim();
+          if (!costingNo) throw new BadRequestException('Choose the Costing Sheet to print');
+          // The user's own branch only (Costing Sheets are kept per branch, like their list).
+          const data = await this.costing.costingForm(costingNo, user.branchId).catch((e) => {
+            if (e instanceof NotFoundException) throw new BadRequestException(`Costing Sheet ${costingNo} was not found in your branch`);
+            throw e;
+          });
+          return {
+            sections: costingFormSections(data, columns),
+            applied: `Costing Sheet ${data.header.costingNo}`,
+            document: { showTitle: true, companyAddress: null },
           };
         },
       },

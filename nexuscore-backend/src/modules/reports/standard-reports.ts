@@ -6,6 +6,7 @@
 // when the report is opened (a blank answer means "no restriction"), so one definition serves
 // any season, customer, date range, ...
 import type { ReportDefinitionInput, ReportFilter } from './report-builder.service';
+import { COSTING_FORM_REPORT_NAME, COSTING_FORM_SECTIONS, COSTING_FORM_SHEET_FIELD, COSTING_FORM_SOURCE_KEY } from './costing-form.report';
 
 type Def = Omit<ReportDefinitionInput, 'filters'> & { filters?: Omit<ReportFilter, 'id'>[] };
 
@@ -1015,7 +1016,20 @@ const HISTORY: Def[] = [
   },
 ];
 
-export const STANDARD_PLM_REPORTS: Def[] = [...STYLE, ...SAMPLE, ...COSTING, ...ORDERS, ...TASKS, ...BOM, ...COSTING_LINES, ...PRODUCT, ...HISTORY];
+// ── Documents ──────────────────────────────────────────────────────────────────
+const DOCUMENTS: Def[] = [
+  {
+    // Opened from the Costing Sheets list / a Costing Sheet: right-click or ⋮ → Print (passes the
+    // sheet's Costing No to the "ask when running" filter).
+    name: COSTING_FORM_REPORT_NAME,
+    description: 'A saved Costing Sheet printed as the Costing Form: header, Fabric & Lining with raw / labor detail, trims, decoration & testing, labor and the price summary.',
+    dataSource: COSTING_FORM_SOURCE_KEY,
+    columns: cols(...COSTING_FORM_SECTIONS.map(([key]) => key)),
+    filters: [ask(COSTING_FORM_SHEET_FIELD, 'equals')],
+  },
+];
+
+export const STANDARD_PLM_REPORTS: Def[] = [...STYLE, ...SAMPLE, ...COSTING, ...ORDERS, ...TASKS, ...BOM, ...COSTING_LINES, ...PRODUCT, ...HISTORY, ...DOCUMENTS];
 
 /** Standard reports as designer input (filter ids are assigned by the service on save). */
 export function standardPlmReportInputs(): ReportDefinitionInput[] {

@@ -3717,6 +3717,14 @@ model CostingSheet {
   financialCostPct      Decimal   @default(0) @db.Decimal(8, 4)
   commissionPct         Decimal   @default(0) @db.Decimal(8, 4)
   commission3Pct        Decimal   @default(0) @db.Decimal(8, 4)
+  // Manually overridden PKR amounts of the calculation panel ({"overhead": 1200.5, ...}); a key
+  // present = manual, absent = automatic from its %. Null = all automatic.
+  manualAmounts         Json?
+  // Locked = every change (header, lines, delete) is refused until a user with costing:unlock
+  // unlocks it. lockedById = the User who locked it.
+  isLocked              Boolean   @default(false)
+  lockedAt              DateTime?
+  lockedById            String?
   branchId              String
   createdBy             String?
   createdAt             DateTime  @default(now())

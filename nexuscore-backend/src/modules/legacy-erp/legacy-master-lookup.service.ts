@@ -17,6 +17,8 @@ interface TableLookupConfig {
   // simple read-only pickers with no management UI.
   activeColumn?: string;
   label?: string;
+  // Optional display-order column for search() (e.g. MD_Forex.ItemOrder); omitted = by name.
+  orderColumn?: string;
 }
 
 // Generic "search a real master table" lookup, config-driven the same way
@@ -76,7 +78,10 @@ const TABLES: Record<string, TableLookupConfig> = {
   // Currency/Forex — already-existing table (confirmed via pg_catalog, 0 rows, first
   // reader), the same one IM_OrderReceipt.ForexId/IM_OrderReceiptItem.ForexId already FK
   // into. Needed for Purchase Order's per-line Forex column. No new table.
-  forex: { table: 'MD_Forex', codeColumn: 'ForexCode', nameColumn: 'ForexName', searchColumns: ['ForexCode', 'ForexName'] },
+  // activeColumn (MD_Forex already has InUse) makes pickers offer only active currencies; no
+  // `label`, so it stays a read-only lookup (not a Master Lookup screen). Every FK-display
+  // resolver passes includeInactive, so saved references to an inactive currency still resolve.
+  forex: { table: 'MD_Forex', codeColumn: 'ForexCode', nameColumn: 'ForexName', searchColumns: ['ForexCode', 'ForexName'], activeColumn: 'InUse', orderColumn: 'ItemOrder' },
   // Unit — already-existing table (confirmed live: 12 rows), the same one
   // IM_OrderReceiptItem.UnitId already FKs into. MD_UnitSetItem is normally read through
   // unit-set.service.ts's nested "one set's items" route, but Purchase Order's per-line Unit
@@ -158,6 +163,17 @@ const TABLES: Record<string, TableLookupConfig> = {
   // generic getById(), instead of a bespoke query per audited service. No new table.
   'current-account': { table: 'FI_Account', codeColumn: 'CurrentAccountCode', nameColumn: 'CurrentAccountName', searchColumns: ['CurrentAccountCode', 'CurrentAccountName'] },
   'inventory-item': { table: 'IM_Item', codeColumn: 'InventoryCode', nameColumn: 'InventoryName', searchColumns: ['InventoryCode', 'InventoryName'] },
+  // Chart of Accounts (GL) — the already-existing legacy GL_Account table, the real FK target of
+  // FI_Account.CustomerGLAccountId/SupplierGLAccountId (FK_FI_Account_GL_Account/_Account1 in the
+  // baseline migration). Needed for the Current Account card's Customer/Supplier GL Account Code
+  // type-ahead pickers. No new table. activeColumn only (no `label`), like `forex`: pickers offer
+  // only active accounts, but this stays read-only here — accounts are maintained solely on the
+  // Chart of Accounts screen (gl-account.service.ts), which the pickers' search icon opens.
+  // It has CompanyId, so companyScopeSql() isolates it per company.
+  'gl-account': {
+    table: 'GL_Account', codeColumn: 'AccountCode', nameColumn: 'AccountName', searchColumns: ['AccountCode', 'AccountName'],
+    activeColumn: 'InUse', orderColumn: 'AccountCode',
+  },
 };
 export type MasterLookupKey = keyof typeof TABLES;
 
@@ -221,10 +237,11 @@ export class LegacyMasterLookupService {
     );
     const table = Prisma.raw(`"${cfg.table}"`);
     const activeFilter = cfg.activeColumn ? Prisma.sql`AND "${Prisma.raw(cfg.activeColumn)}" = 1` : Prisma.sql``;
+    const orderBy = Prisma.raw(cfg.orderColumn ? `"${cfg.orderColumn}" NULLS LAST, "${cfg.nameColumn}"` : `"${cfg.nameColumn}"`);
 
     if (!search) {
       const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-        SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ${scope} ORDER BY "${Prisma.raw(cfg.nameColumn)}" LIMIT 50
+        SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ${scope} ORDER BY ${orderBy} LIMIT 50
       `);
       return sanitizeRawRow(rows);
     }
@@ -235,7 +252,7 @@ export class LegacyMasterLookupService {
       ' OR ',
     );
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ${scope} AND (${whereSearch}) ORDER BY "${Prisma.raw(cfg.nameColumn)}" LIMIT 50
+      SELECT ${select} FROM ${table} WHERE "IsDeleted" = 0 ${activeFilter} ${scope} AND (${whereSearch}) ORDER BY ${orderBy} LIMIT 50
     `);
     return sanitizeRawRow(rows);
   }

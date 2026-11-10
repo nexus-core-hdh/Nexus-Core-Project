@@ -25,6 +25,19 @@ import {
 import { SatelliteGridTab } from "./_components/satellite-grid-tab";
 import { TotalsTab } from "./_components/totals-tab";
 import { AttachmentsTab } from "./_components/attachments-tab";
+import { MasterAutocompleteField, type MasterOption } from "@/components/legacy-erp/master-autocomplete-field";
+
+// Customer/Supplier GL Account Code — FI_Account integer FKs into GL_Account (the legacy Chart of
+// Accounts). Type-ahead uses the shared "gl-account" lookup key (active accounts only); the search
+// icon / F2 opens the Chart of Accounts screen in lookup mode. Only the ids live in
+// `form`; the "Code — Name" display labels are resolved separately so loading them never marks
+// the record dirty or gets sent on Save.
+const CHART_OF_ACCOUNTS_PATH = "/finance-erp/general-ledger/chart-of-accounts";
+const GL_FIELDS = ["customerGLAccountId", "supplierGLAccountId"] as const;
+type GlField = (typeof GL_FIELDS)[number];
+const glLabel = (o: { code?: string | null; name?: string | null }) => (o.code ? `${o.code} — ${o.name ?? ""}` : o.name ?? "");
+// Dropdown rows use the same "Code — Name" label the field shows after a pick.
+const renderGlOption = (o: MasterOption) => <span className="truncate">{glLabel(o)}</span>;
 
 const emptyForm: Record<string, any> = {
   currentAccountCode: "", currentAccountName: "", accessCode: "", specialCode: "",
@@ -139,6 +152,35 @@ export default function CurrentAccountCardPage() {
   }, []);
 
   const set = (k: string, v: any) => setForm((p) => ({ ...p, [k]: v }));
+
+  // Resolves the display label whenever a GL id arrives from outside the picker (record load,
+  // Find by code, Save response, restored draft). A pick made in the field records its id in
+  // glLabelIds first, so it is never re-fetched.
+  const [glLabels, setGlLabels] = useState<Record<GlField, string>>({ customerGLAccountId: "", supplierGLAccountId: "" });
+  const glLabelIds = useRef<Record<GlField, string>>({ customerGLAccountId: "", supplierGLAccountId: "" });
+  useEffect(() => {
+    for (const field of GL_FIELDS) {
+      const id = form[field] === null || form[field] === undefined ? "" : String(form[field]);
+      if (glLabelIds.current[field] === id) continue;
+      glLabelIds.current[field] = id;
+      if (!id) { setGlLabels((p) => ({ ...p, [field]: "" })); continue; }
+      const apply = (label: string) => { if (glLabelIds.current[field] === id) setGlLabels((p) => ({ ...p, [field]: label })); };
+      legacyErpApi.lookupTableGet("gl-account", Number(id))
+        .then((r: any) => apply(r ? glLabel(r) : `#${id}`))
+        .catch(() => apply(`#${id}`));
+    }
+  }, [form.customerGLAccountId, form.supplierGLAccountId]);
+
+  const selectGl = (field: GlField, o: MasterOption) => {
+    glLabelIds.current[field] = String(o.id);
+    setGlLabels((p) => ({ ...p, [field]: glLabel(o) }));
+    set(field, String(o.id));
+  };
+  const clearGl = (field: GlField) => {
+    glLabelIds.current[field] = "";
+    setGlLabels((p) => ({ ...p, [field]: "" }));
+    set(field, "");
+  };
 
   // Code is never typed — it's always server-generated (see account.service.ts's
   // generateCode/nextSeq, atomic and concurrency-safe). This just refreshes what the Create
@@ -327,8 +369,16 @@ export default function CurrentAccountCardPage() {
           </FormSection>
 
           <FormSection title="Financial Linkage">
-            <FieldText label="Customer GL Account Code" value={form.customerGLAccountId} onChange={(v) => set("customerGLAccountId", v)} lookup />
-            <FieldText label="Supplier GL Account Code" value={form.supplierGLAccountId} onChange={(v) => set("supplierGLAccountId", v)} lookup />
+            <MasterAutocompleteField
+              label="Customer GL Account Code" masterKey="gl-account" displayValue={glLabels.customerGLAccountId} lookupPath={CHART_OF_ACCOUNTS_PATH}
+              onSelect={(o) => selectGl("customerGLAccountId", o)} onClear={() => clearGl("customerGLAccountId")}
+              renderOption={renderGlOption}
+            />
+            <MasterAutocompleteField
+              label="Supplier GL Account Code" masterKey="gl-account" displayValue={glLabels.supplierGLAccountId} lookupPath={CHART_OF_ACCOUNTS_PATH}
+              onSelect={(o) => selectGl("supplierGLAccountId", o)} onClear={() => clearGl("supplierGLAccountId")}
+              renderOption={renderGlOption}
+            />
             <FieldText label="Term Date Difference Rate" value={form.termDay} onChange={(v) => set("termDay", v)} type="number" />
             <FieldText label="Payment Plan" value={form.paymentPlanId} onChange={(v) => set("paymentPlanId", v)} lookup />
             <FieldText label="Discount/Price Code" value={form.discountGroupCode} onChange={(v) => set("discountGroupCode", v)} />

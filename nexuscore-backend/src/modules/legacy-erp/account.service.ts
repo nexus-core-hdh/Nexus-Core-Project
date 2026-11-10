@@ -1,5 +1,5 @@
 import { ListPaging, runLegacyList } from './list-paging.util';
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeRawRow } from './raw-row.util';
@@ -63,9 +63,9 @@ export class AccountService {
   ) {}
 
   // Only fields with an already-registered LegacyMasterLookupService key are enriched — Sector/
-  // TradingGroup/Seller/Channel/Transporter/CustomerGLAccount/SupplierGLAccount/PaymentPlan/
-  // SalesDiscount/PurchaseDiscount/TaxOffice/ForexRate/Parent/Status/FactoringCompany have no
-  // existing key and are left as raw ids rather than inventing one.
+  // TradingGroup/Seller/Channel/Transporter/PaymentPlan/SalesDiscount/PurchaseDiscount/
+  // TaxOffice/ForexRate/Parent/Status/FactoringCompany have no existing key and are left as raw
+  // ids rather than inventing one. Customer/Supplier GL Account resolve via 'gl-account'.
   private displayResolvers(): Record<string, FkResolver> {
     const byKey = (key: string): FkResolver => (id) => this.masterLookup.getById(key, Number(id), { includeInactive: true });
     return {
@@ -76,7 +76,25 @@ export class AccountService {
       warehouseId: byKey('warehouse'),
       costCenterId: byKey('cost-center'),
       certificationId: byKey('certification'),
+      customerGLAccountId: byKey('gl-account'),
+      supplierGLAccountId: byKey('gl-account'),
     };
+  }
+
+  // Customer/Supplier GL Account: a NEWLY chosen account (create, or changed on update) must be an
+  // active, non-deleted GL_Account of the caller's company — rejects a stale pick (account deleted or
+  // deactivated after the form loaded) and another company's id. An unchanged saved reference is left
+  // alone even if that account has since been deactivated.
+  private async assertGlAccounts(dto: Record<string, any>, current?: Record<string, any>) {
+    const fields: Array<[string, string]> = [['customerGLAccountId', 'Customer GL Account'], ['supplierGLAccountId', 'Supplier GL Account']];
+    for (const [key, label] of fields) {
+      const value = dto[key];
+      if (value === undefined || value === null || value === '') continue;
+      if (current && String(current[key] ?? '') === String(value)) continue;
+      const id = Number(value);
+      const ok = Number.isInteger(id) && (await this.masterLookup.getById('gl-account', id));
+      if (!ok) throw new BadRequestException(`${label} is not an active account in the Chart of Accounts`);
+    }
   }
 
   private async toDb() {
@@ -201,6 +219,7 @@ export class AccountService {
     // above. Whatever the caller sent in currentAccountCode (e.g. the earlier preview value,
     // now possibly stale) is discarded and replaced with a freshly, atomically generated one
     // at the actual moment of insert.
+    await this.assertGlAccounts(dto);
     const toDb = await this.toDb();
     // Retried (not looped indefinitely — 5 attempts is generous slack for a genuine collision,
     // anything beyond that means something else is wrong) purely as defense-in-depth: the
@@ -250,6 +269,7 @@ export class AccountService {
 
   async update(id: number, dto: Record<string, any>, userId: number, currentUserId?: string, companyId?: string) {
     const current = await this.get(id);
+    await this.assertGlAccounts(dto, current);
     const toDb = await this.toDb();
     // CurrentAccountCode is immutable after creation — never editable via update, regardless
     // of what the client sends (the frontend's own Code field is already disabled, but this
